@@ -98,42 +98,11 @@ pub const ArrayData = struct {
         return init(self.allocator, self.type, self.len, self.offset, self.null_count, self.buffers, self.children, self.dictionary, true);
     }
 
-    /// Validate fixed width layout invariants.
+    /// Validate storage layout invariants implied by the logical type.
     pub fn validate(self: *const ArrayData) (ValidateError || checked.Error || datatype.ValidationError)!void {
         try self.type.validate();
         const total = try checked.add(self.offset, self.len);
-        if (self.buffers.len != 2) return error.InvalidBufferCount;
-        if (self.children.len != 0) return error.UnexpectedChild;
-        if (self.dictionary != null) return error.UnexpectedDictionary;
-        if (self.null_count != unknown_null_count and self.null_count > self.len)
-            return error.NullCountOutOfBounds;
-
-        if (self.buffers[0]) |validity_buf| {
-            const needed = if (self.len == 0) 0 else try bitmap.byteLenChecked(total);
-            if (validity_buf.size < needed) return error.ValidityBufferTooSmall;
-        }
-
-        const value_needed: usize = if (self.len == 0)
-            0
-        else if (self.type.id() == .bool)
-            try bitmap.byteLenChecked(total)
-        else
-            try checked.mul(total, @as(usize, self.type.bitWidth()) / 8);
-        if (self.buffers[1]) |values_buf| {
-            if (values_buf.size < value_needed) return error.ValuesBufferTooSmall;
-        } else if (self.len > 0) {
-            return error.MissingValuesBuffer;
-        }
-
-        if (self.buffers[0]) |validity_buf| {
-            if (self.null_count != unknown_null_count) {
-                const actual = self.len - bitmap.countSetBits(validity_buf.dataSlice(), self.offset, self.len);
-                if (actual != self.null_count) return error.NullCountMismatch;
-            }
-        } else {
-            if (self.null_count != 0 and self.null_count != unknown_null_count)
-                return error.NullCountWithoutValidity;
-        }
+        try validateData(self, self.type, total);
     }
 
     /// Zero-copy owned slice over [off, off+length). Clamps length to available range.
@@ -148,6 +117,7 @@ pub const ArrayData = struct {
 
     /// Null count. If deferred (unknown_null_count), compute from validity bitmap.
     pub fn nullCount(self: *const ArrayData) usize {
+        if (self.type.id() == .null_) return self.len;
         const validity = if (self.buffers.len > 0) self.buffers[0] else null;
         return bitmap.nullCountFor(
             if (validity) |v| v.dataSlice() else null,
@@ -184,6 +154,223 @@ fn slicedNullCount(nc: usize, len: usize, off: usize, clamped: usize) usize {
     if (nc == len) return clamped;
     if (off == 0 and clamped == len) return nc;
     return unknown_null_count;
+}
+
+const NullLayout = enum { bitmap, none, always_null };
+
+fn validateData(data: *const ArrayData, ty: datatype.DataType, total: usize) (ValidateError || checked.Error || datatype.ValidationError)!void {
+    try validateChildCount(data, ty.childCount());
+    if (ty.id() != .dictionary and data.dictionary != null) return error.UnexpectedDictionary;
+
+    switch (ty) {
+        .null_ => {
+            try expectBufferCount(data, 1);
+            try validateNulls(data, total, .always_null);
+        },
+        .bool, .int8, .int16, .int32, .int64, .uint8, .uint16, .uint32, .uint64, .float16, .float32, .float64, .date32, .date64, .time32, .time64, .timestamp, .duration => {
+            try validateFixedWidth(data, total, ty);
+        },
+        .binary, .utf8 => try validateBinaryLike(data, total, i32),
+        .large_binary, .large_utf8 => try validateBinaryLike(data, total, i64),
+        .list => |meta| try validateListLike(data, total, meta.child, i32),
+        .large_list => |meta| try validateListLike(data, total, meta.child, i64),
+        .fixed_size_list => |meta| try validateFixedSizeList(data, total, meta),
+        .struct_ => |meta| try validateStruct(data, total, meta),
+        .sparse_union => |meta| try validateUnion(data, total, meta, false),
+        .dense_union => |meta| try validateUnion(data, total, meta, true),
+        .dictionary => |meta| try validateDictionary(data, total, meta),
+    }
+}
+
+fn validateChildCount(data: *const ArrayData, expected: usize) ValidateError!void {
+    if (data.children.len == expected) return;
+    if (expected == 0) return error.UnexpectedChild;
+    return error.InvalidChildCount;
+}
+
+fn expectBufferCount(data: *const ArrayData, expected: usize) ValidateError!void {
+    if (data.buffers.len != expected) return error.InvalidBufferCount;
+}
+
+fn validateNulls(data: *const ArrayData, total: usize, layout: NullLayout) (ValidateError || checked.Error)!void {
+    switch (layout) {
+        .always_null => {
+            if (data.null_count != data.len) return error.NullCountMismatch;
+        },
+        .none => {
+            if (data.null_count != 0 and data.null_count != unknown_null_count)
+                return error.NullCountWithoutValidity;
+        },
+        .bitmap => {
+            if (data.null_count != unknown_null_count and data.null_count > data.len)
+                return error.NullCountOutOfBounds;
+
+            if (data.buffers[0]) |validity_buf| {
+                const needed = if (data.len == 0) 0 else try bitmap.byteLenChecked(total);
+                if (validity_buf.size < needed) return error.ValidityBufferTooSmall;
+                if (data.null_count != unknown_null_count) {
+                    const actual = data.len - bitmap.countSetBits(validity_buf.dataSlice(), data.offset, data.len);
+                    if (actual != data.null_count) return error.NullCountMismatch;
+                }
+            } else if (data.null_count != 0 and data.null_count != unknown_null_count) {
+                return error.NullCountWithoutValidity;
+            }
+        },
+    }
+}
+
+fn validateFixedWidth(data: *const ArrayData, total: usize, ty: datatype.DataType) (ValidateError || checked.Error)!void {
+    try expectBufferCount(data, 2);
+    try validateNulls(data, total, .bitmap);
+
+    const value_needed: usize = if (data.len == 0)
+        0
+    else if (ty.id() == .bool)
+        try bitmap.byteLenChecked(total)
+    else
+        try checked.mul(total, @as(usize, ty.bitWidth()) / 8);
+
+    if (data.buffers[1]) |values_buf| {
+        if (values_buf.size < value_needed) return error.ValuesBufferTooSmall;
+    } else if (data.len > 0) {
+        return error.MissingValuesBuffer;
+    }
+}
+
+fn validateBinaryLike(data: *const ArrayData, total: usize, comptime Offset: type) (ValidateError || checked.Error)!void {
+    try expectBufferCount(data, 3);
+    try validateNulls(data, total, .bitmap);
+    const values = data.buffers[2] orelse return error.MissingValuesBuffer;
+    const offsets = try validateOffsetsBuffer(data, total, Offset);
+    if (offsets) |offset_buf| try validateOffsets(data, offset_buf, values.size, Offset);
+}
+
+fn validateListLike(data: *const ArrayData, total: usize, child_field: datatype.Field, comptime Offset: type) (ValidateError || checked.Error || datatype.ValidationError)!void {
+    try expectBufferCount(data, 2);
+    try validateNulls(data, total, .bitmap);
+
+    const child = data.children[0];
+    if (!datatype.DataType.equals(child.type, child_field.type.*)) return error.ChildTypeMismatch;
+    try child.validate();
+
+    const offsets = try validateOffsetsBuffer(data, total, Offset);
+    if (offsets) |offset_buf| try validateOffsets(data, offset_buf, child.len, Offset);
+}
+
+fn validateFixedSizeList(data: *const ArrayData, total: usize, meta: datatype.FixedSizeListMeta) (ValidateError || checked.Error || datatype.ValidationError)!void {
+    try expectBufferCount(data, 1);
+    try validateNulls(data, total, .bitmap);
+
+    const child = data.children[0];
+    if (!datatype.DataType.equals(child.type, meta.child.type.*)) return error.ChildTypeMismatch;
+    try child.validate();
+
+    const needed = try checked.mul(total, meta.len);
+    if (child.len < needed) return error.ChildLengthTooSmall;
+}
+
+fn validateStruct(data: *const ArrayData, total: usize, meta: datatype.StructMeta) (ValidateError || checked.Error || datatype.ValidationError)!void {
+    try expectBufferCount(data, 1);
+    try validateNulls(data, total, .bitmap);
+
+    for (data.children, meta.fields) |child, field| {
+        try child.validate();
+        if (!datatype.DataType.equals(child.type, field.type.*)) return error.ChildTypeMismatch;
+        if (child.len < total) return error.ChildLengthTooSmall;
+    }
+}
+
+fn validateUnion(data: *const ArrayData, total: usize, meta: datatype.UnionMeta, comptime dense: bool) (ValidateError || checked.Error || datatype.ValidationError)!void {
+    try expectBufferCount(data, if (dense) 3 else 2);
+    try validateNulls(data, total, .none);
+
+    for (data.children, meta.fields) |child, field| {
+        try child.validate();
+        if (!datatype.DataType.equals(child.type, field.type.*)) return error.ChildTypeMismatch;
+        if (!dense and child.len < total) return error.ChildLengthTooSmall;
+    }
+
+    const type_ids = data.buffers[1] orelse return error.MissingTypeIdsBuffer;
+    const needed_type_ids = try checked.add(data.offset, data.len);
+    if (type_ids.size < needed_type_ids) return error.TypeIdsBufferTooSmall;
+
+    const offsets: ?*Buffer = if (dense) blk: {
+        const buf = data.buffers[2] orelse return error.MissingUnionOffsetsBuffer;
+        const needed = try checked.mul(needed_type_ids, @sizeOf(i32));
+        if (buf.size < needed) return error.UnionOffsetsBufferTooSmall;
+        break :blk buf;
+    } else null;
+
+    var last_offsets = [_]usize{0} ** 128;
+    for (0..data.len) |i| {
+        const code = readInt(i8, type_ids, data.offset + i);
+        const child_index = childIndexFor(meta, code) orelse return error.UnionTypeIdOutOfBounds;
+        if (offsets) |offset_buf| {
+            const off = try offsetToUsize(readInt(i32, offset_buf, data.offset + i));
+            if (off >= data.children[child_index].len) return error.UnionOffsetOutOfBounds;
+            const code_index: usize = @intCast(code);
+            if (off < last_offsets[code_index]) return error.UnionOffsetNotMonotonic;
+            last_offsets[code_index] = off;
+        }
+    }
+}
+
+fn validateDictionary(data: *const ArrayData, total: usize, meta: datatype.DictionaryMeta) (ValidateError || checked.Error || datatype.ValidationError)!void {
+    if (data.dictionary == null) return error.MissingDictionary;
+    if (!meta.index_type.isInteger()) return error.InvalidDictionaryIndexType;
+    try validateFixedWidth(data, total, meta.index_type.*);
+
+    const dict = data.dictionary.?;
+    try dict.validate();
+    if (!datatype.DataType.equals(dict.type, meta.value_type.*)) return error.DictionaryTypeMismatch;
+}
+
+fn validateOffsetsBuffer(data: *const ArrayData, total: usize, comptime Offset: type) (ValidateError || checked.Error)!?*Buffer {
+    const offsets = data.buffers[1] orelse {
+        if (data.len == 0) return null;
+        return error.MissingOffsetsBuffer;
+    };
+
+    const required_offsets = if (data.len > 0 or offsets.size > 0) try checked.add(total, 1) else 0;
+    const needed = try checked.mul(required_offsets, @sizeOf(Offset));
+    if (offsets.size < needed) return error.OffsetsBufferTooSmall;
+    return offsets;
+}
+
+fn validateOffsets(data: *const ArrayData, offsets: *Buffer, limit: usize, comptime Offset: type) ValidateError!void {
+    if (data.len == 0) return;
+    var previous = try offsetToUsize(readInt(Offset, offsets, data.offset));
+    if (previous > limit) return error.OffsetValueOutOfBounds;
+    for (1..data.len + 1) |i| {
+        const current = try offsetToUsize(readInt(Offset, offsets, data.offset + i));
+        if (current < previous) return error.OffsetsNotMonotonic;
+        if (current > limit) return error.OffsetValueOutOfBounds;
+        previous = current;
+    }
+}
+
+fn childIndexFor(meta: datatype.UnionMeta, code: i8) ?usize {
+    if (code < 0) return null;
+    for (meta.type_ids, 0..) |id, i| {
+        if (id == code) return i;
+    }
+    return null;
+}
+
+fn readInt(comptime T: type, buffer: *Buffer, index: usize) T {
+    const start = index * @sizeOf(T);
+    const bytes = buffer.dataSlice()[start..][0..@sizeOf(T)];
+    return std.mem.readInt(T, bytes, .little);
+}
+
+fn writeTestInt(comptime T: type, buffer: *Buffer, index: usize, value: T) void {
+    const start = index * @sizeOf(T);
+    std.mem.writeInt(T, buffer.data[start..][0..@sizeOf(T)], value, .little);
+}
+
+fn offsetToUsize(value: anytype) ValidateError!usize {
+    if (value < 0) return error.NegativeOffset;
+    return @intCast(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -240,12 +427,30 @@ pub const ViewError = error{ TypeMismatch, InvalidBufferLayout };
 pub const SliceError = error{OffsetOutOfBounds};
 pub const ValidateError = error{
     InvalidBufferCount,
+    InvalidChildCount,
     MissingValuesBuffer,
+    MissingOffsetsBuffer,
+    MissingDictionary,
+    MissingTypeIdsBuffer,
+    MissingUnionOffsetsBuffer,
     ValuesBufferTooSmall,
     ValidityBufferTooSmall,
+    OffsetsBufferTooSmall,
+    TypeIdsBufferTooSmall,
+    UnionOffsetsBufferTooSmall,
     NullCountMismatch,
     NullCountWithoutValidity,
     NullCountOutOfBounds,
+    NegativeOffset,
+    OffsetValueOutOfBounds,
+    OffsetsNotMonotonic,
+    UnionTypeIdOutOfBounds,
+    UnionOffsetOutOfBounds,
+    UnionOffsetNotMonotonic,
+    ChildTypeMismatch,
+    ChildLengthTooSmall,
+    DictionaryTypeMismatch,
+    InvalidDictionaryIndexType,
     UnexpectedChild,
     UnexpectedDictionary,
 };
@@ -698,6 +903,176 @@ test "ArrayData validate rejects dictionary for fixed width type" {
     defer data.release();
 
     try std.testing.expectError(error.UnexpectedDictionary, data.validate());
+}
+
+test "ArrayData validate null layout" {
+    const allocator = std.testing.allocator;
+    const data = try ArrayData.init(allocator, .null_, 3, 0, 3, &.{null}, &.{}, null, false);
+    defer data.release();
+
+    try data.validate();
+    try std.testing.expectEqual(@as(usize, 3), data.nullCount());
+
+    data.null_count = 0;
+    try std.testing.expectError(error.NullCountMismatch, data.validate());
+}
+
+test "ArrayData validate binary layout" {
+    const allocator = std.testing.allocator;
+    const offsets = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
+    errdefer offsets.release();
+    writeTestInt(i32, offsets, 0, 0);
+    writeTestInt(i32, offsets, 1, 2);
+    writeTestInt(i32, offsets, 2, 5);
+    offsets.freeze();
+
+    const values = try Buffer.allocate(allocator, 5);
+    errdefer values.release();
+    @memcpy(values.data[0..5], "abcde");
+    values.freeze();
+
+    const data = try ArrayData.init(allocator, .binary, 2, 0, 0, &.{ null, offsets, values }, &.{}, null, false);
+    defer data.release();
+    try data.validate();
+
+    const short_offsets = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
+    errdefer short_offsets.release();
+    short_offsets.freeze();
+    const invalid = try ArrayData.init(allocator, .binary, 2, 0, 0, &.{ null, short_offsets, values.retain() }, &.{}, null, false);
+    defer invalid.release();
+    try std.testing.expectError(error.OffsetsBufferTooSmall, invalid.validate());
+}
+
+test "ArrayData validate list layout" {
+    const allocator = std.testing.allocator;
+    const child_values = try Buffer.allocate(allocator, 5 * @sizeOf(i32));
+    errdefer child_values.release();
+    child_values.freeze();
+    const child = try ArrayData.init(allocator, .int32, 5, 0, 0, &.{ null, child_values }, &.{}, null, false);
+    defer child.release();
+
+    const offsets = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
+    errdefer offsets.release();
+    writeTestInt(i32, offsets, 0, 0);
+    writeTestInt(i32, offsets, 1, 2);
+    writeTestInt(i32, offsets, 2, 5);
+    offsets.freeze();
+    defer offsets.release();
+
+    const value_ty: datatype.DataType = .int32;
+    const list_ty = datatype.DataType{ .list = .{ .child = .{ .name = "item", .type = &value_ty } } };
+    const data = try ArrayData.init(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null, true);
+    defer data.release();
+    try data.validate();
+
+    const short_child_values = try Buffer.allocate(allocator, 4 * @sizeOf(i32));
+    errdefer short_child_values.release();
+    short_child_values.freeze();
+    const short_child = try ArrayData.init(allocator, .int32, 4, 0, 0, &.{ null, short_child_values }, &.{}, null, false);
+    defer short_child.release();
+    const invalid = try ArrayData.init(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{short_child}, null, true);
+    defer invalid.release();
+    try std.testing.expectError(error.OffsetValueOutOfBounds, invalid.validate());
+}
+
+test "ArrayData validate struct layout" {
+    const allocator = std.testing.allocator;
+    const child_values = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
+    errdefer child_values.release();
+    child_values.freeze();
+    const child = try ArrayData.init(allocator, .int32, 3, 0, 0, &.{ null, child_values }, &.{}, null, false);
+    defer child.release();
+
+    const field_ty: datatype.DataType = .int32;
+    const fields = [_]datatype.Field{.{ .name = "a", .type = &field_ty }};
+    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &fields } };
+    const data = try ArrayData.init(allocator, struct_ty, 3, 0, 0, &.{null}, &.{child}, null, true);
+    defer data.release();
+    try data.validate();
+
+    const invalid = try ArrayData.init(allocator, struct_ty, 4, 0, 0, &.{null}, &.{child}, null, true);
+    defer invalid.release();
+    try std.testing.expectError(error.ChildLengthTooSmall, invalid.validate());
+}
+
+test "ArrayData validate dictionary layout" {
+    const allocator = std.testing.allocator;
+    const index_values = try Buffer.allocate(allocator, 3 * @sizeOf(i8));
+    errdefer index_values.release();
+    index_values.freeze();
+    defer index_values.release();
+
+    const dict_values = try Buffer.allocate(allocator, 4 * @sizeOf(i32));
+    errdefer dict_values.release();
+    dict_values.freeze();
+    const dict = try ArrayData.init(allocator, .int32, 4, 0, 0, &.{ null, dict_values }, &.{}, null, false);
+    defer dict.release();
+
+    const index_ty: datatype.DataType = .int8;
+    const value_ty: datatype.DataType = .int32;
+    const dict_ty = datatype.DataType{ .dictionary = .{ .index_type = &index_ty, .value_type = &value_ty } };
+    const data = try ArrayData.init(allocator, dict_ty, 3, 0, 0, &.{ null, index_values }, &.{}, dict, true);
+    defer data.release();
+    try data.validate();
+
+    const missing = try ArrayData.init(allocator, dict_ty, 3, 0, 0, &.{ null, index_values.retain() }, &.{}, null, false);
+    defer missing.release();
+    try std.testing.expectError(error.MissingDictionary, missing.validate());
+}
+
+test "ArrayData validate dense union layout" {
+    const allocator = std.testing.allocator;
+    const int_values = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
+    errdefer int_values.release();
+    int_values.freeze();
+    const int_child = try ArrayData.init(allocator, .int32, 2, 0, 0, &.{ null, int_values }, &.{}, null, false);
+    defer int_child.release();
+
+    const bool_values = try Buffer.allocate(allocator, bitmap.byteLen(1));
+    errdefer bool_values.release();
+    bool_values.data[0] = 1;
+    bool_values.freeze();
+    const bool_child = try ArrayData.init(allocator, .bool, 1, 0, 0, &.{ null, bool_values }, &.{}, null, false);
+    defer bool_child.release();
+
+    const type_ids = try Buffer.allocate(allocator, 3);
+    errdefer type_ids.release();
+    type_ids.data[0] = 7;
+    type_ids.data[1] = 8;
+    type_ids.data[2] = 7;
+    type_ids.freeze();
+    defer type_ids.release();
+
+    const offsets = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
+    errdefer offsets.release();
+    writeTestInt(i32, offsets, 0, 0);
+    writeTestInt(i32, offsets, 1, 0);
+    writeTestInt(i32, offsets, 2, 1);
+    offsets.freeze();
+    defer offsets.release();
+
+    const int_ty: datatype.DataType = .int32;
+    const bool_ty: datatype.DataType = .bool;
+    const fields = [_]datatype.Field{
+        .{ .name = "i", .type = &int_ty },
+        .{ .name = "b", .type = &bool_ty },
+    };
+    const ids = [_]i8{ 7, 8 };
+    const union_ty = datatype.DataType{ .dense_union = .{ .fields = &fields, .type_ids = &ids } };
+    const data = try ArrayData.init(allocator, union_ty, 3, 0, 0, &.{ null, type_ids, offsets }, &.{ int_child, bool_child }, null, true);
+    defer data.release();
+    try data.validate();
+
+    const bad_offsets = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
+    errdefer bad_offsets.release();
+    writeTestInt(i32, bad_offsets, 0, 0);
+    writeTestInt(i32, bad_offsets, 1, 1);
+    writeTestInt(i32, bad_offsets, 2, 1);
+    bad_offsets.freeze();
+    defer bad_offsets.release();
+    const invalid = try ArrayData.init(allocator, union_ty, 3, 0, 0, &.{ null, type_ids, bad_offsets }, &.{ int_child, bool_child }, null, true);
+    defer invalid.release();
+    try std.testing.expectError(error.UnionOffsetOutOfBounds, invalid.validate());
 }
 
 test "typeIdFor" {
