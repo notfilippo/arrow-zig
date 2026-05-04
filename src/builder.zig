@@ -318,6 +318,62 @@ pub const BooleanBuilder = struct {
     }
 };
 
+fn OffsetBufferBuilder(comptime Offset: type) type {
+    return struct {
+        const Self = @This();
+
+        buffer: ?*Buffer,
+
+        pub fn init() Self {
+            return .{ .buffer = null };
+        }
+
+        pub fn deinit(self: *Self) void {
+            if (self.buffer) |buf| buf.release();
+            self.buffer = null;
+        }
+
+        pub fn reserveSlots(self: *Self, allocator: Allocator, slots: usize) !void {
+            if (slots == 0) return;
+            const buf = try self.ensureStarted(allocator);
+            try buf.reserve(try checked.mul(slots, @sizeOf(Offset)));
+        }
+
+        pub fn append(self: *Self, allocator: Allocator, value: usize) !void {
+            const buf = try self.ensureStarted(allocator);
+            const index = buf.size / @sizeOf(Offset);
+            try self.reserveSlots(allocator, index + 1);
+            try writeOffset(Offset, buf, index, value);
+            buf.size += @sizeOf(Offset);
+        }
+
+        pub fn appendRepeat(self: *Self, allocator: Allocator, n: usize, value: usize) !void {
+            if (n == 0) return;
+            const buf = try self.ensureStarted(allocator);
+            const start = buf.size / @sizeOf(Offset);
+            try self.reserveSlots(allocator, start + n);
+            for (0..n) |i| try writeOffset(Offset, buf, start + i, value);
+            buf.size += n * @sizeOf(Offset);
+        }
+
+        pub fn finish(self: *Self, allocator: Allocator) !*Buffer {
+            const buf = try self.ensureStarted(allocator);
+            self.buffer = null;
+            buf.freeze();
+            return buf;
+        }
+
+        fn ensureStarted(self: *Self, allocator: Allocator) !*Buffer {
+            if (self.buffer == null) {
+                const buf = try Buffer.allocate(allocator, @sizeOf(Offset));
+                writeOffset(Offset, buf, 0, 0) catch unreachable;
+                self.buffer = buf;
+            }
+            return self.buffer.?;
+        }
+    };
+}
+
 pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
     const Offset = switch (kind) {
         .binary, .utf8 => i32,
@@ -329,7 +385,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
         pub const Array = array.VarBinaryView(kind);
 
         allocator: Allocator,
-        offsets: ?*Buffer,
+        offsets: OffsetBufferBuilder(Offset),
         values: ?*Buffer,
         validity: bitmap.BitmapBuilder,
         len: usize,
@@ -337,7 +393,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
         pub fn init(allocator: Allocator) Self {
             return .{
                 .allocator = allocator,
-                .offsets = null,
+                .offsets = OffsetBufferBuilder(Offset).init(),
                 .values = null,
                 .validity = bitmap.BitmapBuilder.init(),
                 .len = 0,
@@ -345,9 +401,8 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
         }
 
         pub fn deinit(self: *Self) void {
-            if (self.offsets) |buf| buf.release();
+            self.offsets.deinit();
             if (self.values) |buf| buf.release();
-            self.offsets = null;
             self.values = null;
             self.validity.deinit();
             self.len = 0;
@@ -356,8 +411,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
         pub fn reserve(self: *Self, additional: usize, additional_bytes: usize) !void {
             if (additional == 0 and additional_bytes == 0) return;
             const new_len = try checked.add(self.len, additional);
-            const offsets = try self.ensureOffsets();
-            try offsets.reserve(try checked.mul(try checked.add(new_len, 1), @sizeOf(Offset)));
+            try self.offsets.reserveSlots(self.allocator, try checked.add(new_len, 1));
 
             const values = try self.ensureValues();
             try values.reserve(try checked.add(values.size, additional_bytes));
@@ -377,10 +431,8 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
 
         pub fn appendNull(self: *Self) !void {
             try self.reserve(1, 0);
-            const offsets = self.offsets.?;
             const values = self.values.?;
-            try writeOffset(Offset, offsets, self.len + 1, values.size);
-            offsets.size = try checked.mul(self.len + 2, @sizeOf(Offset));
+            try self.offsets.append(self.allocator, values.size);
             self.validity.unsafeAppend(false);
             self.len += 1;
         }
@@ -388,10 +440,8 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
         pub fn appendNulls(self: *Self, n: usize) !void {
             if (n == 0) return;
             try self.reserve(n, 0);
-            const offsets = self.offsets.?;
             const values = self.values.?;
-            for (0..n) |i| try writeOffset(Offset, offsets, self.len + i + 1, values.size);
-            offsets.size = try checked.mul(try checked.add(self.len, n + 1), @sizeOf(Offset));
+            try self.offsets.appendRepeat(self.allocator, n, values.size);
             self.validity.unsafeAppendN(false, n);
             self.len = try checked.add(self.len, n);
         }
@@ -405,7 +455,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             const null_count = self.validity.false_count;
             self.len = 0;
 
-            const offsets_buf = try self.finishOffsets();
+            const offsets_buf = try self.offsets.finish(self.allocator);
             const values_buf = try self.finishValues();
             const validity_buf = try self.validity.finishNullable(self.allocator);
 
@@ -430,20 +480,9 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             @memcpy(values.data[values.size..end], bytes);
             values.size = end;
 
-            const offsets = self.offsets.?;
-            try writeOffset(Offset, offsets, self.len + 1, end);
-            offsets.size = try checked.mul(self.len + 2, @sizeOf(Offset));
+            try self.offsets.append(self.allocator, end);
             self.validity.unsafeAppend(true);
             self.len += 1;
-        }
-
-        fn ensureOffsets(self: *Self) !*Buffer {
-            if (self.offsets == null) {
-                const offsets = try Buffer.allocate(self.allocator, @sizeOf(Offset));
-                writeOffset(Offset, offsets, 0, 0) catch unreachable;
-                self.offsets = offsets;
-            }
-            return self.offsets.?;
         }
 
         fn ensureValues(self: *Self) !*Buffer {
@@ -451,16 +490,6 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
                 self.values = try Buffer.allocate(self.allocator, 0);
             }
             return self.values.?;
-        }
-
-        fn finishOffsets(self: *Self) !*Buffer {
-            const offsets = if (self.offsets) |buf| blk: {
-                self.offsets = null;
-                break :blk buf;
-            } else try Buffer.allocate(self.allocator, @sizeOf(Offset));
-            writeOffset(Offset, offsets, 0, 0) catch unreachable;
-            offsets.freeze();
-            return offsets;
         }
 
         fn finishValues(self: *Self) !*Buffer {
