@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub const TypeId = enum(u8) {
+    null_,
     bool,
     int8,
     int16,
@@ -19,6 +20,17 @@ pub const TypeId = enum(u8) {
     time64,
     timestamp,
     duration,
+    binary,
+    utf8,
+    large_binary,
+    large_utf8,
+    list,
+    large_list,
+    fixed_size_list,
+    struct_,
+    sparse_union,
+    dense_union,
+    dictionary,
 };
 
 /// Temporal resolution for time32, time64, timestamp, and duration types.
@@ -27,11 +39,50 @@ pub const TimeUnit = enum { second, millisecond, microsecond, nanosecond };
 /// Metadata for the timestamp type (unit + optional timezone string).
 pub const TimestampMeta = struct { unit: TimeUnit, tz: ?[]const u8 };
 
-pub const ValidationError = error{InvalidTimeUnit};
+pub const Field = struct {
+    name: []const u8 = "",
+    type: *const DataType,
+    nullable: bool = true,
 
-/// Tagged union of supported logical types. A payload is present only for
-/// parametric types: time32, time64, timestamp, duration.
+    pub fn equals(a: Field, b: Field) bool {
+        return std.mem.eql(u8, a.name, b.name) and
+            a.nullable == b.nullable and
+            DataType.equals(a.type.*, b.type.*);
+    }
+};
+
+pub const ListMeta = struct {
+    child: Field,
+};
+
+pub const FixedSizeListMeta = struct {
+    child: Field,
+    len: usize,
+};
+
+pub const StructMeta = struct {
+    fields: []const Field,
+};
+
+pub const UnionMeta = struct {
+    fields: []const Field,
+    type_ids: []const i8,
+};
+
+pub const DictionaryMeta = struct {
+    index_type: *const DataType,
+    value_type: *const DataType,
+    ordered: bool = false,
+};
+
+pub const ValidationError = error{
+    InvalidTimeUnit,
+    InvalidUnionTypeIds,
+    InvalidDictionaryIndexType,
+};
+
 pub const DataType = union(TypeId) {
+    null_,
     bool,
     int8,
     int16,
@@ -50,6 +101,17 @@ pub const DataType = union(TypeId) {
     time64: TimeUnit,
     timestamp: TimestampMeta,
     duration: TimeUnit,
+    binary,
+    utf8,
+    large_binary,
+    large_utf8,
+    list: ListMeta,
+    large_list: ListMeta,
+    fixed_size_list: FixedSizeListMeta,
+    struct_: StructMeta,
+    sparse_union: UnionMeta,
+    dense_union: UnionMeta,
+    dictionary: DictionaryMeta,
 
     /// Return the TypeId tag without the payload.
     pub fn id(self: DataType) TypeId {
@@ -59,17 +121,21 @@ pub const DataType = union(TypeId) {
     /// Return the physical bit width of a single value.
     pub fn bitWidth(self: DataType) u16 {
         return switch (self) {
+            .null_ => 0,
             .bool => 1,
             .int8, .uint8 => 8,
             .int16, .uint16, .float16 => 16,
             .int32, .uint32, .float32, .date32, .time32 => 32,
             .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration => 64,
+            .binary, .utf8, .large_binary, .large_utf8, .list, .large_list, .fixed_size_list, .struct_, .sparse_union, .dense_union => 0,
+            .dictionary => |meta| meta.index_type.bitWidth(),
         };
     }
 
     /// Return a canonical string name for the type (e.g. "int32", "timestamp").
     pub fn name(self: DataType) []const u8 {
         return switch (self) {
+            .null_ => "null",
             .bool => "bool",
             .int8 => "int8",
             .int16 => "int16",
@@ -88,10 +154,20 @@ pub const DataType = union(TypeId) {
             .time64 => "time64",
             .timestamp => "timestamp",
             .duration => "duration",
+            .binary => "binary",
+            .utf8 => "utf8",
+            .large_binary => "large_binary",
+            .large_utf8 => "large_utf8",
+            .list => "list",
+            .large_list => "large_list",
+            .fixed_size_list => "fixed_size_list",
+            .struct_ => "struct",
+            .sparse_union => "sparse_union",
+            .dense_union => "dense_union",
+            .dictionary => "dictionary",
         };
     }
 
-    /// Validate parametric invariants.
     pub fn validate(self: DataType) ValidationError!void {
         switch (self) {
             .time32 => |unit| switch (unit) {
@@ -102,11 +178,40 @@ pub const DataType = union(TypeId) {
                 .microsecond, .nanosecond => {},
                 .second, .millisecond => return error.InvalidTimeUnit,
             },
+            .list => |meta| try meta.child.type.validate(),
+            .large_list => |meta| try meta.child.type.validate(),
+            .fixed_size_list => |meta| try meta.child.type.validate(),
+            .struct_ => |meta| {
+                for (meta.fields) |field| try field.type.validate();
+            },
+            .sparse_union => |meta| try validateUnionMeta(meta),
+            .dense_union => |meta| try validateUnionMeta(meta),
+            .dictionary => |meta| {
+                try meta.index_type.validate();
+                try meta.value_type.validate();
+                if (!meta.index_type.isInteger()) return error.InvalidDictionaryIndexType;
+            },
             else => {},
         }
     }
 
-    /// Deep equality including parametric metadata (unit, timezone).
+    pub fn isInteger(self: DataType) bool {
+        return switch (self) {
+            .int8, .int16, .int32, .int64, .uint8, .uint16, .uint32, .uint64 => true,
+            else => false,
+        };
+    }
+
+    pub fn childCount(self: DataType) usize {
+        return switch (self) {
+            .list, .large_list => 1,
+            .fixed_size_list => 1,
+            .struct_ => |meta| meta.fields.len,
+            .sparse_union, .dense_union => |meta| meta.fields.len,
+            else => 0,
+        };
+    }
+
     pub fn equals(a: DataType, b: DataType) bool {
         if (a.id() != b.id()) return false;
         return switch (a) {
@@ -115,10 +220,40 @@ pub const DataType = union(TypeId) {
             .duration => a.duration == b.duration,
             .timestamp => a.timestamp.unit == b.timestamp.unit and
                 std.mem.eql(u8, a.timestamp.tz orelse "", b.timestamp.tz orelse ""),
+            .list => Field.equals(a.list.child, b.list.child),
+            .large_list => Field.equals(a.large_list.child, b.large_list.child),
+            .fixed_size_list => a.fixed_size_list.len == b.fixed_size_list.len and
+                Field.equals(a.fixed_size_list.child, b.fixed_size_list.child),
+            .struct_ => fieldsEqual(a.struct_.fields, b.struct_.fields),
+            .sparse_union => unionEqual(a.sparse_union, b.sparse_union),
+            .dense_union => unionEqual(a.dense_union, b.dense_union),
+            .dictionary => DataType.equals(a.dictionary.index_type.*, b.dictionary.index_type.*) and
+                DataType.equals(a.dictionary.value_type.*, b.dictionary.value_type.*) and
+                a.dictionary.ordered == b.dictionary.ordered,
             else => true,
         };
     }
 };
+
+fn validateUnionMeta(meta: UnionMeta) ValidationError!void {
+    if (meta.fields.len != meta.type_ids.len) return error.InvalidUnionTypeIds;
+    for (meta.type_ids) |id| {
+        if (id < 0) return error.InvalidUnionTypeIds;
+    }
+    for (meta.fields) |field| try field.type.validate();
+}
+
+fn fieldsEqual(a: []const Field, b: []const Field) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |left, right| {
+        if (!Field.equals(left, right)) return false;
+    }
+    return true;
+}
+
+fn unionEqual(a: UnionMeta, b: UnionMeta) bool {
+    return fieldsEqual(a.fields, b.fields) and std.mem.eql(i8, a.type_ids, b.type_ids);
+}
 
 test "DataType.equals" {
     try std.testing.expect(DataType.equals(.int32, .int32));
@@ -128,12 +263,18 @@ test "DataType.equals" {
     const ts_c = DataType{ .timestamp = .{ .unit = .millisecond, .tz = "UTC" } };
     try std.testing.expect(DataType.equals(ts_a, ts_b));
     try std.testing.expect(!DataType.equals(ts_a, ts_c));
+
+    const value_ty: DataType = .int32;
+    const list_a = DataType{ .list = .{ .child = .{ .name = "item", .type = &value_ty } } };
+    const list_b = DataType{ .list = .{ .child = .{ .name = "item", .type = &value_ty } } };
+    try std.testing.expect(DataType.equals(list_a, list_b));
 }
 
 test "DataType.bitWidth" {
     try std.testing.expectEqual(@as(u16, 1), DataType.bitWidth(.bool));
     try std.testing.expectEqual(@as(u16, 32), DataType.bitWidth(.int32));
     try std.testing.expectEqual(@as(u16, 64), DataType.bitWidth(.float64));
+    try std.testing.expectEqual(@as(u16, 0), DataType.bitWidth(.binary));
 }
 
 test "DataType.validate" {
@@ -141,4 +282,9 @@ test "DataType.validate" {
     try DataType.validate(.{ .time64 = .nanosecond });
     try std.testing.expectError(error.InvalidTimeUnit, DataType.validate(.{ .time32 = .microsecond }));
     try std.testing.expectError(error.InvalidTimeUnit, DataType.validate(.{ .time64 = .millisecond }));
+
+    const index_ty: DataType = .float64;
+    const value_ty: DataType = .int32;
+    const dict = DataType{ .dictionary = .{ .index_type = &index_ty, .value_type = &value_ty } };
+    try std.testing.expectError(error.InvalidDictionaryIndexType, dict.validate());
 }
