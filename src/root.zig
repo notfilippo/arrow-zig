@@ -36,6 +36,7 @@ pub const ViewError = arr.ViewError;
 pub const SliceError = arr.SliceError;
 pub const ValidateError = arr.ValidateError;
 pub const ArrayKind = arr.ArrayKind;
+pub const VarBinaryKind = arr.VarBinaryKind;
 pub const typeIdFor = arr.typeIdFor;
 pub const dataTypeAcceptsZigType = arr.dataTypeAcceptsZigType;
 
@@ -47,9 +48,18 @@ pub const Time32Array = arr.Time32Array;
 pub const Time64Array = arr.Time64Array;
 pub const TimestampArray = arr.TimestampArray;
 pub const DurationArray = arr.DurationArray;
+pub const BinaryArray = arr.BinaryArray;
+pub const Utf8Array = arr.Utf8Array;
+pub const LargeBinaryArray = arr.LargeBinaryArray;
+pub const LargeUtf8Array = arr.LargeUtf8Array;
 
 pub const NumericBuilder = bld.NumericBuilder;
 pub const BooleanBuilder = bld.BooleanBuilder;
+pub const VarBinaryBuilder = bld.VarBinaryBuilder;
+pub const BinaryBuilder = bld.BinaryBuilder;
+pub const Utf8Builder = bld.Utf8Builder;
+pub const LargeBinaryBuilder = bld.LargeBinaryBuilder;
+pub const LargeUtf8Builder = bld.LargeUtf8Builder;
 
 // Convenience type aliases.
 pub const Int8Array = NumericArray(i8);

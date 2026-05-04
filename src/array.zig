@@ -544,8 +544,7 @@ pub fn FixedWidthView(comptime kind: ArrayKind) type {
         }
 
         pub fn isValid(self: Self, i: usize) bool {
-            const validity = self.data.buffers[0] orelse return true;
-            return bitmap.getBit(validity.dataSlice(), self.offset + i);
+            return slotIsValid(self.data, self.offset, i);
         }
 
         pub fn isNull(self: Self, i: usize) bool {
@@ -553,13 +552,7 @@ pub fn FixedWidthView(comptime kind: ArrayKind) type {
         }
 
         pub fn nullCount(self: Self) usize {
-            const validity = self.data.buffers[0];
-            return bitmap.nullCountFor(
-                if (validity) |v| v.dataSlice() else null,
-                self.offset,
-                self.len,
-                self.null_count,
-            );
+            return viewNullCount(self.data, self.offset, self.len, self.null_count);
         }
 
         /// Zero-copy non-owning slice. Clamps length; panics on overflow.
@@ -617,6 +610,131 @@ pub fn FixedWidthView(comptime kind: ArrayKind) type {
     };
 }
 
+pub const VarBinaryKind = enum {
+    binary,
+    utf8,
+    large_binary,
+    large_utf8,
+};
+
+fn offsetTypeFor(comptime kind: VarBinaryKind) type {
+    return switch (kind) {
+        .binary, .utf8 => i32,
+        .large_binary, .large_utf8 => i64,
+    };
+}
+
+fn dataTypeMatchesVarBinary(comptime kind: VarBinaryKind, ty: datatype.DataType) bool {
+    return switch (kind) {
+        .binary => ty == .binary,
+        .utf8 => ty == .utf8,
+        .large_binary => ty == .large_binary,
+        .large_utf8 => ty == .large_utf8,
+    };
+}
+
+pub fn VarBinaryView(comptime kind: VarBinaryKind) type {
+    const Offset = offsetTypeFor(kind);
+
+    return struct {
+        const Self = @This();
+
+        data: *const ArrayData,
+        offset: usize,
+        len: usize,
+        null_count: usize,
+
+        pub fn fromData(data: *const ArrayData) ViewError!Self {
+            if (!dataTypeMatchesVarBinary(kind, data.type)) return error.TypeMismatch;
+            if (data.buffers.len < 3 or data.buffers[2] == null) return error.InvalidBufferLayout;
+            if (data.len > 0 and data.buffers[1] == null) return error.InvalidBufferLayout;
+            return .{
+                .data = data,
+                .offset = data.offset,
+                .len = data.len,
+                .null_count = data.null_count,
+            };
+        }
+
+        pub fn dataType(self: Self) datatype.DataType {
+            return self.data.type;
+        }
+
+        pub fn baseData(self: Self) *const ArrayData {
+            return self.data;
+        }
+
+        pub fn valueBytes(self: Self, i: usize) []const u8 {
+            const offsets = self.data.buffers[1].?;
+            const values = self.data.buffers[2].?;
+            const start: usize = @intCast(readInt(Offset, offsets, self.offset + i));
+            const end: usize = @intCast(readInt(Offset, offsets, self.offset + i + 1));
+            return values.dataSlice()[start..end];
+        }
+
+        pub fn value(self: Self, i: usize) []const u8 {
+            return self.valueBytes(i);
+        }
+
+        pub fn isValid(self: Self, i: usize) bool {
+            return slotIsValid(self.data, self.offset, i);
+        }
+
+        pub fn isNull(self: Self, i: usize) bool {
+            return !self.isValid(i);
+        }
+
+        pub fn nullCount(self: Self) usize {
+            return viewNullCount(self.data, self.offset, self.len, self.null_count);
+        }
+
+        pub fn slice(self: Self, off: usize, length: usize) Self {
+            const clamped = clampedLen(self.len, off, length) catch unreachable;
+            return .{
+                .data = self.data,
+                .offset = self.offset + off,
+                .len = clamped,
+                .null_count = slicedNullCount(self.null_count, self.len, off, clamped),
+            };
+        }
+
+        pub fn sliceChecked(self: Self, off: usize, length: usize) SliceError!Self {
+            const clamped = try clampedLen(self.len, off, length);
+            return .{
+                .data = self.data,
+                .offset = self.offset + off,
+                .len = clamped,
+                .null_count = slicedNullCount(self.null_count, self.len, off, clamped),
+            };
+        }
+
+        pub fn sliceOwned(self: Self, off: usize, length: usize) !*ArrayData {
+            const clamped = try clampedLen(self.len, off, length);
+            return self.data.slice(off, clamped);
+        }
+
+        pub fn cloneRetained(self: Self) !*ArrayData {
+            return self.data.cloneRetained();
+        }
+    };
+}
+
+fn slotIsValid(data: *const ArrayData, offset: usize, i: usize) bool {
+    const validity = data.buffers[0] orelse return true;
+    return bitmap.getBit(validity.dataSlice(), offset + i);
+}
+
+fn viewNullCount(data: *const ArrayData, offset: usize, len: usize, hint: usize) usize {
+    if (data.type.id() == .null_) return len;
+    const validity = data.buffers[0];
+    return bitmap.nullCountFor(
+        if (validity) |v| v.dataSlice() else null,
+        offset,
+        len,
+        hint,
+    );
+}
+
 fn clampedLen(current_len: usize, off: usize, requested: usize) SliceError!usize {
     if (off > current_len) return error.OffsetOutOfBounds;
     return @min(requested, current_len - off);
@@ -638,6 +756,10 @@ pub const Time32Array = FixedWidthView(.time32);
 pub const Time64Array = FixedWidthView(.time64);
 pub const TimestampArray = FixedWidthView(.timestamp);
 pub const DurationArray = FixedWidthView(.duration);
+pub const BinaryArray = VarBinaryView(.binary);
+pub const Utf8Array = VarBinaryView(.utf8);
+pub const LargeBinaryArray = VarBinaryView(.large_binary);
+pub const LargeUtf8Array = VarBinaryView(.large_utf8);
 
 // ---------------------------------------------------------------------------
 // Tests: ArrayData
