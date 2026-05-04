@@ -13,6 +13,7 @@ pub const buffer = @import("buffer.zig");
 pub const datatype = @import("datatype.zig");
 pub const bitmap = @import("bitmap.zig");
 pub const ref_count = refcount;
+pub const cdi = @import("cdi.zig");
 
 const arr = @import("array.zig");
 const bld = @import("builder.zig");
@@ -64,6 +65,11 @@ pub const BinaryBuilder = bld.BinaryBuilder;
 pub const Utf8Builder = bld.Utf8Builder;
 pub const LargeBinaryBuilder = bld.LargeBinaryBuilder;
 pub const LargeUtf8Builder = bld.LargeUtf8Builder;
+
+pub const ArrowSchema = cdi.ArrowSchema;
+pub const ArrowArray = cdi.ArrowArray;
+pub const exportType = cdi.exportType;
+pub const exportArray = cdi.exportArray;
 
 // Convenience type aliases.
 pub const Int8Array = NumericArray(i8);
