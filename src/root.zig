@@ -37,6 +37,8 @@ pub const SliceError = arr.SliceError;
 pub const ValidateError = arr.ValidateError;
 pub const ArrayKind = arr.ArrayKind;
 pub const VarBinaryKind = arr.VarBinaryKind;
+pub const ListKind = arr.ListKind;
+pub const ValueRange = arr.ValueRange;
 pub const typeIdFor = arr.typeIdFor;
 pub const dataTypeAcceptsZigType = arr.dataTypeAcceptsZigType;
 
@@ -52,6 +54,8 @@ pub const BinaryArray = arr.BinaryArray;
 pub const Utf8Array = arr.Utf8Array;
 pub const LargeBinaryArray = arr.LargeBinaryArray;
 pub const LargeUtf8Array = arr.LargeUtf8Array;
+pub const ListArray = arr.ListArray;
+pub const LargeListArray = arr.LargeListArray;
 
 pub const NumericBuilder = bld.NumericBuilder;
 pub const BooleanBuilder = bld.BooleanBuilder;

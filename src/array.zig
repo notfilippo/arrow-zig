@@ -719,6 +719,120 @@ pub fn VarBinaryView(comptime kind: VarBinaryKind) type {
     };
 }
 
+pub const ListKind = enum {
+    list,
+    large_list,
+};
+
+fn offsetTypeForList(comptime kind: ListKind) type {
+    return switch (kind) {
+        .list => i32,
+        .large_list => i64,
+    };
+}
+
+fn dataTypeMatchesList(comptime kind: ListKind, ty: datatype.DataType) bool {
+    return switch (kind) {
+        .list => ty.id() == .list,
+        .large_list => ty.id() == .large_list,
+    };
+}
+
+pub const ValueRange = struct {
+    offset: usize,
+    len: usize,
+};
+
+pub fn ListView(comptime kind: ListKind) type {
+    const Offset = offsetTypeForList(kind);
+
+    return struct {
+        const Self = @This();
+
+        data: *const ArrayData,
+        offset: usize,
+        len: usize,
+        null_count: usize,
+
+        pub fn fromData(data: *const ArrayData) ViewError!Self {
+            if (!dataTypeMatchesList(kind, data.type)) return error.TypeMismatch;
+            if (data.buffers.len < 2 or data.children.len != 1) return error.InvalidBufferLayout;
+            if (data.len > 0 and data.buffers[1] == null) return error.InvalidBufferLayout;
+            return .{
+                .data = data,
+                .offset = data.offset,
+                .len = data.len,
+                .null_count = data.null_count,
+            };
+        }
+
+        pub fn dataType(self: Self) datatype.DataType {
+            return self.data.type;
+        }
+
+        pub fn baseData(self: Self) *const ArrayData {
+            return self.data;
+        }
+
+        pub fn childData(self: Self) *const ArrayData {
+            return self.data.children[0];
+        }
+
+        pub fn valueRange(self: Self, i: usize) ValueRange {
+            const offsets = self.data.buffers[1].?;
+            const start: usize = @intCast(readInt(Offset, offsets, self.offset + i));
+            const end: usize = @intCast(readInt(Offset, offsets, self.offset + i + 1));
+            return .{ .offset = start, .len = end - start };
+        }
+
+        pub fn valueOwned(self: Self, i: usize) !*ArrayData {
+            const range = self.valueRange(i);
+            return self.data.children[0].slice(range.offset, range.len);
+        }
+
+        pub fn isValid(self: Self, i: usize) bool {
+            return slotIsValid(self.data, self.offset, i);
+        }
+
+        pub fn isNull(self: Self, i: usize) bool {
+            return !self.isValid(i);
+        }
+
+        pub fn nullCount(self: Self) usize {
+            return viewNullCount(self.data, self.offset, self.len, self.null_count);
+        }
+
+        pub fn slice(self: Self, off: usize, length: usize) Self {
+            const clamped = clampedLen(self.len, off, length) catch unreachable;
+            return .{
+                .data = self.data,
+                .offset = self.offset + off,
+                .len = clamped,
+                .null_count = slicedNullCount(self.null_count, self.len, off, clamped),
+            };
+        }
+
+        pub fn sliceChecked(self: Self, off: usize, length: usize) SliceError!Self {
+            const clamped = try clampedLen(self.len, off, length);
+            return .{
+                .data = self.data,
+                .offset = self.offset + off,
+                .len = clamped,
+                .null_count = slicedNullCount(self.null_count, self.len, off, clamped),
+            };
+        }
+
+        pub fn sliceOwned(self: Self, off: usize, length: usize) !*ArrayData {
+            const clamped = try clampedLen(self.len, off, length);
+            return self.data.slice(off, clamped);
+        }
+
+        pub fn cloneRetained(self: Self) !*ArrayData {
+            return self.data.cloneRetained();
+        }
+    };
+}
+
 fn slotIsValid(data: *const ArrayData, offset: usize, i: usize) bool {
     const validity = data.buffers[0] orelse return true;
     return bitmap.getBit(validity.dataSlice(), offset + i);
@@ -760,6 +874,8 @@ pub const BinaryArray = VarBinaryView(.binary);
 pub const Utf8Array = VarBinaryView(.utf8);
 pub const LargeBinaryArray = VarBinaryView(.large_binary);
 pub const LargeUtf8Array = VarBinaryView(.large_utf8);
+pub const ListArray = ListView(.list);
+pub const LargeListArray = ListView(.large_list);
 
 // ---------------------------------------------------------------------------
 // Tests: ArrayData
@@ -1195,6 +1311,79 @@ test "ArrayData validate dense union layout" {
     const invalid = try ArrayData.init(allocator, union_ty, 3, 0, 0, &.{ null, type_ids, bad_offsets }, &.{ int_child, bool_child }, null, true);
     defer invalid.release();
     try std.testing.expectError(error.UnionOffsetOutOfBounds, invalid.validate());
+}
+
+test "ListArray value ranges and owned values" {
+    const allocator = std.testing.allocator;
+    const bld = @import("builder.zig");
+    var values_builder = bld.NumericBuilder(i32).init(allocator);
+    defer values_builder.deinit();
+    try values_builder.appendSlice(&.{ 10, 20, 30, 40, 50 });
+    const child = try values_builder.finish();
+    defer child.release();
+
+    const offsets = try Buffer.allocate(allocator, 4 * @sizeOf(i32));
+    errdefer offsets.release();
+    writeTestInt(i32, offsets, 0, 0);
+    writeTestInt(i32, offsets, 1, 2);
+    writeTestInt(i32, offsets, 2, 2);
+    writeTestInt(i32, offsets, 3, 5);
+    offsets.freeze();
+    defer offsets.release();
+
+    const value_ty: datatype.DataType = .int32;
+    const list_ty = datatype.DataType{ .list = .{ .child = .{ .name = "item", .type = &value_ty } } };
+    const data = try ArrayData.init(allocator, list_ty, 3, 0, 0, &.{ null, offsets }, &.{child}, null, true);
+    defer data.release();
+    try data.validate();
+
+    const arr = try ListArray.fromData(data);
+    try std.testing.expectEqual(@as(usize, 3), arr.len);
+    try std.testing.expectEqual(@as(usize, 0), arr.nullCount());
+
+    const r0 = arr.valueRange(0);
+    try std.testing.expectEqual(@as(usize, 0), r0.offset);
+    try std.testing.expectEqual(@as(usize, 2), r0.len);
+
+    const r1 = arr.valueRange(1);
+    try std.testing.expectEqual(@as(usize, 2), r1.offset);
+    try std.testing.expectEqual(@as(usize, 0), r1.len);
+
+    const values = try arr.valueOwned(2);
+    defer values.release();
+    const values_arr = try NumericArray(i32).fromData(values);
+    try std.testing.expectEqual(@as(usize, 3), values_arr.len);
+    try std.testing.expectEqual(@as(i32, 30), values_arr.value(0));
+    try std.testing.expectEqual(@as(i32, 50), values_arr.value(2));
+}
+
+test "LargeListArray uses large offsets" {
+    const allocator = std.testing.allocator;
+    const child_values = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
+    errdefer child_values.release();
+    child_values.freeze();
+    const child = try ArrayData.init(allocator, .int32, 2, 0, 0, &.{ null, child_values }, &.{}, null, false);
+    defer child.release();
+
+    const offsets = try Buffer.allocate(allocator, 3 * @sizeOf(i64));
+    errdefer offsets.release();
+    writeTestInt(i64, offsets, 0, 0);
+    writeTestInt(i64, offsets, 1, 1);
+    writeTestInt(i64, offsets, 2, 2);
+    offsets.freeze();
+    defer offsets.release();
+
+    const value_ty: datatype.DataType = .int32;
+    const list_ty = datatype.DataType{ .large_list = .{ .child = .{ .name = "item", .type = &value_ty } } };
+    const data = try ArrayData.init(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null, true);
+    defer data.release();
+    try data.validate();
+
+    const arr = try LargeListArray.fromData(data);
+    const r = arr.valueRange(1);
+    try std.testing.expectEqual(@as(usize, 1), r.offset);
+    try std.testing.expectEqual(@as(usize, 1), r.len);
+    try std.testing.expectEqual(.large_list, arr.dataType().id());
 }
 
 test "typeIdFor" {
