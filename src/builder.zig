@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const checked = @import("checked.zig");
 const bitmap = @import("bitmap.zig");
 const datatype = @import("datatype.zig");
+const offset_data = @import("offsets.zig");
 const array = @import("array.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("buffer.zig").Buffer;
@@ -318,62 +319,6 @@ pub const BooleanBuilder = struct {
     }
 };
 
-fn OffsetBufferBuilder(comptime Offset: type) type {
-    return struct {
-        const Self = @This();
-
-        buffer: ?*Buffer,
-
-        pub fn init() Self {
-            return .{ .buffer = null };
-        }
-
-        pub fn deinit(self: *Self) void {
-            if (self.buffer) |buf| buf.release();
-            self.buffer = null;
-        }
-
-        pub fn reserveSlots(self: *Self, allocator: Allocator, slots: usize) !void {
-            if (slots == 0) return;
-            const buf = try self.ensureStarted(allocator);
-            try buf.reserve(try checked.mul(slots, @sizeOf(Offset)));
-        }
-
-        pub fn append(self: *Self, allocator: Allocator, value: usize) !void {
-            const buf = try self.ensureStarted(allocator);
-            const index = buf.size / @sizeOf(Offset);
-            try self.reserveSlots(allocator, index + 1);
-            try writeOffset(Offset, buf, index, value);
-            buf.size += @sizeOf(Offset);
-        }
-
-        pub fn appendRepeat(self: *Self, allocator: Allocator, n: usize, value: usize) !void {
-            if (n == 0) return;
-            const buf = try self.ensureStarted(allocator);
-            const start = buf.size / @sizeOf(Offset);
-            try self.reserveSlots(allocator, start + n);
-            for (0..n) |i| try writeOffset(Offset, buf, start + i, value);
-            buf.size += n * @sizeOf(Offset);
-        }
-
-        pub fn finish(self: *Self, allocator: Allocator) !*Buffer {
-            const buf = try self.ensureStarted(allocator);
-            self.buffer = null;
-            buf.freeze();
-            return buf;
-        }
-
-        fn ensureStarted(self: *Self, allocator: Allocator) !*Buffer {
-            if (self.buffer == null) {
-                const buf = try Buffer.allocate(allocator, @sizeOf(Offset));
-                writeOffset(Offset, buf, 0, 0) catch unreachable;
-                self.buffer = buf;
-            }
-            return self.buffer.?;
-        }
-    };
-}
-
 pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
     const Offset = switch (kind) {
         .binary, .utf8 => i32,
@@ -385,7 +330,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
         pub const Array = array.VarBinaryView(kind);
 
         allocator: Allocator,
-        offsets: OffsetBufferBuilder(Offset),
+        offsets: offset_data.Builder(Offset),
         values: ?*Buffer,
         validity: bitmap.BitmapBuilder,
         len: usize,
@@ -393,7 +338,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
         pub fn init(allocator: Allocator) Self {
             return .{
                 .allocator = allocator,
-                .offsets = OffsetBufferBuilder(Offset).init(),
+                .offsets = offset_data.Builder(Offset).init(),
                 .values = null,
                 .validity = bitmap.BitmapBuilder.init(),
                 .len = 0,
@@ -476,7 +421,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             try self.reserve(1, bytes.len);
             const values = self.values.?;
             const end = try checked.add(values.size, bytes.len);
-            try ensureOffsetRange(Offset, end);
+            try offset_data.ensureRange(Offset, end);
             @memcpy(values.data[values.size..end], bytes);
             values.size = end;
 
@@ -515,22 +460,6 @@ fn dataTypeForKind(comptime kind: array.VarBinaryKind) datatype.DataType {
         .large_binary => .large_binary,
         .large_utf8 => .large_utf8,
     };
-}
-
-fn ensureOffsetRange(comptime Offset: type, value: usize) !void {
-    if (value > maxOffsetValue(Offset)) return error.Overflow;
-}
-
-fn maxOffsetValue(comptime Offset: type) usize {
-    const max = std.math.maxInt(Offset);
-    if (@bitSizeOf(usize) < @bitSizeOf(Offset)) return std.math.maxInt(usize);
-    return @intCast(max);
-}
-
-fn writeOffset(comptime Offset: type, buffer: *Buffer, index: usize, value: usize) !void {
-    try ensureOffsetRange(Offset, value);
-    const start = index * @sizeOf(Offset);
-    std.mem.writeInt(Offset, buffer.data[start..][0..@sizeOf(Offset)], @intCast(value), .little);
 }
 
 // ---------------------------------------------------------------------------

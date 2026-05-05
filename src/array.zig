@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const checked = @import("checked.zig");
 const datatype = @import("datatype.zig");
 const bitmap = @import("bitmap.zig");
+const offset_data = @import("offsets.zig");
 const Buffer = @import("buffer.zig").Buffer;
 const RefCount = @import("refcount.zig").RefCount;
 
@@ -292,10 +293,10 @@ fn validateUnion(data: *const ArrayData, total: usize, meta: datatype.UnionMeta,
 
     var last_offsets = [_]usize{0} ** 128;
     for (0..data.len) |i| {
-        const code = readInt(i8, type_ids, data.offset + i);
+        const code = offset_data.read(i8, type_ids, data.offset + i);
         const child_index = childIndexFor(meta, code) orelse return error.UnionTypeIdOutOfBounds;
         if (offsets) |offset_buf| {
-            const off = try offsetToUsize(readInt(i32, offset_buf, data.offset + i));
+            const off = try offset_data.toUsize(offset_data.read(i32, offset_buf, data.offset + i));
             if (off >= data.children[child_index].len) return error.UnionOffsetOutOfBounds;
             const code_index: usize = @intCast(code);
             if (off < last_offsets[code_index]) return error.UnionOffsetNotMonotonic;
@@ -326,15 +327,7 @@ fn validateOffsetsBuffer(data: *const ArrayData, total: usize, comptime Offset: 
 }
 
 fn validateOffsets(data: *const ArrayData, offsets: *Buffer, limit: usize, comptime Offset: type) ValidateError!void {
-    if (data.len == 0) return;
-    var previous = try offsetToUsize(readInt(Offset, offsets, data.offset));
-    if (previous > limit) return error.OffsetValueOutOfBounds;
-    for (1..data.len + 1) |i| {
-        const current = try offsetToUsize(readInt(Offset, offsets, data.offset + i));
-        if (current < previous) return error.OffsetsNotMonotonic;
-        if (current > limit) return error.OffsetValueOutOfBounds;
-        previous = current;
-    }
+    try offset_data.validateMonotonic(Offset, offsets, data.offset, data.len, limit);
 }
 
 fn childIndexFor(meta: datatype.UnionMeta, code: i8) ?usize {
@@ -345,20 +338,8 @@ fn childIndexFor(meta: datatype.UnionMeta, code: i8) ?usize {
     return null;
 }
 
-fn readInt(comptime T: type, buffer: *Buffer, index: usize) T {
-    const start = index * @sizeOf(T);
-    const bytes = buffer.dataSlice()[start..][0..@sizeOf(T)];
-    return std.mem.readInt(T, bytes, .little);
-}
-
 fn writeTestInt(comptime T: type, buffer: *Buffer, index: usize, value: T) void {
-    const start = index * @sizeOf(T);
-    std.mem.writeInt(T, buffer.data[start..][0..@sizeOf(T)], value, .little);
-}
-
-fn offsetToUsize(value: anytype) ValidateError!usize {
-    if (value < 0) return error.NegativeOffset;
-    return @intCast(value);
+    offset_data.write(T, buffer, index, @intCast(value)) catch unreachable;
 }
 
 // ---------------------------------------------------------------------------
@@ -655,9 +636,8 @@ pub fn VarBinaryView(comptime kind: VarBinaryKind) type {
         pub fn valueBytes(self: Self, i: usize) []const u8 {
             const offsets = self.data.buffers[1].?;
             const values = self.data.buffers[2].?;
-            const start: usize = @intCast(readInt(Offset, offsets, self.offset + i));
-            const end: usize = @intCast(readInt(Offset, offsets, self.offset + i + 1));
-            return values.dataSlice()[start..end];
+            const range = offset_data.rangeAt(Offset, offsets, self.offset + i);
+            return values.dataSlice()[range.offset..][0..range.len];
         }
 
         pub fn value(self: Self, i: usize) []const u8 {
@@ -726,10 +706,7 @@ fn dataTypeMatchesList(comptime kind: ListKind, ty: datatype.DataType) bool {
     };
 }
 
-pub const ValueRange = struct {
-    offset: usize,
-    len: usize,
-};
+pub const ValueRange = offset_data.ValueRange;
 
 pub fn ListView(comptime kind: ListKind) type {
     const Offset = offsetTypeForList(kind);
@@ -768,9 +745,7 @@ pub fn ListView(comptime kind: ListKind) type {
 
         pub fn valueRange(self: Self, i: usize) ValueRange {
             const offsets = self.data.buffers[1].?;
-            const start: usize = @intCast(readInt(Offset, offsets, self.offset + i));
-            const end: usize = @intCast(readInt(Offset, offsets, self.offset + i + 1));
-            return .{ .offset = start, .len = end - start };
+            return offset_data.rangeAt(Offset, offsets, self.offset + i);
         }
 
         pub fn valueOwned(self: Self, i: usize) !*ArrayData {
