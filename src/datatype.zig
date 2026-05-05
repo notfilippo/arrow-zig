@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 pub const TypeId = enum(u8) {
     null_,
@@ -80,6 +81,48 @@ pub const ValidationError = error{
     InvalidUnionTypeIds,
     InvalidDictionaryIndexType,
 };
+
+pub fn cloneOwned(allocator: Allocator, ty: DataType) Allocator.Error!DataType {
+    return switch (ty) {
+        .timestamp => |meta| .{ .timestamp = .{
+            .unit = meta.unit,
+            .tz = if (meta.tz) |tz| try allocator.dupe(u8, tz) else null,
+        } },
+        .list => |meta| .{ .list = .{ .child = try cloneField(allocator, meta.child) } },
+        .large_list => |meta| .{ .large_list = .{ .child = try cloneField(allocator, meta.child) } },
+        .fixed_size_list => |meta| .{ .fixed_size_list = .{
+            .child = try cloneField(allocator, meta.child),
+            .len = meta.len,
+        } },
+        .struct_ => |meta| .{ .struct_ = .{ .fields = try cloneFields(allocator, meta.fields) } },
+        .sparse_union => |meta| .{ .sparse_union = try cloneUnionMeta(allocator, meta) },
+        .dense_union => |meta| .{ .dense_union = try cloneUnionMeta(allocator, meta) },
+        .dictionary => |meta| .{ .dictionary = .{
+            .index_type = try cloneTypePtr(allocator, meta.index_type.*),
+            .value_type = try cloneTypePtr(allocator, meta.value_type.*),
+            .ordered = meta.ordered,
+        } },
+        else => ty,
+    };
+}
+
+pub fn deinitOwned(allocator: Allocator, ty: *DataType) void {
+    switch (ty.*) {
+        .timestamp => |meta| if (meta.tz) |tz| allocator.free(tz),
+        .list => |meta| deinitField(allocator, meta.child),
+        .large_list => |meta| deinitField(allocator, meta.child),
+        .fixed_size_list => |meta| deinitField(allocator, meta.child),
+        .struct_ => |meta| deinitFields(allocator, meta.fields),
+        .sparse_union => |meta| deinitUnionMeta(allocator, meta),
+        .dense_union => |meta| deinitUnionMeta(allocator, meta),
+        .dictionary => |meta| {
+            deinitTypePtr(allocator, meta.index_type);
+            deinitTypePtr(allocator, meta.value_type);
+        },
+        else => {},
+    }
+    ty.* = .null_;
+}
 
 pub const DataType = union(TypeId) {
     null_,
@@ -235,6 +278,73 @@ pub const DataType = union(TypeId) {
     }
 };
 
+fn cloneTypePtr(allocator: Allocator, ty: DataType) Allocator.Error!*const DataType {
+    const ptr = try allocator.create(DataType);
+    errdefer allocator.destroy(ptr);
+    ptr.* = try cloneOwned(allocator, ty);
+    return ptr;
+}
+
+fn cloneField(allocator: Allocator, field: Field) Allocator.Error!Field {
+    const name = try allocator.dupe(u8, field.name);
+    errdefer allocator.free(name);
+
+    const ty = try cloneTypePtr(allocator, field.type.*);
+    return .{
+        .name = name,
+        .type = ty,
+        .nullable = field.nullable,
+    };
+}
+
+fn cloneFields(allocator: Allocator, fields: []const Field) Allocator.Error![]const Field {
+    const cloned = try allocator.alloc(Field, fields.len);
+    errdefer allocator.free(cloned);
+
+    var cloned_len: usize = 0;
+    errdefer {
+        for (cloned[0..cloned_len]) |field| deinitField(allocator, field);
+    }
+
+    for (fields, 0..) |field, i| {
+        cloned[i] = try cloneField(allocator, field);
+        cloned_len += 1;
+    }
+    return cloned;
+}
+
+fn cloneUnionMeta(allocator: Allocator, meta: UnionMeta) Allocator.Error!UnionMeta {
+    const fields = try cloneFields(allocator, meta.fields);
+    errdefer deinitFields(allocator, fields);
+
+    const type_ids = try allocator.dupe(i8, meta.type_ids);
+    return .{
+        .fields = fields,
+        .type_ids = type_ids,
+    };
+}
+
+fn deinitTypePtr(allocator: Allocator, ty: *const DataType) void {
+    const ptr = @constCast(ty);
+    deinitOwned(allocator, ptr);
+    allocator.destroy(ptr);
+}
+
+fn deinitField(allocator: Allocator, field: Field) void {
+    allocator.free(field.name);
+    deinitTypePtr(allocator, field.type);
+}
+
+fn deinitFields(allocator: Allocator, fields: []const Field) void {
+    for (fields) |field| deinitField(allocator, field);
+    allocator.free(fields);
+}
+
+fn deinitUnionMeta(allocator: Allocator, meta: UnionMeta) void {
+    deinitFields(allocator, meta.fields);
+    allocator.free(meta.type_ids);
+}
+
 fn validateUnionMeta(meta: UnionMeta) ValidationError!void {
     if (meta.fields.len != meta.type_ids.len) return error.InvalidUnionTypeIds;
     for (meta.type_ids) |id| {
@@ -287,4 +397,19 @@ test "DataType.validate" {
     const value_ty: DataType = .int32;
     const dict = DataType{ .dictionary = .{ .index_type = &index_ty, .value_type = &value_ty } };
     try std.testing.expectError(error.InvalidDictionaryIndexType, dict.validate());
+}
+
+test "DataType cloneOwned owns child pointers" {
+    const allocator = std.testing.allocator;
+    const child_ty: DataType = .int32;
+    const fields = [_]Field{.{ .name = "items", .type = &child_ty }};
+    const source = DataType{ .struct_ = .{ .fields = &fields } };
+
+    var cloned = try cloneOwned(allocator, source);
+    defer deinitOwned(allocator, &cloned);
+
+    try std.testing.expect(DataType.equals(source, cloned));
+    try std.testing.expect(cloned.struct_.fields.ptr != fields[0..].ptr);
+    try std.testing.expect(cloned.struct_.fields[0].type != &child_ty);
+    try std.testing.expectEqualStrings("items", cloned.struct_.fields[0].name);
 }

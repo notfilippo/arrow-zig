@@ -47,6 +47,9 @@ pub const ArrayData = struct {
         const self = try allocator.create(ArrayData);
         errdefer allocator.destroy(self);
 
+        var owned_type = try datatype.cloneOwned(allocator, ty);
+        errdefer datatype.deinitOwned(allocator, &owned_type);
+
         const owned_buffers = try allocator.alloc(?*Buffer, buffers.len);
         errdefer allocator.free(owned_buffers);
 
@@ -75,7 +78,7 @@ pub const ArrayData = struct {
 
         self.* = .{
             .allocator = allocator,
-            .type = ty,
+            .type = owned_type,
             .len = len,
             .offset = offset,
             .null_count = null_count,
@@ -145,6 +148,7 @@ pub const ArrayData = struct {
         if (self.dictionary) |dict| dict.release();
         allocator.free(self.buffers);
         allocator.free(self.children);
+        datatype.deinitOwned(allocator, &self.type);
         allocator.destroy(self);
     }
 };
@@ -908,6 +912,33 @@ test "ArrayData cloneRetained retains buffers" {
     try std.testing.expectEqual(@as(usize, 2), values.refCount());
     try std.testing.expectEqual(@as(usize, 4), clone.len);
     try std.testing.expectEqual(@as(usize, 0), clone.offset);
+}
+
+test "ArrayData init owns nested type metadata" {
+    const allocator = std.testing.allocator;
+    const values = try Buffer.allocate(allocator, 4 * @sizeOf(i32));
+    errdefer values.release();
+    values.freeze();
+    const child = try ArrayData.init(allocator, .int32, 4, 0, 0, &.{ null, values }, &.{}, null, false);
+    defer child.release();
+
+    const child_ty: datatype.DataType = .int32;
+    const fields = [_]datatype.Field{.{ .name = "items", .type = &child_ty }};
+    const ty = datatype.DataType{ .list = .{ .child = fields[0] } };
+
+    const offsets = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
+    errdefer offsets.release();
+    writeTestInt(i32, offsets, 0, 0);
+    writeTestInt(i32, offsets, 1, 4);
+    offsets.freeze();
+    defer offsets.release();
+
+    const data = try ArrayData.init(allocator, ty, 1, 0, 0, &.{ null, offsets }, &.{child}, null, true);
+    defer data.release();
+
+    try std.testing.expect(data.type.list.child.type != &child_ty);
+    try std.testing.expectEqualStrings("items", data.type.list.child.name);
+    try data.validate();
 }
 
 test "ArrayData init retained retains buffers and children" {
