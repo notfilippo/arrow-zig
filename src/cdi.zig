@@ -1,3 +1,6 @@
+//! Arrow C Data Interface export for flat arrays.
+//! Child and dictionary export need separate ownership tables, so nested arrays are rejected for now.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const array = @import("array.zig");
