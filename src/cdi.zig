@@ -8,7 +8,7 @@ const datatype = @import("datatype.zig");
 
 const ArrayData = array.ArrayData;
 
-pub const nullable: i64 = 2;
+pub const schema_flag_nullable: i64 = 2;
 
 pub const ArrowSchema = extern struct {
     format: ?[*:0]const u8,
@@ -62,7 +62,7 @@ pub fn exportType(allocator: Allocator, ty: datatype.DataType, out: *ArrowSchema
         .format = format.ptr,
         .name = null,
         .metadata = null,
-        .flags = nullable,
+        .flags = schema_flag_nullable,
         .n_children = 0,
         .children = null,
         .dictionary = null,
@@ -209,7 +209,7 @@ test "exportType primitive schema" {
     defer schema.release.?(&schema);
 
     try std.testing.expectEqualStrings("i", std.mem.span(schema.format.?));
-    try std.testing.expectEqual(nullable, schema.flags);
+    try std.testing.expectEqual(schema_flag_nullable, schema.flags);
     try std.testing.expect(!schemaIsReleased(&schema));
 }
 
