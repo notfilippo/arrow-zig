@@ -160,17 +160,18 @@ fn slicedNullCount(nc: usize, len: usize, off: usize, clamped: usize) usize {
     return unknown_null_count;
 }
 
-const NullLayout = enum { bitmap, none, always_null };
-
 fn validateData(data: *const ArrayData, ty: datatype.DataType, total: usize) (ValidateError || checked.Error || datatype.ValidationError)!void {
+    const layout = ty.layout();
+    try expectBufferCount(data, layout.buffers.len);
+    try validateNulls(data, total, layout.null_layout);
     try validateChildCount(data, ty.childCount());
-    if (ty.id() != .dictionary and data.dictionary != null) return error.UnexpectedDictionary;
+    if (layout.has_dictionary) {
+        if (data.dictionary == null) return error.MissingDictionary;
+    } else if (data.dictionary != null) {
+        return error.UnexpectedDictionary;
+    }
 
     switch (ty) {
-        .null_ => {
-            try expectBufferCount(data, 1);
-            try validateNulls(data, total, .always_null);
-        },
         .bool, .int8, .int16, .int32, .int64, .uint8, .uint16, .uint32, .uint64, .float16, .float32, .float64, .date32, .date64, .time32, .time64, .timestamp, .duration => {
             try validateFixedWidth(data, total, ty);
         },
@@ -183,6 +184,7 @@ fn validateData(data: *const ArrayData, ty: datatype.DataType, total: usize) (Va
         .sparse_union => |meta| try validateUnion(data, total, meta, false),
         .dense_union => |meta| try validateUnion(data, total, meta, true),
         .dictionary => |meta| try validateDictionary(data, total, meta),
+        .null_ => {},
     }
 }
 
@@ -196,7 +198,7 @@ fn expectBufferCount(data: *const ArrayData, expected: usize) ValidateError!void
     if (data.buffers.len != expected) return error.InvalidBufferCount;
 }
 
-fn validateNulls(data: *const ArrayData, total: usize, layout: NullLayout) (ValidateError || checked.Error)!void {
+fn validateNulls(data: *const ArrayData, total: usize, layout: datatype.NullLayout) (ValidateError || checked.Error)!void {
     switch (layout) {
         .always_null => {
             if (data.null_count != data.len) return error.NullCountMismatch;
@@ -224,9 +226,6 @@ fn validateNulls(data: *const ArrayData, total: usize, layout: NullLayout) (Vali
 }
 
 fn validateFixedWidth(data: *const ArrayData, total: usize, ty: datatype.DataType) (ValidateError || checked.Error)!void {
-    try expectBufferCount(data, 2);
-    try validateNulls(data, total, .bitmap);
-
     const value_needed: usize = if (data.len == 0)
         0
     else if (ty.id() == .bool)
@@ -242,17 +241,12 @@ fn validateFixedWidth(data: *const ArrayData, total: usize, ty: datatype.DataTyp
 }
 
 fn validateBinaryLike(data: *const ArrayData, total: usize, comptime Offset: type) (ValidateError || checked.Error)!void {
-    try expectBufferCount(data, 3);
-    try validateNulls(data, total, .bitmap);
     const values = data.buffers[2] orelse return error.MissingValuesBuffer;
     const offsets = try validateOffsetsBuffer(data, total, Offset);
     if (offsets) |offset_buf| try validateOffsets(data, offset_buf, values.size, Offset);
 }
 
 fn validateListLike(data: *const ArrayData, total: usize, child_field: datatype.Field, comptime Offset: type) (ValidateError || checked.Error || datatype.ValidationError)!void {
-    try expectBufferCount(data, 2);
-    try validateNulls(data, total, .bitmap);
-
     const child = data.children[0];
     if (!datatype.DataType.equals(child.type, child_field.type.*)) return error.ChildTypeMismatch;
     try child.validate();
@@ -262,9 +256,6 @@ fn validateListLike(data: *const ArrayData, total: usize, child_field: datatype.
 }
 
 fn validateFixedSizeList(data: *const ArrayData, total: usize, meta: datatype.FixedSizeListMeta) (ValidateError || checked.Error || datatype.ValidationError)!void {
-    try expectBufferCount(data, 1);
-    try validateNulls(data, total, .bitmap);
-
     const child = data.children[0];
     if (!datatype.DataType.equals(child.type, meta.child.type.*)) return error.ChildTypeMismatch;
     try child.validate();
@@ -274,9 +265,6 @@ fn validateFixedSizeList(data: *const ArrayData, total: usize, meta: datatype.Fi
 }
 
 fn validateStruct(data: *const ArrayData, total: usize, meta: datatype.StructMeta) (ValidateError || checked.Error || datatype.ValidationError)!void {
-    try expectBufferCount(data, 1);
-    try validateNulls(data, total, .bitmap);
-
     for (data.children, meta.fields) |child, field| {
         try child.validate();
         if (!datatype.DataType.equals(child.type, field.type.*)) return error.ChildTypeMismatch;
@@ -285,9 +273,6 @@ fn validateStruct(data: *const ArrayData, total: usize, meta: datatype.StructMet
 }
 
 fn validateUnion(data: *const ArrayData, total: usize, meta: datatype.UnionMeta, comptime dense: bool) (ValidateError || checked.Error || datatype.ValidationError)!void {
-    try expectBufferCount(data, if (dense) 3 else 2);
-    try validateNulls(data, total, .none);
-
     for (data.children, meta.fields) |child, field| {
         try child.validate();
         if (!datatype.DataType.equals(child.type, field.type.*)) return error.ChildTypeMismatch;
@@ -320,7 +305,6 @@ fn validateUnion(data: *const ArrayData, total: usize, meta: datatype.UnionMeta,
 }
 
 fn validateDictionary(data: *const ArrayData, total: usize, meta: datatype.DictionaryMeta) (ValidateError || checked.Error || datatype.ValidationError)!void {
-    if (data.dictionary == null) return error.MissingDictionary;
     if (!meta.index_type.isInteger()) return error.InvalidDictionaryIndexType;
     try validateFixedWidth(data, total, meta.index_type.*);
 
