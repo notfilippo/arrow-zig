@@ -1,0 +1,218 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const checked = @import("checked.zig");
+const bitmap = @import("bitmap.zig");
+const datatype = @import("datatype.zig");
+const offset_data = @import("offsets.zig");
+const array = @import("array.zig");
+const ArrayData = array.ArrayData;
+const Buffer = @import("buffer.zig").Buffer;
+
+pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
+    const Offset = switch (kind) {
+        .binary, .utf8 => i32,
+        .large_binary, .large_utf8 => i64,
+    };
+
+    return struct {
+        const Self = @This();
+        pub const Array = array.VarBinaryView(kind);
+
+        allocator: Allocator,
+        offsets: offset_data.Builder(Offset),
+        values: ?*Buffer,
+        validity: bitmap.BitmapBuilder,
+        len: usize,
+
+        pub fn init(allocator: Allocator) Self {
+            return .{
+                .allocator = allocator,
+                .offsets = offset_data.Builder(Offset).init(),
+                .values = null,
+                .validity = bitmap.BitmapBuilder.init(),
+                .len = 0,
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.offsets.deinit();
+            if (self.values) |buf| buf.release();
+            self.values = null;
+            self.validity.deinit();
+            self.len = 0;
+        }
+
+        pub fn reserve(self: *Self, additional: usize, additional_bytes: usize) !void {
+            if (additional == 0 and additional_bytes == 0) return;
+            const new_len = try checked.add(self.len, additional);
+            try self.offsets.reserveSlots(self.allocator, try checked.add(new_len, 1));
+
+            const values = try self.ensureValues();
+            try values.reserve(try checked.add(values.size, additional_bytes));
+            try self.validity.ensureCapacityForBits(self.allocator, additional);
+        }
+
+        pub fn append(self: *Self, bytes: []const u8) !void {
+            if (comptime kind == .utf8 or kind == .large_utf8) {
+                if (!std.unicode.utf8ValidateSlice(bytes)) return error.InvalidUtf8;
+            }
+            try self.appendUnchecked(bytes);
+        }
+
+        pub fn appendBytes(self: *Self, bytes: []const u8) !void {
+            try self.appendUnchecked(bytes);
+        }
+
+        pub fn appendNull(self: *Self) !void {
+            try self.reserve(1, 0);
+            const values = self.values.?;
+            try self.offsets.append(self.allocator, values.size);
+            self.validity.unsafeAppend(false);
+            self.len += 1;
+        }
+
+        pub fn appendNulls(self: *Self, n: usize) !void {
+            if (n == 0) return;
+            try self.reserve(n, 0);
+            const values = self.values.?;
+            try self.offsets.appendRepeat(self.allocator, n, values.size);
+            self.validity.unsafeAppendN(false, n);
+            self.len = try checked.add(self.len, n);
+        }
+
+        pub fn length(self: Self) usize {
+            return self.len;
+        }
+
+        pub fn finish(self: *Self) !*ArrayData {
+            const n = self.len;
+            const null_count = self.validity.false_count;
+            self.len = 0;
+
+            const offsets_buf = try self.offsets.finish(self.allocator);
+            const values_buf = try self.finishValues();
+            const validity_buf = try self.validity.finishNullable(self.allocator);
+
+            return ArrayData.init(self.allocator, dataTypeForKind(kind), n, 0, null_count, &.{ validity_buf, offsets_buf, values_buf }, &.{}, null, false);
+        }
+
+        fn appendUnchecked(self: *Self, bytes: []const u8) !void {
+            try self.reserve(1, bytes.len);
+            const values = self.values.?;
+            const end = try checked.add(values.size, bytes.len);
+            try offset_data.ensureRange(Offset, end);
+            @memcpy(values.data[values.size..end], bytes);
+            values.size = end;
+
+            try self.offsets.append(self.allocator, end);
+            self.validity.unsafeAppend(true);
+            self.len += 1;
+        }
+
+        fn ensureValues(self: *Self) !*Buffer {
+            if (self.values == null) self.values = try Buffer.allocate(self.allocator, 0);
+            return self.values.?;
+        }
+
+        fn finishValues(self: *Self) !*Buffer {
+            const values = if (self.values) |buf| blk: {
+                self.values = null;
+                break :blk buf;
+            } else try Buffer.allocate(self.allocator, 0);
+            values.freeze();
+            return values;
+        }
+    };
+}
+
+pub const BinaryBuilder = VarBinaryBuilder(.binary);
+pub const Utf8Builder = VarBinaryBuilder(.utf8);
+pub const LargeBinaryBuilder = VarBinaryBuilder(.large_binary);
+pub const LargeUtf8Builder = VarBinaryBuilder(.large_utf8);
+
+fn dataTypeForKind(comptime kind: array.VarBinaryKind) datatype.DataType {
+    return switch (kind) {
+        .binary => .binary,
+        .utf8 => .utf8,
+        .large_binary => .large_binary,
+        .large_utf8 => .large_utf8,
+    };
+}
+
+test "BinaryBuilder basic nulls and slices" {
+    const allocator = std.testing.allocator;
+    var b = BinaryBuilder.init(allocator);
+    defer b.deinit();
+
+    try b.append("ab");
+    try b.appendNull();
+    try b.append("cde");
+    const data = try b.finish();
+    defer data.release();
+    try data.validate();
+
+    const arr = try array.BinaryArray.fromData(data);
+    try std.testing.expectEqual(@as(usize, 3), arr.len);
+    try std.testing.expectEqual(@as(usize, 1), arr.nullCount());
+    try std.testing.expectEqualStrings("ab", arr.valueBytes(0));
+    try std.testing.expect(arr.isNull(1));
+    try std.testing.expectEqualStrings("cde", arr.value(2));
+}
+
+test "BinaryBuilder all valid and reuse" {
+    const allocator = std.testing.allocator;
+    var b = BinaryBuilder.init(allocator);
+    defer b.deinit();
+
+    try b.append("a");
+    try b.append("");
+    try b.append("bc");
+    const data1 = try b.finish();
+    defer data1.release();
+    const arr1 = try array.BinaryArray.fromData(data1);
+    try std.testing.expect(data1.buffers[0] == null);
+    try std.testing.expectEqualStrings("", arr1.valueBytes(1));
+    try std.testing.expectEqualStrings("bc", arr1.slice(1, 99).valueBytes(1));
+
+    try b.append("two");
+    try b.append("three");
+    const data2 = try b.finish();
+    defer data2.release();
+    const arr2 = try array.BinaryArray.fromData(data2);
+    try std.testing.expectEqualStrings("two", arr2.valueBytes(0));
+    try std.testing.expectEqualStrings("three", arr2.valueBytes(1));
+}
+
+test "Utf8Builder validates input" {
+    const allocator = std.testing.allocator;
+    var b = Utf8Builder.init(allocator);
+    defer b.deinit();
+
+    try b.append("hello");
+    const invalid = [_]u8{0xc0};
+    try std.testing.expectError(error.InvalidUtf8, b.append(&invalid));
+
+    const data = try b.finish();
+    defer data.release();
+    try data.validate();
+    const arr = try array.Utf8Array.fromData(data);
+    try std.testing.expectEqualStrings("hello", arr.value(0));
+}
+
+test "LargeBinaryBuilder uses large offsets" {
+    const allocator = std.testing.allocator;
+    var b = LargeBinaryBuilder.init(allocator);
+    defer b.deinit();
+
+    try b.append("alpha");
+    try b.append("beta");
+    const data = try b.finish();
+    defer data.release();
+    try data.validate();
+
+    const arr = try array.LargeBinaryArray.fromData(data);
+    try std.testing.expectEqual(.large_binary, arr.dataType());
+    try std.testing.expectEqualStrings("alpha", arr.valueBytes(0));
+    try std.testing.expectEqualStrings("beta", arr.valueBytes(1));
+    try std.testing.expectEqual(@as(usize, 3 * @sizeOf(i64)), data.buffers[1].?.size);
+}
