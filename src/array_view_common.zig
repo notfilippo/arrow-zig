@@ -1,5 +1,6 @@
 const datatype = @import("datatype.zig");
 const bitmap = @import("bitmap.zig");
+const checked = @import("checked.zig");
 
 pub const ViewError = error{ TypeMismatch, InvalidBufferLayout };
 pub const SliceError = error{OffsetOutOfBounds};
@@ -74,6 +75,10 @@ pub fn viewNullCount(data: anytype, offset: usize, len: usize, hint: usize) usiz
 pub fn clampedLen(current_len: usize, off: usize, requested: usize) SliceError!usize {
     if (off > current_len) return error.OffsetOutOfBounds;
     return @min(requested, current_len - off);
+}
+
+pub fn dataRelativeOffset(data_offset: usize, view_offset: usize, off: usize) checked.Error!usize {
+    return checked.add(try checked.sub(view_offset, data_offset), off);
 }
 
 test "typeIdFor" {

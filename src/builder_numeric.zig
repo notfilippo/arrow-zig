@@ -7,12 +7,17 @@ const array = @import("array.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("buffer.zig").Buffer;
 
+pub const NumericBuilderInitError = datatype.ValidationError || error{TypeMismatch};
+pub const NumericBuilderError = Allocator.Error || checked.Error || error{ValidityBufferTooSmall};
+
 pub fn NumericBuilder(comptime T: type) type {
     _ = array.typeIdFor(T);
 
     return struct {
         const Self = @This();
         pub const Array = array.NumericArray(T);
+        pub const Error = NumericBuilderError;
+        pub const InitTypeError = NumericBuilderInitError;
 
         allocator: Allocator,
         ty: datatype.DataType,
@@ -31,7 +36,7 @@ pub fn NumericBuilder(comptime T: type) type {
             };
         }
 
-        pub fn initType(allocator: Allocator, ty: datatype.DataType) !Self {
+        pub fn initType(allocator: Allocator, ty: datatype.DataType) InitTypeError!Self {
             try ty.validate();
             if (!array.dataTypeAcceptsZigType(T, ty)) return error.TypeMismatch;
             var self = init(allocator);
@@ -40,13 +45,13 @@ pub fn NumericBuilder(comptime T: type) type {
         }
 
         pub fn deinit(self: *Self) void {
-            if (self.values) |v| v.release();
+            if (self.values) |v| v.deinit();
             self.values = null;
             self.validity.deinit();
             self.len = 0;
         }
 
-        pub fn reserve(self: *Self, additional: usize) !void {
+        pub fn reserve(self: *Self, additional: usize) Error!void {
             if (additional == 0) return;
             const buf = try self.ensureValues();
             const new_len = try checked.add(self.len, additional);
@@ -54,17 +59,17 @@ pub fn NumericBuilder(comptime T: type) type {
             try self.validity.ensureCapacityForBits(self.allocator, additional);
         }
 
-        pub fn append(self: *Self, v: T) !void {
+        pub fn append(self: *Self, v: T) Error!void {
             try self.reserve(1);
             self.unsafeAppend(v);
         }
 
-        pub fn appendNull(self: *Self) !void {
+        pub fn appendNull(self: *Self) Error!void {
             try self.reserve(1);
             self.unsafeAppendNull();
         }
 
-        pub fn appendNulls(self: *Self, n: usize) !void {
+        pub fn appendNulls(self: *Self, n: usize) Error!void {
             if (n == 0) return;
             try self.reserve(n);
             const buf = self.values.?;
@@ -76,7 +81,7 @@ pub fn NumericBuilder(comptime T: type) type {
             self.len = try checked.add(self.len, n);
         }
 
-        pub fn appendSlice(self: *Self, vs: []const T) !void {
+        pub fn appendSlice(self: *Self, vs: []const T) Error!void {
             if (vs.len == 0) return;
             try self.reserve(vs.len);
             const buf = self.values.?;
@@ -89,11 +94,11 @@ pub fn NumericBuilder(comptime T: type) type {
             self.len = try checked.add(self.len, vs.len);
         }
 
-        pub fn appendValues(self: *Self, vs: []const T, valid_bytes: ?[]const u8) !void {
+        pub fn appendValues(self: *Self, vs: []const T, valid_bytes: ?[]const u8) Error!void {
             if (vs.len == 0) return;
             if (valid_bytes == null) return self.appendSlice(vs);
             const vb = valid_bytes.?;
-            std.debug.assert(vb.len >= vs.len);
+            if (vb.len < vs.len) return error.ValidityBufferTooSmall;
             try self.reserve(vs.len);
             const buf = self.values.?;
             const byte_len = try checked.mul(vs.len, @sizeOf(T));
@@ -105,8 +110,10 @@ pub fn NumericBuilder(comptime T: type) type {
             self.len = try checked.add(self.len, vs.len);
         }
 
-        pub fn appendValuesBitmap(self: *Self, vs: []const T, validity: []const u8, validity_offset: usize) !void {
+        pub fn appendValuesBitmap(self: *Self, vs: []const T, validity: []const u8, validity_offset: usize) Error!void {
             if (vs.len == 0) return;
+            const needed = try bitmap.byteLenChecked(try checked.add(validity_offset, vs.len));
+            if (validity.len < needed) return error.ValidityBufferTooSmall;
             try self.reserve(vs.len);
             const buf = self.values.?;
             const byte_len = try checked.mul(vs.len, @sizeOf(T));
@@ -122,7 +129,9 @@ pub fn NumericBuilder(comptime T: type) type {
             return self.len;
         }
 
-        pub fn finish(self: *Self) !*ArrayData {
+        /// Finish the builder and transfer the result to the caller.
+        /// Caller owns the returned data and must call `deinit`.
+        pub fn finish(self: *Self) Error!*ArrayData {
             const null_count = self.validity.false_count;
             const values_buf: *Buffer = blk: {
                 if (self.values) |v| {
@@ -134,10 +143,12 @@ pub fn NumericBuilder(comptime T: type) type {
                 b.freeze();
                 break :blk b;
             };
+            errdefer values_buf.deinit();
 
             const n = self.len;
             self.len = 0;
             const validity_buf: ?*Buffer = try self.validity.finishNullable(self.allocator);
+            errdefer if (validity_buf) |buf| buf.deinit();
 
             return ArrayData.initOwned(self.allocator, self.ty, n, 0, null_count, &.{ validity_buf, values_buf }, &.{}, null);
         }
@@ -160,7 +171,7 @@ pub fn NumericBuilder(comptime T: type) type {
             self.len += 1;
         }
 
-        fn ensureValues(self: *Self) !*Buffer {
+        fn ensureValues(self: *Self) Error!*Buffer {
             if (self.values == null) self.values = try Buffer.allocate(self.allocator, 0);
             return self.values.?;
         }
@@ -177,7 +188,7 @@ test "NumericBuilder basic append and reuse" {
     try b.append(30);
     try std.testing.expectEqual(@as(usize, 3), b.length());
     const data1 = try b.finish();
-    defer data1.release();
+    defer data1.deinit();
     const arr1 = try array.NumericArray(i32).fromData(data1);
     try std.testing.expectEqual(@as(i32, 10), arr1.value(0));
     try std.testing.expect(arr1.isNull(1));
@@ -185,7 +196,7 @@ test "NumericBuilder basic append and reuse" {
 
     try b.append(40);
     const data2 = try b.finish();
-    defer data2.release();
+    defer data2.deinit();
     const arr2 = try array.NumericArray(i32).fromData(data2);
     try std.testing.expectEqual(@as(i32, 40), arr2.value(0));
 }
@@ -199,7 +210,7 @@ test "NumericBuilder append slices nulls and all valid" {
     try b.appendNulls(2);
     try b.appendSlice(&.{6});
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     const arr = try array.NumericArray(u8).fromData(data);
 
     try std.testing.expectEqual(@as(usize, 6), arr.len);
@@ -211,7 +222,7 @@ test "NumericBuilder append slices nulls and all valid" {
     defer all_valid.deinit();
     try all_valid.appendSlice(&.{ 1.0, 2.0, 3.0 });
     const all_valid_data = try all_valid.finish();
-    defer all_valid_data.release();
+    defer all_valid_data.deinit();
     try std.testing.expect(all_valid_data.buffers[0] == null);
 }
 
@@ -242,7 +253,7 @@ test "NumericBuilder append values with validity bytes" {
     const valid = [_]u8{ 1, 0, 1, 0 };
     try b.appendValues(&vals, &valid);
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     const arr = try array.NumericArray(i32).fromData(data);
 
     try std.testing.expectEqual(@as(usize, 2), arr.nullCount());
@@ -261,13 +272,22 @@ test "NumericBuilder append values with bitmap" {
     const validity = [_]u8{0b01010000};
     try b.appendValuesBitmap(&vals, &validity, 4);
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     const arr = try array.NumericArray(i32).fromData(data);
 
     try std.testing.expect(arr.isValid(0));
     try std.testing.expect(arr.isNull(1));
     try std.testing.expect(arr.isValid(2));
     try std.testing.expect(arr.isNull(3));
+}
+
+test "NumericBuilder rejects short validity inputs" {
+    const allocator = std.testing.allocator;
+    var b = NumericBuilder(i32).init(allocator);
+    defer b.deinit();
+
+    try std.testing.expectError(error.ValidityBufferTooSmall, b.appendValues(&.{ 1, 2 }, &.{1}));
+    try std.testing.expectError(error.ValidityBufferTooSmall, b.appendValuesBitmap(&.{ 1, 2 }, &.{}, 0));
 }
 
 test "NumericBuilder append values with multi byte bitmap" {
@@ -282,7 +302,7 @@ test "NumericBuilder append values with multi byte bitmap" {
 
     try b.appendValuesBitmap(&vals, &validity_bytes, 0);
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     const arr = try array.NumericArray(i32).fromData(data);
 
     try std.testing.expectEqual(@as(usize, n / 2), arr.nullCount());

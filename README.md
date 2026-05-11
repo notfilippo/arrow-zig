@@ -31,7 +31,7 @@ pub fn main() !void {
     try b.append(30);
 
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
 
     const arr = try arrow.Int32Array.fromData(data);
     std.debug.print("len={} null_count={}\n", .{ arr.len, arr.nullCount() });
@@ -48,6 +48,20 @@ For logical temporal types on numeric storage, initialize the builder with an ex
 ```zig
 var b = try arrow.NumericBuilder(i32).initType(allocator, .date32);
 ```
+
+## Ownership
+
+Builders own temporary buffers. `finish()` transfers a refcounted `ArrayData`
+reference to the caller. Call `deinit()` when that reference is no longer
+needed.
+
+`ArrayData`, `Buffer`, and external owner handles are refcounted. `retain()`
+adds one reference. `deinit()` drops one reference and frees storage when the
+count reaches zero.
+
+`ArrayData.initOwned()` consumes the supplied buffers, children, and dictionary
+on success. On error, caller ownership is unchanged. `ArrayData.initRetained()`
+retains each supplied object, so the caller keeps its existing references.
 
 ## Layout guarantees
 

@@ -111,13 +111,14 @@ pub fn FixedWidthView(comptime kind: ArrayKind) type {
             };
         }
 
-        pub fn sliceOwned(self: Self, off: usize, length: usize) array_data.SliceError!*ArrayData {
+        pub fn sliceOwned(self: Self, off: usize, length: usize) array_data.DataSliceError!*ArrayData {
             const clamped = try common.clampedLen(self.len, off, length);
-            return self.data.slice(off, clamped);
+            const data_off = try common.dataRelativeOffset(self.data.offset, self.offset, off);
+            return self.data.slice(data_off, clamped);
         }
 
-        pub fn cloneRetained(self: Self) array_data.InitError!*ArrayData {
-            return self.data.cloneRetained();
+        pub fn cloneRetained(self: Self) array_data.DataSliceError!*ArrayData {
+            return self.sliceOwned(0, self.len);
         }
 
         pub fn trueCount(self: Self) usize {
@@ -166,7 +167,7 @@ test "NumericArray basic slices and ownership" {
     try b.appendNull();
     try b.append(50);
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     const arr = try NumericArray(i32).fromData(data);
 
     try std.testing.expectEqual(@as(i32, 30), arr.value(2));
@@ -177,8 +178,19 @@ test "NumericArray basic slices and ownership" {
     try std.testing.expectEqual(@as(usize, 2), sliced.nullCount());
     try std.testing.expectEqual(@as(i32, 30), sliced.value(1));
 
+    const sliced_owned = try sliced.sliceOwned(0, 2);
+    defer sliced_owned.deinit();
+    const sliced_owned_arr = try NumericArray(i32).fromData(sliced_owned);
+    try std.testing.expect(sliced_owned_arr.isNull(0));
+    try std.testing.expectEqual(@as(i32, 30), sliced_owned_arr.value(1));
+
+    const sliced_clone = try sliced.cloneRetained();
+    defer sliced_clone.deinit();
+    const sliced_clone_arr = try NumericArray(i32).fromData(sliced_clone);
+    try std.testing.expectEqual(@as(i32, 30), sliced_clone_arr.value(1));
+
     const owned = try arr.sliceOwned(0, 3);
-    defer owned.release();
+    defer owned.deinit();
     const owned_arr = try NumericArray(i32).fromData(owned);
     try std.testing.expectEqual(@as(i32, 10), owned_arr.value(0));
     try std.testing.expectError(error.OffsetOutOfBounds, arr.sliceChecked(6, 1));
@@ -192,7 +204,7 @@ test "NumericArray all valid and all null slice counts" {
     defer valid_builder.deinit();
     try valid_builder.appendSlice(&.{ 1, 2, 3, 4, 5 });
     const valid_data = try valid_builder.finish();
-    defer valid_data.release();
+    defer valid_data.deinit();
     const valid = try NumericArray(i32).fromData(valid_data);
     try std.testing.expectEqual(@as(usize, 0), valid.slice(1, 3).null_count);
 
@@ -200,7 +212,7 @@ test "NumericArray all valid and all null slice counts" {
     defer null_builder.deinit();
     try null_builder.appendNulls(5);
     const null_data = try null_builder.finish();
-    defer null_data.release();
+    defer null_data.deinit();
     const all_null = try NumericArray(i32).fromData(null_data);
     try std.testing.expectEqual(@as(usize, 3), all_null.slice(1, 3).null_count);
 }
@@ -213,7 +225,7 @@ test "logical temporal arrays validate type" {
     defer date_builder.deinit();
     try date_builder.appendSlice(&.{ 1, 2, 3 });
     const date_data = try date_builder.finish();
-    defer date_data.release();
+    defer date_data.deinit();
     const date_arr = try Date32Array.fromData(date_data);
     try std.testing.expectEqual(.date32, date_arr.dataType());
     try std.testing.expectError(error.TypeMismatch, NumericArray(i32).fromData(date_data));
@@ -222,7 +234,7 @@ test "logical temporal arrays validate type" {
     defer time_builder.deinit();
     try time_builder.appendSlice(&.{ 10, 20 });
     const time_data = try time_builder.finish();
-    defer time_data.release();
+    defer time_data.deinit();
     const time_arr = try Time32Array.fromData(time_data);
     try std.testing.expect(time_arr.dataType().id() == .time32);
 }
@@ -238,7 +250,7 @@ test "BooleanArray counts and slicing" {
     try b.append(false);
     try b.append(true);
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     const arr = try BooleanArray.fromData(data);
 
     try std.testing.expectEqual(@as(usize, 2), arr.trueCount());

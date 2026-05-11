@@ -4,7 +4,11 @@ const checked = @import("checked.zig");
 const bits = @import("bitmap_bits.zig");
 const Buffer = @import("buffer.zig").Buffer;
 
+pub const BitmapBuilderError = Allocator.Error || checked.Error;
+
 pub const BitmapBuilder = struct {
+    pub const Error = BitmapBuilderError;
+
     buf: ?*Buffer,
     len: usize,
     false_count: usize,
@@ -14,11 +18,11 @@ pub const BitmapBuilder = struct {
     }
 
     pub fn deinit(self: *BitmapBuilder) void {
-        if (self.buf) |b| b.release();
+        if (self.buf) |b| b.deinit();
         self.buf = null;
     }
 
-    pub fn append(self: *BitmapBuilder, allocator: Allocator, valid: bool) !void {
+    pub fn append(self: *BitmapBuilder, allocator: Allocator, valid: bool) Error!void {
         const byte_idx = self.len >> 3;
         const byte_needed = byte_idx + 1;
         try self.ensureBuf(allocator, byte_needed);
@@ -33,7 +37,7 @@ pub const BitmapBuilder = struct {
         self.len += 1;
     }
 
-    pub fn appendN(self: *BitmapBuilder, allocator: Allocator, valid: bool, n: usize) !void {
+    pub fn appendN(self: *BitmapBuilder, allocator: Allocator, valid: bool, n: usize) Error!void {
         if (n == 0) return;
         const new_len = try checked.add(self.len, n);
         const byte_needed = try bits.byteLenChecked(new_len);
@@ -45,7 +49,7 @@ pub const BitmapBuilder = struct {
         self.len = new_len;
     }
 
-    pub fn finish(self: *BitmapBuilder, allocator: Allocator) !*Buffer {
+    pub fn finish(self: *BitmapBuilder, allocator: Allocator) Error!*Buffer {
         if (self.buf) |buf| {
             buf.size = try bits.byteLenChecked(self.len);
             buf.freeze();
@@ -59,9 +63,9 @@ pub const BitmapBuilder = struct {
         return b;
     }
 
-    pub fn finishNullable(self: *BitmapBuilder, allocator: Allocator) !?*Buffer {
+    pub fn finishNullable(self: *BitmapBuilder, allocator: Allocator) Error!?*Buffer {
         if (self.false_count == 0) {
-            if (self.buf) |b| b.release();
+            if (self.buf) |b| b.deinit();
             self.buf = null;
             self.len = 0;
             return null;
@@ -69,7 +73,7 @@ pub const BitmapBuilder = struct {
         return try self.finish(allocator);
     }
 
-    pub fn ensureCapacityForBits(self: *BitmapBuilder, allocator: Allocator, additional: usize) !void {
+    pub fn ensureCapacityForBits(self: *BitmapBuilder, allocator: Allocator, additional: usize) Error!void {
         if (additional == 0) return;
         const needed = try bits.byteLenChecked(try checked.add(self.len, additional));
         if (needed == 0) return;
@@ -113,7 +117,7 @@ pub const BitmapBuilder = struct {
         self.len = new_len;
     }
 
-    fn ensureBuf(self: *BitmapBuilder, allocator: Allocator, byte_needed: usize) !void {
+    fn ensureBuf(self: *BitmapBuilder, allocator: Allocator, byte_needed: usize) Error!void {
         if (self.buf == null) self.buf = try Buffer.allocate(allocator, 0);
         try self.buf.?.reserve(byte_needed);
     }
@@ -130,7 +134,7 @@ test "BitmapBuilder appends and finishes" {
     try std.testing.expectEqual(@as(usize, 1), b.false_count);
     try std.testing.expectEqual(@as(usize, 3), b.len);
     const owned = try b.finish(allocator);
-    defer owned.release();
+    defer owned.deinit();
     try std.testing.expectEqual(@as(usize, 1), owned.size);
     try std.testing.expect(bits.getBit(owned.dataSlice(), 0));
     try std.testing.expect(!bits.getBit(owned.dataSlice(), 1));
@@ -147,7 +151,7 @@ test "BitmapBuilder appendN crosses bytes" {
     try std.testing.expectEqual(@as(usize, 3), b.false_count);
     try std.testing.expectEqual(@as(usize, 13), b.len);
     const owned = try b.finish(allocator);
-    defer owned.release();
+    defer owned.deinit();
     for (0..10) |i| try std.testing.expect(bits.getBit(owned.dataSlice(), i));
     for (10..13) |i| try std.testing.expect(!bits.getBit(owned.dataSlice(), i));
 }
@@ -156,7 +160,7 @@ test "BitmapBuilder nullable and empty finish" {
     const allocator = std.testing.allocator;
     var empty = BitmapBuilder.init();
     const owned = try empty.finish(allocator);
-    defer owned.release();
+    defer owned.deinit();
     try std.testing.expectEqual(@as(usize, 0), owned.size);
     try std.testing.expect(!owned.is_mutable);
 
@@ -183,7 +187,7 @@ test "BitmapBuilder overflow and unsafe append" {
     b.unsafeAppend(false);
     try std.testing.expectEqual(@as(usize, 2), b.false_count);
     const owned = try b.finish(allocator);
-    defer owned.release();
+    defer owned.deinit();
     try std.testing.expect(bits.getBit(owned.dataSlice(), 0));
     try std.testing.expect(!bits.getBit(owned.dataSlice(), 1));
 }
@@ -201,7 +205,7 @@ test "BitmapBuilder unsafeAppendBits" {
     try std.testing.expectEqual(12 - bits.countSetBits(&src, 0, 12), b.false_count);
 
     const owned = try b.finish(allocator);
-    defer owned.release();
+    defer owned.deinit();
     try std.testing.expect(bits.getBit(owned.dataSlice(), 0));
     for (0..12) |i| {
         try std.testing.expectEqual(bits.getBit(&src, i), bits.getBit(owned.dataSlice(), 1 + i));

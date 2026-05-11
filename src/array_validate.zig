@@ -29,6 +29,7 @@ pub const Error = error{
     UnionOffsetNotMonotonic,
     ChildTypeMismatch,
     ChildLengthTooSmall,
+    DictionaryIndexOutOfBounds,
     DictionaryTypeMismatch,
     InvalidDictionaryIndexType,
     UnexpectedChild,
@@ -160,12 +161,12 @@ fn validateUnion(data: anytype, total: usize, meta: datatype.UnionMeta, comptime
         if (!dense and child.len < total) return error.ChildLengthTooSmall;
     }
 
-    const type_ids = data.buffers[1] orelse return error.MissingTypeIdsBuffer;
+    const type_ids = data.buffers[0] orelse return error.MissingTypeIdsBuffer;
     const needed_type_ids = try checked.add(data.offset, data.len);
     if (type_ids.size < needed_type_ids) return error.TypeIdsBufferTooSmall;
 
     const offsets: ?*Buffer = if (dense) blk: {
-        const buf = data.buffers[2] orelse return error.MissingUnionOffsetsBuffer;
+        const buf = data.buffers[1] orelse return error.MissingUnionOffsetsBuffer;
         const needed = try checked.mul(needed_type_ids, @sizeOf(i32));
         if (buf.size < needed) return error.UnionOffsetsBufferTooSmall;
         break :blk buf;
@@ -192,6 +193,46 @@ fn validateDictionary(data: anytype, total: usize, meta: datatype.DictionaryMeta
     const dict = data.dictionary.?;
     try dict.validate();
     if (!datatype.DataType.equals(dict.type, meta.value_type.*)) return error.DictionaryTypeMismatch;
+    try validateDictionaryIndices(data, meta.index_type.*, dict.len);
+}
+
+fn validateDictionaryIndices(data: anytype, index_ty: datatype.DataType, dict_len: usize) Error!void {
+    const values = data.buffers[1] orelse return error.MissingValuesBuffer;
+    const validity = if (data.buffers[0]) |buf| buf.dataSlice() else null;
+    switch (index_ty) {
+        .int8 => try validateDictionaryIndexValues(i8, data, values, validity, dict_len),
+        .int16 => try validateDictionaryIndexValues(i16, data, values, validity, dict_len),
+        .int32 => try validateDictionaryIndexValues(i32, data, values, validity, dict_len),
+        .int64 => try validateDictionaryIndexValues(i64, data, values, validity, dict_len),
+        .uint8 => try validateDictionaryIndexValues(u8, data, values, validity, dict_len),
+        .uint16 => try validateDictionaryIndexValues(u16, data, values, validity, dict_len),
+        .uint32 => try validateDictionaryIndexValues(u32, data, values, validity, dict_len),
+        .uint64 => try validateDictionaryIndexValues(u64, data, values, validity, dict_len),
+        else => return error.InvalidDictionaryIndexType,
+    }
+}
+
+fn validateDictionaryIndexValues(
+    comptime T: type,
+    data: anytype,
+    values: *const Buffer,
+    validity: ?[]const u8,
+    dict_len: usize,
+) Error!void {
+    for (0..data.len) |i| {
+        const slot = data.offset + i;
+        if (validity) |bits| {
+            if (!bitmap.getBit(bits, slot)) continue;
+        }
+        if (!dictionaryIndexInBounds(offset_data.read(T, values, slot), dict_len)) return error.DictionaryIndexOutOfBounds;
+    }
+}
+
+fn dictionaryIndexInBounds(value: anytype, dict_len: usize) bool {
+    const T = @TypeOf(value);
+    const info = @typeInfo(T).int;
+    if (info.signedness == .signed and value < 0) return false;
+    return @as(u128, @intCast(value)) < @as(u128, dict_len);
 }
 
 fn validateOffsetsBuffer(data: anytype, total: usize, comptime Offset: type) (Error || checked.Error)!?*Buffer {
@@ -231,28 +272,28 @@ test "validate fixed width storage" {
     const allocator = std.testing.allocator;
 
     const values = try Buffer.allocate(allocator, 7 * @sizeOf(i32));
-    errdefer values.release();
+    errdefer values.deinit();
     values.freeze();
     const data = try ArrayData.initOwned(allocator, .int32, 5, 2, 0, &.{ null, values }, &.{}, null);
-    defer data.release();
+    defer data.deinit();
     try data.validate();
 
     const small = try Buffer.allocate(allocator, 6 * @sizeOf(i32));
-    errdefer small.release();
+    errdefer small.deinit();
     small.freeze();
     const short_data = try ArrayData.initOwned(allocator, .int32, 5, 2, 0, &.{ null, small }, &.{}, null);
-    defer short_data.release();
+    defer short_data.deinit();
     try std.testing.expectError(error.ValuesBufferTooSmall, short_data.validate());
 
     const bool_values = try Buffer.allocate(allocator, bitmap.byteLen(8));
-    errdefer bool_values.release();
+    errdefer bool_values.deinit();
     bool_values.freeze();
     const bool_data = try ArrayData.initOwned(allocator, .bool, 8, 0, 0, &.{ null, bool_values }, &.{}, null);
-    defer bool_data.release();
+    defer bool_data.deinit();
     try bool_data.validate();
 
     const empty = try ArrayData.initOwned(allocator, .int32, 0, 10, 0, &.{ null, null }, &.{}, null);
-    defer empty.release();
+    defer empty.deinit();
     try empty.validate();
 }
 
@@ -261,30 +302,30 @@ test "validate null count rules" {
     const allocator = std.testing.allocator;
 
     const validity = try Buffer.allocate(allocator, 1);
-    errdefer validity.release();
+    errdefer validity.deinit();
     validity.data[0] = 0b00000101;
     validity.freeze();
 
     const values = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
-    errdefer values.release();
+    errdefer values.deinit();
     values.freeze();
 
     const mismatch = try ArrayData.initOwned(allocator, .int32, 3, 0, 2, &.{ validity, values }, &.{}, null);
-    defer mismatch.release();
+    defer mismatch.deinit();
     try std.testing.expectError(error.NullCountMismatch, mismatch.validate());
 
     const values_without_validity = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
-    errdefer values_without_validity.release();
+    errdefer values_without_validity.deinit();
     values_without_validity.freeze();
     const missing_validity = try ArrayData.initOwned(allocator, .int32, 3, 0, 1, &.{ null, values_without_validity }, &.{}, null);
-    defer missing_validity.release();
+    defer missing_validity.deinit();
     try std.testing.expectError(error.NullCountWithoutValidity, missing_validity.validate());
 
     const values_for_bounds = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
-    errdefer values_for_bounds.release();
+    errdefer values_for_bounds.deinit();
     values_for_bounds.freeze();
     const out_of_bounds = try ArrayData.initOwned(allocator, .int32, 3, 0, 4, &.{ null, values_for_bounds }, &.{}, null);
-    defer out_of_bounds.release();
+    defer out_of_bounds.deinit();
     try std.testing.expectError(error.NullCountOutOfBounds, out_of_bounds.validate());
 }
 
@@ -293,23 +334,23 @@ test "validate fixed width rejects child and dictionary storage" {
     const allocator = std.testing.allocator;
 
     const child_values = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
-    errdefer child_values.release();
+    errdefer child_values.deinit();
     child_values.freeze();
     const child = try ArrayData.initOwned(allocator, .int32, 5, 0, 0, &.{ null, child_values }, &.{}, null);
-    defer child.release();
+    defer child.deinit();
 
     const parent_values = try Buffer.allocate(allocator, 4 * @sizeOf(i32));
-    defer parent_values.release();
+    defer parent_values.deinit();
     parent_values.freeze();
     const parent = try ArrayData.initRetained(allocator, .int32, 4, 0, 0, &.{ null, parent_values }, &.{child}, null);
-    defer parent.release();
+    defer parent.deinit();
     try std.testing.expectError(error.UnexpectedChild, parent.validate());
 
     const index_values = try Buffer.allocate(allocator, 4 * @sizeOf(i32));
-    defer index_values.release();
+    defer index_values.deinit();
     index_values.freeze();
     const with_dictionary = try ArrayData.initRetained(allocator, .int32, 4, 0, 0, &.{ null, index_values }, &.{}, child);
-    defer with_dictionary.release();
+    defer with_dictionary.deinit();
     try std.testing.expectError(error.UnexpectedDictionary, with_dictionary.validate());
 }
 
@@ -317,34 +358,34 @@ test "validate null and binary storage" {
     const ArrayData = testArrayData();
     const allocator = std.testing.allocator;
 
-    const null_data = try ArrayData.initOwned(allocator, .null_, 3, 0, 3, &.{null}, &.{}, null);
-    defer null_data.release();
+    const null_data = try ArrayData.initOwned(allocator, .null_, 3, 0, 3, &.{}, &.{}, null);
+    defer null_data.deinit();
     try null_data.validate();
     try std.testing.expectEqual(@as(usize, 3), null_data.nullCount());
     null_data.null_count = 0;
     try std.testing.expectError(error.NullCountMismatch, null_data.validate());
 
     const offsets = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
-    errdefer offsets.release();
+    errdefer offsets.deinit();
     writeTestInt(i32, offsets, 0, 0);
     writeTestInt(i32, offsets, 1, 2);
     writeTestInt(i32, offsets, 2, 5);
     offsets.freeze();
 
     const values = try Buffer.allocate(allocator, 5);
-    errdefer values.release();
+    errdefer values.deinit();
     @memcpy(values.data[0..5], "abcde");
     values.freeze();
 
     const binary = try ArrayData.initOwned(allocator, .binary, 2, 0, 0, &.{ null, offsets, values }, &.{}, null);
-    defer binary.release();
+    defer binary.deinit();
     try binary.validate();
 
     const short_offsets = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
-    errdefer short_offsets.release();
+    errdefer short_offsets.deinit();
     short_offsets.freeze();
     const invalid = try ArrayData.initOwned(allocator, .binary, 2, 0, 0, &.{ null, short_offsets, values.retain() }, &.{}, null);
-    defer invalid.release();
+    defer invalid.deinit();
     try std.testing.expectError(error.OffsetsBufferTooSmall, invalid.validate());
 }
 
@@ -353,33 +394,33 @@ test "validate list and struct storage" {
     const allocator = std.testing.allocator;
 
     const child_values = try Buffer.allocate(allocator, 5 * @sizeOf(i32));
-    errdefer child_values.release();
+    errdefer child_values.deinit();
     child_values.freeze();
     const child = try ArrayData.initOwned(allocator, .int32, 5, 0, 0, &.{ null, child_values }, &.{}, null);
-    defer child.release();
+    defer child.deinit();
 
     const offsets = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
-    errdefer offsets.release();
+    errdefer offsets.deinit();
     writeTestInt(i32, offsets, 0, 0);
     writeTestInt(i32, offsets, 1, 2);
     writeTestInt(i32, offsets, 2, 5);
     offsets.freeze();
-    defer offsets.release();
+    defer offsets.deinit();
 
     const value_ty: datatype.DataType = .int32;
     const list_ty = datatype.DataType{ .list = .{ .child = .{ .name = "item", .type = &value_ty } } };
     const list = try ArrayData.initRetained(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null);
-    defer list.release();
+    defer list.deinit();
     try list.validate();
 
     const fields = [_]datatype.Field{.{ .name = "a", .type = &value_ty }};
     const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &fields } };
     const struct_data = try ArrayData.initRetained(allocator, struct_ty, 3, 0, 0, &.{null}, &.{child}, null);
-    defer struct_data.release();
+    defer struct_data.deinit();
     try struct_data.validate();
 
     const invalid_struct = try ArrayData.initRetained(allocator, struct_ty, 6, 0, 0, &.{null}, &.{child}, null);
-    defer invalid_struct.release();
+    defer invalid_struct.deinit();
     try std.testing.expectError(error.ChildLengthTooSmall, invalid_struct.validate());
 }
 
@@ -388,26 +429,38 @@ test "validate dictionary storage" {
     const allocator = std.testing.allocator;
 
     const index_values = try Buffer.allocate(allocator, 3 * @sizeOf(i8));
-    errdefer index_values.release();
+    errdefer index_values.deinit();
+    writeTestInt(i8, index_values, 0, 0);
+    writeTestInt(i8, index_values, 1, 1);
+    writeTestInt(i8, index_values, 2, 3);
     index_values.freeze();
-    defer index_values.release();
+    defer index_values.deinit();
 
     const dict_values = try Buffer.allocate(allocator, 4 * @sizeOf(i32));
-    errdefer dict_values.release();
+    errdefer dict_values.deinit();
     dict_values.freeze();
     const dict = try ArrayData.initOwned(allocator, .int32, 4, 0, 0, &.{ null, dict_values }, &.{}, null);
-    defer dict.release();
+    defer dict.deinit();
 
     const index_ty: datatype.DataType = .int8;
     const value_ty: datatype.DataType = .int32;
     const dict_ty = datatype.DataType{ .dictionary = .{ .index_type = &index_ty, .value_type = &value_ty } };
     const data = try ArrayData.initRetained(allocator, dict_ty, 3, 0, 0, &.{ null, index_values }, &.{}, dict);
-    defer data.release();
+    defer data.deinit();
     try data.validate();
 
     const missing = try ArrayData.initOwned(allocator, dict_ty, 3, 0, 0, &.{ null, index_values.retain() }, &.{}, null);
-    defer missing.release();
+    defer missing.deinit();
     try std.testing.expectError(error.MissingDictionary, missing.validate());
+
+    const bad_index_values = try Buffer.allocate(allocator, @sizeOf(i8));
+    errdefer bad_index_values.deinit();
+    writeTestInt(i8, bad_index_values, 0, 4);
+    bad_index_values.freeze();
+    defer bad_index_values.deinit();
+    const bad_index = try ArrayData.initRetained(allocator, dict_ty, 1, 0, 0, &.{ null, bad_index_values }, &.{}, dict);
+    defer bad_index.deinit();
+    try std.testing.expectError(error.DictionaryIndexOutOfBounds, bad_index.validate());
 }
 
 test "validate dense union storage" {
@@ -415,33 +468,33 @@ test "validate dense union storage" {
     const allocator = std.testing.allocator;
 
     const int_values = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
-    errdefer int_values.release();
+    errdefer int_values.deinit();
     int_values.freeze();
     const int_child = try ArrayData.initOwned(allocator, .int32, 2, 0, 0, &.{ null, int_values }, &.{}, null);
-    defer int_child.release();
+    defer int_child.deinit();
 
     const bool_values = try Buffer.allocate(allocator, bitmap.byteLen(1));
-    errdefer bool_values.release();
+    errdefer bool_values.deinit();
     bool_values.data[0] = 1;
     bool_values.freeze();
     const bool_child = try ArrayData.initOwned(allocator, .bool, 1, 0, 0, &.{ null, bool_values }, &.{}, null);
-    defer bool_child.release();
+    defer bool_child.deinit();
 
     const type_ids = try Buffer.allocate(allocator, 3);
-    errdefer type_ids.release();
+    errdefer type_ids.deinit();
     type_ids.data[0] = 7;
     type_ids.data[1] = 8;
     type_ids.data[2] = 7;
     type_ids.freeze();
-    defer type_ids.release();
+    defer type_ids.deinit();
 
     const offsets = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
-    errdefer offsets.release();
+    errdefer offsets.deinit();
     writeTestInt(i32, offsets, 0, 0);
     writeTestInt(i32, offsets, 1, 0);
     writeTestInt(i32, offsets, 2, 1);
     offsets.freeze();
-    defer offsets.release();
+    defer offsets.deinit();
 
     const int_ty: datatype.DataType = .int32;
     const bool_ty: datatype.DataType = .bool;
@@ -451,18 +504,18 @@ test "validate dense union storage" {
     };
     const ids = [_]i8{ 7, 8 };
     const union_ty = datatype.DataType{ .dense_union = .{ .fields = &fields, .type_ids = &ids } };
-    const data = try ArrayData.initRetained(allocator, union_ty, 3, 0, 0, &.{ null, type_ids, offsets }, &.{ int_child, bool_child }, null);
-    defer data.release();
+    const data = try ArrayData.initRetained(allocator, union_ty, 3, 0, 0, &.{ type_ids, offsets }, &.{ int_child, bool_child }, null);
+    defer data.deinit();
     try data.validate();
 
     const bad_offsets = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
-    errdefer bad_offsets.release();
+    errdefer bad_offsets.deinit();
     writeTestInt(i32, bad_offsets, 0, 0);
     writeTestInt(i32, bad_offsets, 1, 1);
     writeTestInt(i32, bad_offsets, 2, 1);
     bad_offsets.freeze();
-    defer bad_offsets.release();
-    const invalid = try ArrayData.initRetained(allocator, union_ty, 3, 0, 0, &.{ null, type_ids, bad_offsets }, &.{ int_child, bool_child }, null);
-    defer invalid.release();
+    defer bad_offsets.deinit();
+    const invalid = try ArrayData.initRetained(allocator, union_ty, 3, 0, 0, &.{ type_ids, bad_offsets }, &.{ int_child, bool_child }, null);
+    defer invalid.deinit();
     try std.testing.expectError(error.UnionOffsetOutOfBounds, invalid.validate());
 }

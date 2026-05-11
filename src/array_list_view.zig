@@ -68,7 +68,7 @@ pub fn ListView(comptime kind: ListKind) type {
             return offset_data.rangeAt(Offset, offsets, self.offset + i);
         }
 
-        pub fn valueOwned(self: Self, i: usize) array_data.SliceError!*ArrayData {
+        pub fn valueOwned(self: Self, i: usize) array_data.DataSliceError!*ArrayData {
             const range = self.valueRange(i);
             return self.data.children[0].slice(range.offset, range.len);
         }
@@ -105,13 +105,14 @@ pub fn ListView(comptime kind: ListKind) type {
             };
         }
 
-        pub fn sliceOwned(self: Self, off: usize, length: usize) array_data.SliceError!*ArrayData {
+        pub fn sliceOwned(self: Self, off: usize, length: usize) array_data.DataSliceError!*ArrayData {
             const clamped = try common.clampedLen(self.len, off, length);
-            return self.data.slice(off, clamped);
+            const data_off = try common.dataRelativeOffset(self.data.offset, self.offset, off);
+            return self.data.slice(data_off, clamped);
         }
 
-        pub fn cloneRetained(self: Self) array_data.InitError!*ArrayData {
-            return self.data.cloneRetained();
+        pub fn cloneRetained(self: Self) array_data.DataSliceError!*ArrayData {
+            return self.sliceOwned(0, self.len);
         }
     };
 }
@@ -122,24 +123,24 @@ pub const LargeListArray = ListView(.large_list);
 test "ListArray value ranges and owned values" {
     const allocator = std.testing.allocator;
     const child_values = try Buffer.allocate(allocator, 5 * @sizeOf(i32));
-    errdefer child_values.release();
+    errdefer child_values.deinit();
     child_values.freeze();
     const child = try ArrayData.initOwned(allocator, .int32, 5, 0, 0, &.{ null, child_values }, &.{}, null);
-    defer child.release();
+    defer child.deinit();
 
     const offsets = try Buffer.allocate(allocator, 4 * @sizeOf(i32));
-    errdefer offsets.release();
+    errdefer offsets.deinit();
     try offset_data.write(i32, offsets, 0, 0);
     try offset_data.write(i32, offsets, 1, 2);
     try offset_data.write(i32, offsets, 2, 2);
     try offset_data.write(i32, offsets, 3, 5);
     offsets.freeze();
-    defer offsets.release();
+    defer offsets.deinit();
 
     const value_ty: datatype.DataType = .int32;
     const list_ty = datatype.DataType{ .list = .{ .child = .{ .name = "item", .type = &value_ty } } };
     const data = try ArrayData.initRetained(allocator, list_ty, 3, 0, 0, &.{ null, offsets }, &.{child}, null);
-    defer data.release();
+    defer data.deinit();
     try data.validate();
 
     const arr = try ListArray.fromData(data);
@@ -150,32 +151,44 @@ test "ListArray value ranges and owned values" {
     try std.testing.expectEqual(@as(usize, 0), arr.valueRange(1).len);
 
     const values = try arr.valueOwned(2);
-    defer values.release();
+    defer values.deinit();
     const values_arr = try fixed_view.NumericArray(i32).fromData(values);
     try std.testing.expectEqual(@as(usize, 3), values_arr.len);
+
+    const sliced_owned = try arr.slice(1, 2).sliceOwned(0, 2);
+    defer sliced_owned.deinit();
+    const sliced_owned_arr = try ListArray.fromData(sliced_owned);
+    try std.testing.expectEqual(@as(usize, 0), sliced_owned_arr.valueRange(0).len);
+    try std.testing.expectEqual(@as(usize, 3), sliced_owned_arr.valueRange(1).len);
+
+    const sliced_clone = try arr.slice(1, 2).cloneRetained();
+    defer sliced_clone.deinit();
+    const sliced_clone_arr = try ListArray.fromData(sliced_clone);
+    try std.testing.expectEqual(@as(usize, 0), sliced_clone_arr.valueRange(0).len);
+
     try std.testing.expectError(error.OffsetOutOfBounds, arr.sliceChecked(4, 1));
 }
 
 test "LargeListArray uses large offsets" {
     const allocator = std.testing.allocator;
     const child_values = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
-    errdefer child_values.release();
+    errdefer child_values.deinit();
     child_values.freeze();
     const child = try ArrayData.initOwned(allocator, .int32, 2, 0, 0, &.{ null, child_values }, &.{}, null);
-    defer child.release();
+    defer child.deinit();
 
     const offsets = try Buffer.allocate(allocator, 3 * @sizeOf(i64));
-    errdefer offsets.release();
+    errdefer offsets.deinit();
     try offset_data.write(i64, offsets, 0, 0);
     try offset_data.write(i64, offsets, 1, 1);
     try offset_data.write(i64, offsets, 2, 2);
     offsets.freeze();
-    defer offsets.release();
+    defer offsets.deinit();
 
     const value_ty: datatype.DataType = .int32;
     const list_ty = datatype.DataType{ .large_list = .{ .child = .{ .name = "item", .type = &value_ty } } };
     const data = try ArrayData.initRetained(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null);
-    defer data.release();
+    defer data.deinit();
     try data.validate();
 
     const arr = try LargeListArray.fromData(data);

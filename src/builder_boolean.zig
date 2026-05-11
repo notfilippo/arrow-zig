@@ -6,7 +6,11 @@ const array = @import("array.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("buffer.zig").Buffer;
 
+pub const BooleanBuilderError = Allocator.Error || checked.Error || error{ValidityBufferTooSmall};
+
 pub const BooleanBuilder = struct {
+    pub const Error = BooleanBuilderError;
+
     allocator: Allocator,
     values: bitmap.BitmapBuilder,
     validity: bitmap.BitmapBuilder,
@@ -27,23 +31,23 @@ pub const BooleanBuilder = struct {
         self.len = 0;
     }
 
-    pub fn reserve(self: *BooleanBuilder, additional: usize) !void {
+    pub fn reserve(self: *BooleanBuilder, additional: usize) Error!void {
         if (additional == 0) return;
         try self.values.ensureCapacityForBits(self.allocator, additional);
         try self.validity.ensureCapacityForBits(self.allocator, additional);
     }
 
-    pub fn append(self: *BooleanBuilder, v: bool) !void {
+    pub fn append(self: *BooleanBuilder, v: bool) Error!void {
         try self.reserve(1);
         self.unsafeAppend(v);
     }
 
-    pub fn appendNull(self: *BooleanBuilder) !void {
+    pub fn appendNull(self: *BooleanBuilder) Error!void {
         try self.reserve(1);
         self.unsafeAppendNull();
     }
 
-    pub fn appendNulls(self: *BooleanBuilder, n: usize) !void {
+    pub fn appendNulls(self: *BooleanBuilder, n: usize) Error!void {
         if (n == 0) return;
         try self.reserve(n);
         self.values.unsafeAppendN(false, n);
@@ -51,7 +55,7 @@ pub const BooleanBuilder = struct {
         self.len = try checked.add(self.len, n);
     }
 
-    pub fn appendSlice(self: *BooleanBuilder, vs: []const bool) !void {
+    pub fn appendSlice(self: *BooleanBuilder, vs: []const bool) Error!void {
         if (vs.len == 0) return;
         try self.reserve(vs.len);
         for (vs) |v| self.values.unsafeAppend(v);
@@ -59,11 +63,11 @@ pub const BooleanBuilder = struct {
         self.len = try checked.add(self.len, vs.len);
     }
 
-    pub fn appendValues(self: *BooleanBuilder, vs: []const bool, valid_bytes: ?[]const u8) !void {
+    pub fn appendValues(self: *BooleanBuilder, vs: []const bool, valid_bytes: ?[]const u8) Error!void {
         if (vs.len == 0) return;
         if (valid_bytes == null) return self.appendSlice(vs);
         const vb = valid_bytes.?;
-        std.debug.assert(vb.len >= vs.len);
+        if (vb.len < vs.len) return error.ValidityBufferTooSmall;
         try self.reserve(vs.len);
         for (vs, 0..) |v, i| {
             self.values.unsafeAppend(v);
@@ -72,8 +76,10 @@ pub const BooleanBuilder = struct {
         self.len = try checked.add(self.len, vs.len);
     }
 
-    pub fn appendValuesBitmap(self: *BooleanBuilder, vs: []const bool, validity: []const u8, validity_offset: usize) !void {
+    pub fn appendValuesBitmap(self: *BooleanBuilder, vs: []const bool, validity: []const u8, validity_offset: usize) Error!void {
         if (vs.len == 0) return;
+        const needed = try bitmap.byteLenChecked(try checked.add(validity_offset, vs.len));
+        if (validity.len < needed) return error.ValidityBufferTooSmall;
         try self.reserve(vs.len);
         for (vs) |v| self.values.unsafeAppend(v);
         self.validity.unsafeAppendBits(validity, validity_offset, vs.len);
@@ -84,13 +90,17 @@ pub const BooleanBuilder = struct {
         return self.len;
     }
 
-    pub fn finish(self: *BooleanBuilder) !*ArrayData {
+    /// Finish the builder and transfer the result to the caller.
+    /// Caller owns the returned data and must call `deinit`.
+    pub fn finish(self: *BooleanBuilder) Error!*ArrayData {
         const n = self.len;
         const null_count = self.validity.false_count;
         self.len = 0;
 
         const values_buf = try self.values.finish(self.allocator);
+        errdefer values_buf.deinit();
         const validity_buf: ?*Buffer = try self.validity.finishNullable(self.allocator);
+        errdefer if (validity_buf) |buf| buf.deinit();
 
         return ArrayData.initOwned(self.allocator, .bool, n, 0, null_count, &.{ validity_buf, values_buf }, &.{}, null);
     }
@@ -118,7 +128,7 @@ test "BooleanBuilder basic append and nulls" {
     try b.append(false);
     try b.append(true);
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     const arr = try array.BooleanArray.fromData(data);
 
     try std.testing.expectEqual(@as(usize, 4), arr.len);
@@ -137,7 +147,7 @@ test "BooleanBuilder append values with validity bytes" {
     const valid = [_]u8{ 1, 1, 0, 1 };
     try b.appendValues(&vals, &valid);
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     const arr = try array.BooleanArray.fromData(data);
 
     try std.testing.expectEqual(@as(usize, 1), arr.nullCount());
@@ -154,7 +164,7 @@ test "BooleanBuilder append values all valid" {
 
     try b.appendValues(&.{ true, false, true }, null);
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     const arr = try array.BooleanArray.fromData(data);
 
     try std.testing.expect(data.buffers[0] == null);
@@ -170,7 +180,7 @@ test "BooleanBuilder append values with bitmaps" {
     const validity = [_]u8{0b00000101};
     try b.appendValuesBitmap(&vals, &validity, 0);
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     const arr = try array.BooleanArray.fromData(data);
 
     try std.testing.expect(arr.isValid(0));
@@ -178,6 +188,15 @@ test "BooleanBuilder append values with bitmaps" {
     try std.testing.expect(arr.isValid(2));
     try std.testing.expect(arr.isNull(3));
     try std.testing.expectEqual(@as(usize, 2), arr.trueCount());
+}
+
+test "BooleanBuilder rejects short validity inputs" {
+    const allocator = std.testing.allocator;
+    var b = BooleanBuilder.init(allocator);
+    defer b.deinit();
+
+    try std.testing.expectError(error.ValidityBufferTooSmall, b.appendValues(&.{ true, false }, &.{1}));
+    try std.testing.expectError(error.ValidityBufferTooSmall, b.appendValuesBitmap(&.{ true, false }, &.{}, 0));
 }
 
 test "BooleanBuilder append values with multi byte bitmap" {
@@ -192,7 +211,7 @@ test "BooleanBuilder append values with multi byte bitmap" {
 
     try b.appendValuesBitmap(&vals, &validity_bytes, 0);
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     const arr = try array.BooleanArray.fromData(data);
 
     try std.testing.expectEqual(@as(usize, n / 2), arr.nullCount());

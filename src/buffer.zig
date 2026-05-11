@@ -26,7 +26,7 @@ pub const ExternalReleaseFn = *const fn (ctx: *anyopaque) void;
 /// Ref-counted handle for memory owned outside the library.
 ///
 /// The handle itself is caller-owned and must remain alive until the final
-/// `release()` triggers `release_fn(ctx)`. In practice this means it should be
+/// `deinit()` triggers `release_fn(ctx)`. In practice this means it should be
 /// embedded in the external owner object or otherwise stored somewhere stable,
 /// not copied after first use.
 pub const ExternalOwnerHandle = struct {
@@ -47,7 +47,8 @@ pub const ExternalOwnerHandle = struct {
         return self;
     }
 
-    pub fn release(self: *ExternalOwnerHandle) void {
+    /// Drop one reference. Calls `release_fn` when the count reaches zero.
+    pub fn deinit(self: *ExternalOwnerHandle) void {
         if (self.ref_count.fetchSub(1, .acq_rel) != 1) return;
         self.release_fn(self.ctx);
     }
@@ -67,7 +68,7 @@ pub const ExternalOwnerHandle = struct {
 /// owner handle. Slice-child buffers hold a retained parent pointer and do not
 /// own memory directly.
 ///
-/// Thread safety: retain/release are atomic by default. Build with
+/// Thread safety: retain and deinit are atomic by default. Build with
 /// `-Dsingle_threaded=true` to use plain integer ops (no fences, no lock prefix).
 pub const Buffer = struct {
     data: [*]u8,
@@ -120,7 +121,8 @@ pub const Buffer = struct {
     /// Take ownership of an externally allocated, 64-byte aligned and padded slice.
     /// `size` is the logical byte length; `bytes.len` must be 0 or a multiple of 64.
     /// Padding bytes [size, bytes.len) must be zero. The slice is freed via `allocator`
-    /// when the buffer is released.
+    /// when the final buffer reference is deinitialized. On error, ownership stays
+    /// with the caller.
     pub fn fromOwned(
         allocator: Allocator,
         size: usize,
@@ -143,7 +145,7 @@ pub const Buffer = struct {
 
     /// Wrap externally owned mutable memory. `size` is the logical byte length;
     /// `bytes.len` must be 0 or a multiple of 64. Padding bytes [size, bytes.len) must be zero.
-    /// `owner` is retained until the buffer is released.
+    /// `owner` is retained until the final buffer reference is deinitialized.
     pub fn wrap(
         allocator: Allocator,
         owner: *ExternalOwnerHandle,
@@ -167,7 +169,7 @@ pub const Buffer = struct {
     }
 
     /// Create a child buffer whose data window is [off, off+len) within self's allocation.
-    /// self is retained; the child has its own refcount and must be released separately.
+    /// self is retained; the child has its own refcount and must be deinitialized separately.
     /// Child is frozen regardless of parent's mutability. No re-alignment check is
     /// performed: the parent must already satisfy the 64-byte alignment guarantee.
     pub fn sliceBuffer(self: *Buffer, allocator: Allocator, off: usize, len: usize) !*Buffer {
@@ -194,13 +196,13 @@ pub const Buffer = struct {
     }
 
     /// Drop one reference. Frees data and control block when count reaches zero.
-    pub fn release(self: *Buffer) void {
+    pub fn deinit(self: *Buffer) void {
         if (self.ref_count.fetchSub(1, .acq_rel) != 1) return;
         const allocator = self.allocator;
         if (self.parent) |p| {
-            p.release();
+            p.deinit();
         } else if (self.external_owner) |owner| {
-            owner.release();
+            owner.deinit();
         } else if (self.capacity > 0) {
             const slice: []align(arrow_alignment) u8 = @alignCast(self.data[0..self.capacity]);
             allocator.free(slice);
@@ -302,7 +304,7 @@ test "allocate and release" {
     const buf = try Buffer.allocate(a, 100);
     try std.testing.expectEqual(@as(usize, 100), buf.size);
     try std.testing.expectEqual(@as(usize, 1), buf.refCount());
-    buf.release();
+    buf.deinit();
 }
 
 test "retain and double release" {
@@ -310,9 +312,9 @@ test "retain and double release" {
     const buf = try Buffer.allocate(a, 64);
     _ = buf.retain();
     try std.testing.expectEqual(@as(usize, 2), buf.refCount());
-    buf.release();
+    buf.deinit();
     try std.testing.expectEqual(@as(usize, 1), buf.refCount());
-    buf.release();
+    buf.deinit();
 }
 
 test "empty buffer release" {
@@ -320,7 +322,7 @@ test "empty buffer release" {
     const buf = try Buffer.allocate(a, 0);
     try std.testing.expectEqual(@as(usize, 0), buf.size);
     try std.testing.expectEqual(@as(usize, 0), buf.capacity);
-    buf.release();
+    buf.deinit();
 }
 
 test "sliceBuffer parent lifetime" {
@@ -334,9 +336,9 @@ test "sliceBuffer parent lifetime" {
     try std.testing.expectEqual(@as(u8, 0xCD), child.data[0]);
     try std.testing.expectEqual(@as(usize, 2), parent.refCount());
 
-    parent.release();
+    parent.deinit();
     try std.testing.expectEqual(@as(u8, 0xCD), child.data[0]);
-    child.release();
+    child.deinit();
 }
 
 test "three-deep chain" {
@@ -350,15 +352,15 @@ test "three-deep chain" {
 
     try std.testing.expectEqual(@as(u8, 0x11), leaf.data[0]);
 
-    root_buf.release();
-    mid.release();
-    leaf.release();
+    root_buf.deinit();
+    mid.deinit();
+    leaf.deinit();
 }
 
 test "allocate zeroes padding" {
     const a = std.testing.allocator;
     const buf = try Buffer.allocate(a, 65);
-    defer buf.release();
+    defer buf.deinit();
     try std.testing.expectEqual(@as(usize, 128), buf.capacity);
     for (buf.data[65..buf.capacity]) |byte| {
         try std.testing.expectEqual(@as(u8, 0), byte);
@@ -378,7 +380,7 @@ test "reserve grows exponentially and zeroes tail" {
     for (buf.data[buf.size..buf.capacity]) |byte| {
         try std.testing.expectEqual(@as(u8, 0), byte);
     }
-    buf.release();
+    buf.deinit();
 }
 
 test "fromOwned" {
@@ -388,7 +390,7 @@ test "fromOwned" {
     mem[0] = 11;
     mem[1] = 22;
     const buf = try Buffer.fromOwned(a, 2, mem);
-    defer buf.release();
+    defer buf.deinit();
     try std.testing.expectEqual(@as(usize, 2), buf.size);
     try std.testing.expectEqual(@as(usize, 64), buf.capacity);
     try std.testing.expect(!buf.is_mutable);
@@ -422,8 +424,8 @@ test "wrap uses logical size" {
     var owner = ExternalOwnerHandle.init(&ctx, releaseExternalMem);
 
     const buf = try Buffer.wrap(a, &owner, 2, mem);
-    owner.release();
-    defer buf.release();
+    owner.deinit();
+    defer buf.deinit();
 
     try std.testing.expectEqual(@as(usize, 2), buf.size);
     try std.testing.expectEqual(@as(usize, 64), buf.capacity);
@@ -451,7 +453,7 @@ test "external owner shared across buffers releases once" {
     const buf2 = try Buffer.wrapConst(a, &owner, 64, second_half);
 
     try std.testing.expectEqual(@as(usize, 3), owner.refCount());
-    owner.release();
+    owner.deinit();
     try std.testing.expectEqual(@as(usize, 2), owner.refCount());
 
     buf1.mutableSlice()[0] = 42;
@@ -461,12 +463,12 @@ test "external owner shared across buffers releases once" {
     const child = try buf2.sliceBuffer(a, 0, 32);
     try std.testing.expectEqual(@as(usize, 2), buf2.refCount());
 
-    buf2.release();
+    buf2.deinit();
     try std.testing.expectEqual(@as(usize, 0), release_count);
 
-    child.release();
+    child.deinit();
     try std.testing.expectEqual(@as(usize, 0), release_count);
 
-    buf1.release();
+    buf1.deinit();
     try std.testing.expectEqual(@as(usize, 1), release_count);
 }

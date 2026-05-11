@@ -13,6 +13,10 @@ pub const FieldOptions = struct {
     nullable: bool = true,
 };
 
+pub fn ListBuilderError(comptime ChildBuilder: type) type {
+    return Allocator.Error || checked.Error || error{UnclosedListValues} || ChildBuilder.Error;
+}
+
 pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type) type {
     const Offset = switch (kind) {
         .list => i32,
@@ -23,6 +27,7 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
         const Self = @This();
         pub const Array = array.ListView(kind);
         pub const Child = ChildBuilder;
+        pub const Error = ListBuilderError(ChildBuilder);
 
         allocator: Allocator,
         child: ChildBuilder,
@@ -48,7 +53,7 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
             };
         }
 
-        pub fn initField(allocator: Allocator, options: FieldOptions) !Self {
+        pub fn initField(allocator: Allocator, options: FieldOptions) Error!Self {
             var self = init(allocator);
             errdefer self.deinit();
             const name = try allocator.dupe(u8, options.name);
@@ -74,29 +79,29 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
             return &self.child;
         }
 
-        pub fn reserve(self: *Self, additional: usize) !void {
+        pub fn reserve(self: *Self, additional: usize) Error!void {
             if (additional == 0) return;
             const new_len = try checked.add(self.len, additional);
             try self.offsets.reserveSlots(self.allocator, try checked.add(new_len, 1));
             try self.validity.ensureCapacityForBits(self.allocator, additional);
         }
 
-        pub fn append(self: *Self) !void {
+        pub fn append(self: *Self) Error!void {
             try self.reserve(1);
             try self.appendOffset(self.child.length(), true);
         }
 
-        pub fn appendEmpty(self: *Self) !void {
+        pub fn appendEmpty(self: *Self) Error!void {
             try self.append();
         }
 
-        pub fn appendNull(self: *Self) !void {
+        pub fn appendNull(self: *Self) Error!void {
             if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
             try self.reserve(1);
             try self.appendOffset(self.last_child_len, false);
         }
 
-        pub fn appendNulls(self: *Self, n: usize) !void {
+        pub fn appendNulls(self: *Self, n: usize) Error!void {
             if (n == 0) return;
             if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
             try self.reserve(n);
@@ -109,7 +114,9 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
             return self.len;
         }
 
-        pub fn finish(self: *Self) !*ArrayData {
+        /// Finish the builder and transfer the result to the caller.
+        /// Caller owns the returned data and must call `deinit`.
+        pub fn finish(self: *Self) Error!*ArrayData {
             if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
 
             const n = self.len;
@@ -119,13 +126,13 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
 
             const offsets_buf = try self.offsets.finish(self.allocator);
             consumed = true;
-            errdefer offsets_buf.release();
+            errdefer offsets_buf.deinit();
 
             const child_data = try self.child.finish();
-            errdefer child_data.release();
+            errdefer child_data.deinit();
 
             const validity_buf: ?*Buffer = try self.validity.finishNullable(self.allocator);
-            errdefer if (validity_buf) |buf| buf.release();
+            errdefer if (validity_buf) |buf| buf.deinit();
 
             const child_field = datatype.Field{
                 .name = self.child_name,
@@ -138,7 +145,7 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
             return data;
         }
 
-        fn appendOffset(self: *Self, child_len: usize, valid: bool) !void {
+        fn appendOffset(self: *Self, child_len: usize, valid: bool) Error!void {
             try self.offsets.append(self.allocator, child_len);
             self.validity.unsafeAppend(valid);
             self.len += 1;
@@ -181,7 +188,7 @@ test "ListBuilder builds numeric child lists" {
     try b.appendNull();
 
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     try data.validate();
 
     const arr = try array.ListArray.fromData(data);
@@ -207,7 +214,7 @@ test "ListBuilder rejects pending child values for null slots" {
     try std.testing.expectError(error.UnclosedListValues, b.appendNull());
     try b.append();
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     try data.validate();
 }
 
@@ -224,7 +231,7 @@ test "LargeListBuilder uses large offsets and field options" {
     try b.append();
 
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     try data.validate();
 
     const arr = try array.LargeListArray.fromData(data);

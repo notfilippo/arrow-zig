@@ -6,6 +6,10 @@ pub fn add(a: usize, b: usize) Error!usize {
     return std.math.add(usize, a, b);
 }
 
+pub fn sub(a: usize, b: usize) Error!usize {
+    return std.math.sub(usize, a, b);
+}
+
 pub fn mul(a: usize, b: usize) Error!usize {
     return std.math.mul(usize, a, b);
 }
@@ -34,9 +38,11 @@ pub fn roundUpToPowerOfTwo(n: usize, alignment: usize) Error!usize {
 
 test "checked helpers" {
     try std.testing.expectEqual(@as(usize, 11), try add(5, 6));
+    try std.testing.expectEqual(@as(usize, 5), try sub(11, 6));
     try std.testing.expectEqual(@as(usize, 40), try mul(5, 8));
     try std.testing.expectEqual(@as(usize, 21), try addMul(5, 4, 4));
     try std.testing.expectEqual(@as(usize, 2), try bytesForBits(13));
     try std.testing.expectEqual(@as(usize, 64), try roundUpToPowerOfTwo(1, 64));
     try std.testing.expectError(error.Overflow, add(std.math.maxInt(usize), 1));
+    try std.testing.expectError(error.Overflow, sub(0, 1));
 }

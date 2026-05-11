@@ -8,7 +8,6 @@ pub const BufferKind = enum {
     offsets,
     type_ids,
     union_offsets,
-    always_null,
 };
 
 pub const BufferSpec = struct {
@@ -23,7 +22,7 @@ pub const Layout = struct {
     has_dictionary: bool = false,
 };
 
-const null_buffers = [_]BufferSpec{.{ .kind = .always_null }};
+const no_buffers = [_]BufferSpec{};
 const bool_buffers = [_]BufferSpec{
     .{ .kind = .validity },
     .{ .kind = .values, .bit_width = 1 },
@@ -64,18 +63,16 @@ const large_list_buffers = [_]BufferSpec{
 };
 const nested_validity_buffers = [_]BufferSpec{.{ .kind = .validity }};
 const sparse_union_buffers = [_]BufferSpec{
-    .{ .kind = .always_null },
     .{ .kind = .type_ids, .byte_width = 1 },
 };
 const dense_union_buffers = [_]BufferSpec{
-    .{ .kind = .always_null },
     .{ .kind = .type_ids, .byte_width = 1 },
     .{ .kind = .union_offsets, .byte_width = 4 },
 };
 
 pub fn layout(ty: anytype) Layout {
     return switch (ty) {
-        .null_ => .{ .buffers = &null_buffers, .null_layout = .always_null },
+        .null_ => .{ .buffers = &no_buffers, .null_layout = .always_null },
         .bool => .{ .buffers = &bool_buffers },
         .int8, .uint8 => .{ .buffers = &fixed_1_buffers },
         .int16, .uint16, .float16 => .{ .buffers = &fixed_2_buffers },
@@ -101,10 +98,12 @@ test "layout describes buffers" {
     const int32_ty: datatype.DataType = .int32;
     const binary_ty: datatype.DataType = .binary;
 
+    try std.testing.expectEqual(@as(usize, 0), (@as(datatype.DataType, .null_)).layout().buffers.len);
     try std.testing.expectEqual(@as(usize, 2), int32_ty.layout().buffers.len);
     try std.testing.expectEqual(BufferKind.values, int32_ty.layout().buffers[1].kind);
     try std.testing.expectEqual(@as(usize, 4), int32_ty.layout().buffers[1].byte_width);
     try std.testing.expectEqual(@as(usize, 3), binary_ty.layout().buffers.len);
     try std.testing.expectEqual(BufferKind.offsets, binary_ty.layout().buffers[1].kind);
+    try std.testing.expectEqual(BufferKind.type_ids, (datatype.DataType{ .sparse_union = .{ .fields = &.{}, .type_ids = &.{} } }).layout().buffers[0].kind);
     try std.testing.expectEqual(NullLayout.none, (datatype.DataType{ .dense_union = .{ .fields = &.{}, .type_ids = &.{} } }).layout().null_layout);
 }

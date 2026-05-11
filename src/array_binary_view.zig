@@ -103,13 +103,14 @@ pub fn VarBinaryView(comptime kind: VarBinaryKind) type {
             };
         }
 
-        pub fn sliceOwned(self: Self, off: usize, length: usize) array_data.SliceError!*ArrayData {
+        pub fn sliceOwned(self: Self, off: usize, length: usize) array_data.DataSliceError!*ArrayData {
             const clamped = try common.clampedLen(self.len, off, length);
-            return self.data.slice(off, clamped);
+            const data_off = try common.dataRelativeOffset(self.data.offset, self.offset, off);
+            return self.data.slice(data_off, clamped);
         }
 
-        pub fn cloneRetained(self: Self) array_data.InitError!*ArrayData {
-            return self.data.cloneRetained();
+        pub fn cloneRetained(self: Self) array_data.DataSliceError!*ArrayData {
+            return self.sliceOwned(0, self.len);
         }
     };
 }
@@ -122,7 +123,7 @@ pub const LargeUtf8Array = VarBinaryView(.large_utf8);
 test "BinaryArray reads ranges and slices" {
     const allocator = std.testing.allocator;
     const offsets = try Buffer.allocate(allocator, 4 * @sizeOf(i32));
-    errdefer offsets.release();
+    errdefer offsets.deinit();
     try offset_data.write(i32, offsets, 0, 0);
     try offset_data.write(i32, offsets, 1, 2);
     try offset_data.write(i32, offsets, 2, 2);
@@ -130,17 +131,28 @@ test "BinaryArray reads ranges and slices" {
     offsets.freeze();
 
     const values = try Buffer.allocate(allocator, 5);
-    errdefer values.release();
+    errdefer values.deinit();
     @memcpy(values.data[0..5], "abcde");
     values.freeze();
 
     const data = try ArrayData.initOwned(allocator, .binary, 3, 0, 0, &.{ null, offsets, values }, &.{}, null);
-    defer data.release();
+    defer data.deinit();
     const arr = try BinaryArray.fromData(data);
 
     try std.testing.expectEqualStrings("ab", arr.valueBytes(0));
     try std.testing.expectEqualStrings("", arr.value(1));
     try std.testing.expectEqualStrings("cde", arr.value(2));
     try std.testing.expectEqualStrings("", arr.slice(1, 2).valueBytes(0));
+
+    const sliced_owned = try arr.slice(1, 2).sliceOwned(0, 1);
+    defer sliced_owned.deinit();
+    const sliced_owned_arr = try BinaryArray.fromData(sliced_owned);
+    try std.testing.expectEqualStrings("", sliced_owned_arr.valueBytes(0));
+
+    const sliced_clone = try arr.slice(1, 2).cloneRetained();
+    defer sliced_clone.deinit();
+    const sliced_clone_arr = try BinaryArray.fromData(sliced_clone);
+    try std.testing.expectEqualStrings("", sliced_clone_arr.valueBytes(0));
+
     try std.testing.expectError(error.OffsetOutOfBounds, arr.sliceChecked(4, 1));
 }

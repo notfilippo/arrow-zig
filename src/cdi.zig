@@ -247,7 +247,7 @@ fn releaseArray(arr: *ArrowArray) callconv(.c) void {
         releaseArrayIfNeeded(dict);
         allocator.destroy(dict);
     }
-    private.data.release();
+    private.data.deinit();
     allocator.free(private.buffers);
     allocator.free(private.child_ptrs);
     allocator.free(private.children_storage);
@@ -422,7 +422,7 @@ test "exportArray keeps array data alive" {
     try b.appendNull();
 
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
 
     var exported: ArrowArray = undefined;
     try exportArray(allocator, data, &exported);
@@ -441,23 +441,23 @@ test "exportArray keeps array data alive" {
 test "exportArray exports nested list arrays" {
     const allocator = std.testing.allocator;
     const values = try @import("buffer.zig").Buffer.allocate(allocator, 2 * @sizeOf(i32));
-    errdefer values.release();
+    errdefer values.deinit();
     values.freeze();
     const child = try ArrayData.initOwned(allocator, .int32, 2, 0, 0, &.{ null, values }, &.{}, null);
-    defer child.release();
+    defer child.deinit();
 
     const offsets = try @import("buffer.zig").Buffer.allocate(allocator, 3 * @sizeOf(i32));
-    errdefer offsets.release();
+    errdefer offsets.deinit();
     std.mem.writeInt(i32, offsets.data[0..4], 0, .little);
     std.mem.writeInt(i32, offsets.data[4..8], 1, .little);
     std.mem.writeInt(i32, offsets.data[8..12], 2, .little);
     offsets.freeze();
-    defer offsets.release();
+    defer offsets.deinit();
 
     const value_ty: datatype.DataType = .int32;
     const list_ty = datatype.DataType{ .list = .{ .child = .{ .type = &value_ty } } };
     const data = try ArrayData.initRetained(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null);
-    defer data.release();
+    defer data.deinit();
 
     var exported: ArrowArray = undefined;
     try exportArray(allocator, data, &exported);

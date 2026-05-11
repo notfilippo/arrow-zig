@@ -14,9 +14,12 @@ pub const ValueRange = struct {
     len: usize,
 };
 
+pub const BuilderError = Allocator.Error || checked.Error;
+
 pub fn Builder(comptime Offset: type) type {
     return struct {
         const Self = @This();
+        pub const Error = BuilderError;
 
         buffer: ?*Buffer,
 
@@ -25,17 +28,17 @@ pub fn Builder(comptime Offset: type) type {
         }
 
         pub fn deinit(self: *Self) void {
-            if (self.buffer) |buf| buf.release();
+            if (self.buffer) |buf| buf.deinit();
             self.buffer = null;
         }
 
-        pub fn reserveSlots(self: *Self, allocator: Allocator, slots: usize) !void {
+        pub fn reserveSlots(self: *Self, allocator: Allocator, slots: usize) Error!void {
             if (slots == 0) return;
             const buf = try self.ensureStarted(allocator);
             try buf.reserve(try checked.mul(slots, @sizeOf(Offset)));
         }
 
-        pub fn append(self: *Self, allocator: Allocator, value: usize) !void {
+        pub fn append(self: *Self, allocator: Allocator, value: usize) Error!void {
             const buf = try self.ensureStarted(allocator);
             const index = buf.size / @sizeOf(Offset);
             try self.reserveSlots(allocator, index + 1);
@@ -43,7 +46,7 @@ pub fn Builder(comptime Offset: type) type {
             buf.size += @sizeOf(Offset);
         }
 
-        pub fn appendRepeat(self: *Self, allocator: Allocator, n: usize, value: usize) !void {
+        pub fn appendRepeat(self: *Self, allocator: Allocator, n: usize, value: usize) Error!void {
             if (n == 0) return;
             const buf = try self.ensureStarted(allocator);
             const start = buf.size / @sizeOf(Offset);
@@ -52,14 +55,14 @@ pub fn Builder(comptime Offset: type) type {
             buf.size += n * @sizeOf(Offset);
         }
 
-        pub fn finish(self: *Self, allocator: Allocator) !*Buffer {
+        pub fn finish(self: *Self, allocator: Allocator) Error!*Buffer {
             const buf = try self.ensureStarted(allocator);
             self.buffer = null;
             buf.freeze();
             return buf;
         }
 
-        fn ensureStarted(self: *Self, allocator: Allocator) !*Buffer {
+        fn ensureStarted(self: *Self, allocator: Allocator) Error!*Buffer {
             if (self.buffer == null) {
                 const buf = try Buffer.allocate(allocator, @sizeOf(Offset));
                 write(Offset, buf, 0, 0) catch unreachable;
@@ -76,7 +79,7 @@ pub fn read(comptime Offset: type, buffer: *const Buffer, index: usize) Offset {
     return std.mem.readInt(Offset, bytes, .little);
 }
 
-pub fn write(comptime Offset: type, buffer: *Buffer, index: usize, value: usize) !void {
+pub fn write(comptime Offset: type, buffer: *Buffer, index: usize, value: usize) checked.Error!void {
     try ensureRange(Offset, value);
     const start = index * @sizeOf(Offset);
     std.mem.writeInt(Offset, buffer.data[start..][0..@sizeOf(Offset)], @intCast(value), .little);
@@ -106,7 +109,7 @@ pub fn validateMonotonic(
     }
 }
 
-pub fn ensureRange(comptime Offset: type, value: usize) !void {
+pub fn ensureRange(comptime Offset: type, value: usize) checked.Error!void {
     if (value > maxValue(Offset)) return error.Overflow;
 }
 
@@ -129,7 +132,7 @@ test "offset builder writes repeated offsets" {
     try builder.append(allocator, 2);
     try builder.appendRepeat(allocator, 2, 5);
     const buffer = try builder.finish(allocator);
-    defer buffer.release();
+    defer buffer.deinit();
 
     try std.testing.expectEqual(@as(i32, 0), read(i32, buffer, 0));
     try std.testing.expectEqual(@as(i32, 2), read(i32, buffer, 1));
@@ -140,7 +143,7 @@ test "offset builder writes repeated offsets" {
 test "validateMonotonic rejects bad offsets" {
     const allocator = std.testing.allocator;
     const buffer = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
-    defer buffer.release();
+    defer buffer.deinit();
     try write(i32, buffer, 0, 0);
     try write(i32, buffer, 1, 4);
     try write(i32, buffer, 2, 3);

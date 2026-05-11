@@ -11,7 +11,8 @@ const RefCount = @import("refcount.zig").RefCount;
 pub const unknown_null_count = bitmap.unknown_null_count;
 pub const ValidateError = array_validate.Error;
 pub const InitError = Allocator.Error || checked.Error;
-pub const SliceError = InitError || error{OffsetOutOfBounds};
+pub const DataSliceError = InitError || error{OffsetOutOfBounds};
+pub const SliceError = DataSliceError;
 
 pub const ArrayData = struct {
     allocator: Allocator,
@@ -29,6 +30,9 @@ pub const ArrayData = struct {
         retained,
     };
 
+    /// Create storage by consuming the supplied buffers, children, and dictionary.
+    /// On success, caller must not deinit those inputs separately. On error, caller
+    /// still owns every input. The returned data must be deinitialized by the caller.
     pub fn initOwned(
         allocator: Allocator,
         ty: datatype.DataType,
@@ -42,6 +46,9 @@ pub const ArrayData = struct {
         return init(allocator, ty, len, offset, null_count, buffers, children, dictionary, .owned);
     }
 
+    /// Create storage by retaining the supplied buffers, children, and dictionary.
+    /// Caller keeps its existing references. The returned data must be deinitialized
+    /// by the caller.
     pub fn initRetained(
         allocator: Allocator,
         ty: datatype.DataType,
@@ -85,13 +92,13 @@ pub const ArrayData = struct {
                     owned_buffers[i] = if (buf) |b| b.retain() else null;
                 }
                 errdefer for (owned_buffers) |buf| {
-                    if (buf) |b| b.release();
+                    if (buf) |b| b.deinit();
                 };
                 for (children, 0..) |child, i| {
                     owned_children[i] = child.retain();
                 }
                 errdefer for (owned_children) |child| {
-                    child.release();
+                    child.deinit();
                 };
             },
             .owned => {
@@ -132,7 +139,7 @@ pub const ArrayData = struct {
         try array_validate.validate(self);
     }
 
-    pub fn slice(self: *const ArrayData, off: usize, length: usize) SliceError!*ArrayData {
+    pub fn slice(self: *const ArrayData, off: usize, length: usize) DataSliceError!*ArrayData {
         if (off > self.len) return error.OffsetOutOfBounds;
         const clamped = @min(length, self.len - off);
         const abs_offset = try checked.add(self.offset, off);
@@ -155,16 +162,17 @@ pub const ArrayData = struct {
         return self.ref_count.load(.monotonic);
     }
 
-    pub fn release(self: *ArrayData) void {
+    /// Drop one reference. Deinitializes child storage when the count reaches zero.
+    pub fn deinit(self: *ArrayData) void {
         if (self.ref_count.fetchSub(1, .acq_rel) != 1) return;
         const allocator = self.allocator;
         for (self.buffers) |buf| {
-            if (buf) |b| b.release();
+            if (buf) |b| b.deinit();
         }
         for (self.children) |child| {
-            child.release();
+            child.deinit();
         }
-        if (self.dictionary) |dict| dict.release();
+        if (self.dictionary) |dict| dict.deinit();
         allocator.free(self.buffers);
         allocator.free(self.children);
         datatype.deinitOwned(allocator, &self.type);
@@ -186,7 +194,7 @@ fn writeTestInt(comptime T: type, buffer: *Buffer, index: usize, value: T) void 
 test "ArrayData init overflow" {
     const allocator = std.testing.allocator;
     const values = try Buffer.allocate(allocator, 8);
-    defer values.release();
+    defer values.deinit();
     values.freeze();
 
     try std.testing.expectError(
@@ -198,14 +206,14 @@ test "ArrayData init overflow" {
 test "ArrayData cloneRetained retains buffers" {
     const allocator = std.testing.allocator;
     const values = try Buffer.allocate(allocator, 16);
-    errdefer values.release();
+    errdefer values.deinit();
     values.freeze();
 
     const data = try ArrayData.initOwned(allocator, .int32, 4, 0, 0, &.{ null, values }, &.{}, null);
-    defer data.release();
+    defer data.deinit();
 
     const clone = try data.cloneRetained();
-    defer clone.release();
+    defer clone.deinit();
 
     try std.testing.expectEqual(@as(usize, 2), values.refCount());
     try std.testing.expectEqual(@as(usize, 4), clone.len);
@@ -215,24 +223,24 @@ test "ArrayData cloneRetained retains buffers" {
 test "ArrayData init owns nested type metadata" {
     const allocator = std.testing.allocator;
     const values = try Buffer.allocate(allocator, 4 * @sizeOf(i32));
-    errdefer values.release();
+    errdefer values.deinit();
     values.freeze();
     const child = try ArrayData.initOwned(allocator, .int32, 4, 0, 0, &.{ null, values }, &.{}, null);
-    defer child.release();
+    defer child.deinit();
 
     const child_ty: datatype.DataType = .int32;
     const fields = [_]datatype.Field{.{ .name = "items", .type = &child_ty }};
     const ty = datatype.DataType{ .list = .{ .child = fields[0] } };
 
     const offsets = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
-    errdefer offsets.release();
+    errdefer offsets.deinit();
     writeTestInt(i32, offsets, 0, 0);
     writeTestInt(i32, offsets, 1, 4);
     offsets.freeze();
-    defer offsets.release();
+    defer offsets.deinit();
 
     const data = try ArrayData.initRetained(allocator, ty, 1, 0, 0, &.{ null, offsets }, &.{child}, null);
-    defer data.release();
+    defer data.deinit();
 
     try std.testing.expect(data.type.list.child.type != &child_ty);
     try std.testing.expectEqualStrings("items", data.type.list.child.name);
@@ -242,18 +250,18 @@ test "ArrayData init owns nested type metadata" {
 test "ArrayData init retained retains buffers and children" {
     const allocator = std.testing.allocator;
     const values = try Buffer.allocate(allocator, 16);
-    defer values.release();
+    defer values.deinit();
     values.freeze();
 
     const child_values = try Buffer.allocate(allocator, 4);
-    errdefer child_values.release();
+    errdefer child_values.deinit();
     child_values.freeze();
 
     const child = try ArrayData.initOwned(allocator, .uint8, 4, 0, 0, &.{ null, child_values }, &.{}, null);
-    defer child.release();
+    defer child.deinit();
 
     const data = try ArrayData.initRetained(allocator, .int32, 4, 0, 0, &.{ null, values }, &.{child}, child);
-    defer data.release();
+    defer data.deinit();
 
     try std.testing.expectEqual(@as(usize, 2), values.refCount());
     try std.testing.expectEqual(@as(usize, 3), child.refCount());
@@ -262,19 +270,19 @@ test "ArrayData init retained retains buffers and children" {
 test "ArrayData slice retains buffers and adjusts metadata" {
     const allocator = std.testing.allocator;
     const validity = try Buffer.allocate(allocator, 1);
-    errdefer validity.release();
+    errdefer validity.deinit();
     validity.data[0] = 0b00010111;
     validity.freeze();
 
     const values = try Buffer.allocate(allocator, 5 * @sizeOf(i32));
-    errdefer values.release();
+    errdefer values.deinit();
     values.freeze();
 
     const data = try ArrayData.initOwned(allocator, .int32, 5, 0, 1, &.{ validity, values }, &.{}, null);
-    defer data.release();
+    defer data.deinit();
 
     const sliced = try data.slice(1, 3);
-    defer sliced.release();
+    defer sliced.deinit();
 
     try std.testing.expectEqual(@as(usize, 3), sliced.len);
     try std.testing.expectEqual(@as(usize, 1), sliced.offset);
@@ -287,14 +295,14 @@ test "ArrayData slice retains buffers and adjusts metadata" {
 test "ArrayData slice clamps length and rejects bad offset" {
     const allocator = std.testing.allocator;
     const values = try Buffer.allocate(allocator, 5 * @sizeOf(i32));
-    errdefer values.release();
+    errdefer values.deinit();
     values.freeze();
 
     const data = try ArrayData.initOwned(allocator, .int32, 5, 0, 0, &.{ null, values }, &.{}, null);
-    defer data.release();
+    defer data.deinit();
 
     const sliced = try data.slice(3, 99);
-    defer sliced.release();
+    defer sliced.deinit();
     try std.testing.expectEqual(@as(usize, 2), sliced.len);
     try std.testing.expectEqual(@as(usize, 3), sliced.offset);
     try std.testing.expectError(error.OffsetOutOfBounds, data.slice(6, 1));

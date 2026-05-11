@@ -8,6 +8,8 @@ const array = @import("array.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("buffer.zig").Buffer;
 
+pub const BinaryBuilderError = Allocator.Error || checked.Error || error{InvalidUtf8};
+
 pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
     const Offset = switch (kind) {
         .binary, .utf8 => i32,
@@ -17,6 +19,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
     return struct {
         const Self = @This();
         pub const Array = array.VarBinaryView(kind);
+        pub const Error = BinaryBuilderError;
 
         allocator: Allocator,
         offsets: offset_data.Builder(Offset),
@@ -36,13 +39,13 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
 
         pub fn deinit(self: *Self) void {
             self.offsets.deinit();
-            if (self.values) |buf| buf.release();
+            if (self.values) |buf| buf.deinit();
             self.values = null;
             self.validity.deinit();
             self.len = 0;
         }
 
-        pub fn reserve(self: *Self, additional: usize, additional_bytes: usize) !void {
+        pub fn reserve(self: *Self, additional: usize, additional_bytes: usize) Error!void {
             if (additional == 0 and additional_bytes == 0) return;
             const new_len = try checked.add(self.len, additional);
             try self.offsets.reserveSlots(self.allocator, try checked.add(new_len, 1));
@@ -52,18 +55,18 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             try self.validity.ensureCapacityForBits(self.allocator, additional);
         }
 
-        pub fn append(self: *Self, bytes: []const u8) !void {
+        pub fn append(self: *Self, bytes: []const u8) Error!void {
             if (comptime kind == .utf8 or kind == .large_utf8) {
                 if (!std.unicode.utf8ValidateSlice(bytes)) return error.InvalidUtf8;
             }
             try self.appendUnchecked(bytes);
         }
 
-        pub fn appendBytes(self: *Self, bytes: []const u8) !void {
+        pub fn appendBytes(self: *Self, bytes: []const u8) Error!void {
             try self.appendUnchecked(bytes);
         }
 
-        pub fn appendNull(self: *Self) !void {
+        pub fn appendNull(self: *Self) Error!void {
             try self.reserve(1, 0);
             const values = self.values.?;
             try self.offsets.append(self.allocator, values.size);
@@ -71,7 +74,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             self.len += 1;
         }
 
-        pub fn appendNulls(self: *Self, n: usize) !void {
+        pub fn appendNulls(self: *Self, n: usize) Error!void {
             if (n == 0) return;
             try self.reserve(n, 0);
             const values = self.values.?;
@@ -84,19 +87,24 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             return self.len;
         }
 
-        pub fn finish(self: *Self) !*ArrayData {
+        /// Finish the builder and transfer the result to the caller.
+        /// Caller owns the returned data and must call `deinit`.
+        pub fn finish(self: *Self) Error!*ArrayData {
             const n = self.len;
             const null_count = self.validity.false_count;
             self.len = 0;
 
             const offsets_buf = try self.offsets.finish(self.allocator);
+            errdefer offsets_buf.deinit();
             const values_buf = try self.finishValues();
+            errdefer values_buf.deinit();
             const validity_buf = try self.validity.finishNullable(self.allocator);
+            errdefer if (validity_buf) |buf| buf.deinit();
 
             return ArrayData.initOwned(self.allocator, dataTypeForKind(kind), n, 0, null_count, &.{ validity_buf, offsets_buf, values_buf }, &.{}, null);
         }
 
-        fn appendUnchecked(self: *Self, bytes: []const u8) !void {
+        fn appendUnchecked(self: *Self, bytes: []const u8) Error!void {
             try self.reserve(1, bytes.len);
             const values = self.values.?;
             const end = try checked.add(values.size, bytes.len);
@@ -109,12 +117,12 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             self.len += 1;
         }
 
-        fn ensureValues(self: *Self) !*Buffer {
+        fn ensureValues(self: *Self) Error!*Buffer {
             if (self.values == null) self.values = try Buffer.allocate(self.allocator, 0);
             return self.values.?;
         }
 
-        fn finishValues(self: *Self) !*Buffer {
+        fn finishValues(self: *Self) Error!*Buffer {
             const values = if (self.values) |buf| blk: {
                 self.values = null;
                 break :blk buf;
@@ -148,7 +156,7 @@ test "BinaryBuilder basic nulls and slices" {
     try b.appendNull();
     try b.append("cde");
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     try data.validate();
 
     const arr = try array.BinaryArray.fromData(data);
@@ -168,7 +176,7 @@ test "BinaryBuilder all valid and reuse" {
     try b.append("");
     try b.append("bc");
     const data1 = try b.finish();
-    defer data1.release();
+    defer data1.deinit();
     const arr1 = try array.BinaryArray.fromData(data1);
     try std.testing.expect(data1.buffers[0] == null);
     try std.testing.expectEqualStrings("", arr1.valueBytes(1));
@@ -177,7 +185,7 @@ test "BinaryBuilder all valid and reuse" {
     try b.append("two");
     try b.append("three");
     const data2 = try b.finish();
-    defer data2.release();
+    defer data2.deinit();
     const arr2 = try array.BinaryArray.fromData(data2);
     try std.testing.expectEqualStrings("two", arr2.valueBytes(0));
     try std.testing.expectEqualStrings("three", arr2.valueBytes(1));
@@ -193,7 +201,7 @@ test "Utf8Builder validates input" {
     try std.testing.expectError(error.InvalidUtf8, b.append(&invalid));
 
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     try data.validate();
     const arr = try array.Utf8Array.fromData(data);
     try std.testing.expectEqualStrings("hello", arr.value(0));
@@ -207,7 +215,7 @@ test "LargeBinaryBuilder uses large offsets" {
     try b.append("alpha");
     try b.append("beta");
     const data = try b.finish();
-    defer data.release();
+    defer data.deinit();
     try data.validate();
 
     const arr = try array.LargeBinaryArray.fromData(data);
