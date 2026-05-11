@@ -39,7 +39,7 @@ pub const StructArray = struct {
         return self.data.children[index];
     }
 
-    pub fn fieldOwned(self: StructArray, index: usize) !?*ArrayData {
+    pub fn fieldOwned(self: StructArray, index: usize) array_data.SliceError!?*ArrayData {
         const child = self.fieldBaseData(index) orelse return null;
         return child.slice(self.offset, self.len);
     }
@@ -56,7 +56,7 @@ pub const StructArray = struct {
         return null;
     }
 
-    pub fn fieldNamedOwned(self: StructArray, name: []const u8) !?*ArrayData {
+    pub fn fieldNamedOwned(self: StructArray, name: []const u8) array_data.SliceError!?*ArrayData {
         for (self.data.type.struct_.fields, 0..) |field_meta, i| {
             if (std.mem.eql(u8, field_meta.name, name)) return self.fieldOwned(i);
         }
@@ -95,12 +95,12 @@ pub const StructArray = struct {
         };
     }
 
-    pub fn sliceOwned(self: StructArray, off: usize, length: usize) !*ArrayData {
+    pub fn sliceOwned(self: StructArray, off: usize, length: usize) array_data.SliceError!*ArrayData {
         const clamped = try common.clampedLen(self.len, off, length);
         return self.data.slice(off, clamped);
     }
 
-    pub fn cloneRetained(self: StructArray) !*ArrayData {
+    pub fn cloneRetained(self: StructArray) array_data.InitError!*ArrayData {
         return self.data.cloneRetained();
     }
 };

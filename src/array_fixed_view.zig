@@ -111,12 +111,12 @@ pub fn FixedWidthView(comptime kind: ArrayKind) type {
             };
         }
 
-        pub fn sliceOwned(self: Self, off: usize, length: usize) !*ArrayData {
+        pub fn sliceOwned(self: Self, off: usize, length: usize) array_data.SliceError!*ArrayData {
             const clamped = try common.clampedLen(self.len, off, length);
             return self.data.slice(off, clamped);
         }
 
-        pub fn cloneRetained(self: Self) !*ArrayData {
+        pub fn cloneRetained(self: Self) array_data.InitError!*ArrayData {
             return self.data.cloneRetained();
         }
 

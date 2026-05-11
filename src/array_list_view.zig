@@ -68,7 +68,7 @@ pub fn ListView(comptime kind: ListKind) type {
             return offset_data.rangeAt(Offset, offsets, self.offset + i);
         }
 
-        pub fn valueOwned(self: Self, i: usize) !*ArrayData {
+        pub fn valueOwned(self: Self, i: usize) array_data.SliceError!*ArrayData {
             const range = self.valueRange(i);
             return self.data.children[0].slice(range.offset, range.len);
         }
@@ -105,12 +105,12 @@ pub fn ListView(comptime kind: ListKind) type {
             };
         }
 
-        pub fn sliceOwned(self: Self, off: usize, length: usize) !*ArrayData {
+        pub fn sliceOwned(self: Self, off: usize, length: usize) array_data.SliceError!*ArrayData {
             const clamped = try common.clampedLen(self.len, off, length);
             return self.data.slice(off, clamped);
         }
 
-        pub fn cloneRetained(self: Self) !*ArrayData {
+        pub fn cloneRetained(self: Self) array_data.InitError!*ArrayData {
             return self.data.cloneRetained();
         }
     };

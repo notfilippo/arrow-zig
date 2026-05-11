@@ -10,6 +10,8 @@ const RefCount = @import("refcount.zig").RefCount;
 
 pub const unknown_null_count = bitmap.unknown_null_count;
 pub const ValidateError = array_validate.Error;
+pub const InitError = Allocator.Error || checked.Error;
+pub const SliceError = InitError || error{OffsetOutOfBounds};
 
 pub const ArrayData = struct {
     allocator: Allocator,
@@ -36,7 +38,7 @@ pub const ArrayData = struct {
         buffers: []const ?*Buffer,
         children: []const *ArrayData,
         dictionary: ?*ArrayData,
-    ) !*ArrayData {
+    ) InitError!*ArrayData {
         return init(allocator, ty, len, offset, null_count, buffers, children, dictionary, .owned);
     }
 
@@ -49,7 +51,7 @@ pub const ArrayData = struct {
         buffers: []const ?*Buffer,
         children: []const *ArrayData,
         dictionary: ?*ArrayData,
-    ) !*ArrayData {
+    ) InitError!*ArrayData {
         return init(allocator, ty, len, offset, null_count, buffers, children, dictionary, .retained);
     }
 
@@ -63,7 +65,7 @@ pub const ArrayData = struct {
         children: []const *ArrayData,
         dictionary: ?*ArrayData,
         ownership: Ownership,
-    ) !*ArrayData {
+    ) InitError!*ArrayData {
         _ = try checked.add(offset, len);
         const self = try allocator.create(ArrayData);
         errdefer allocator.destroy(self);
@@ -122,7 +124,7 @@ pub const ArrayData = struct {
         return self;
     }
 
-    pub fn cloneRetained(self: *const ArrayData) !*ArrayData {
+    pub fn cloneRetained(self: *const ArrayData) InitError!*ArrayData {
         return initRetained(self.allocator, self.type, self.len, self.offset, self.null_count, self.buffers, self.children, self.dictionary);
     }
 
@@ -130,7 +132,7 @@ pub const ArrayData = struct {
         try array_validate.validate(self);
     }
 
-    pub fn slice(self: *const ArrayData, off: usize, length: usize) !*ArrayData {
+    pub fn slice(self: *const ArrayData, off: usize, length: usize) SliceError!*ArrayData {
         if (off > self.len) return error.OffsetOutOfBounds;
         const clamped = @min(length, self.len - off);
         const abs_offset = try checked.add(self.offset, off);
