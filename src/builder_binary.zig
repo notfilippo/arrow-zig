@@ -93,7 +93,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             const values_buf = try self.finishValues();
             const validity_buf = try self.validity.finishNullable(self.allocator);
 
-            return ArrayData.init(self.allocator, dataTypeForKind(kind), n, 0, null_count, &.{ validity_buf, offsets_buf, values_buf }, &.{}, null, false);
+            return ArrayData.initOwned(self.allocator, dataTypeForKind(kind), n, 0, null_count, &.{ validity_buf, offsets_buf, values_buf }, &.{}, null);
         }
 
         fn appendUnchecked(self: *Self, bytes: []const u8) !void {

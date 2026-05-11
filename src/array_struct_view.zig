@@ -133,7 +133,7 @@ test "StructArray exposes child fields" {
         .{ .name = "flag", .type = &flag_ty },
     };
     const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &fields } };
-    const data = try ArrayData.init(allocator, struct_ty, 3, 0, 1, &.{validity}, &.{ number_data, flag_data }, null, true);
+    const data = try ArrayData.initRetained(allocator, struct_ty, 3, 0, 1, &.{validity}, &.{ number_data, flag_data }, null);
     defer data.release();
     try data.validate();
 

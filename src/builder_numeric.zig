@@ -139,7 +139,7 @@ pub fn NumericBuilder(comptime T: type) type {
             self.len = 0;
             const validity_buf: ?*Buffer = try self.validity.finishNullable(self.allocator);
 
-            return ArrayData.init(self.allocator, self.ty, n, 0, null_count, &.{ validity_buf, values_buf }, &.{}, null, false);
+            return ArrayData.initOwned(self.allocator, self.ty, n, 0, null_count, &.{ validity_buf, values_buf }, &.{}, null);
         }
 
         fn unsafeAppend(self: *Self, v: T) void {

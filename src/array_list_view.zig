@@ -124,7 +124,7 @@ test "ListArray value ranges and owned values" {
     const child_values = try Buffer.allocate(allocator, 5 * @sizeOf(i32));
     errdefer child_values.release();
     child_values.freeze();
-    const child = try ArrayData.init(allocator, .int32, 5, 0, 0, &.{ null, child_values }, &.{}, null, false);
+    const child = try ArrayData.initOwned(allocator, .int32, 5, 0, 0, &.{ null, child_values }, &.{}, null);
     defer child.release();
 
     const offsets = try Buffer.allocate(allocator, 4 * @sizeOf(i32));
@@ -138,7 +138,7 @@ test "ListArray value ranges and owned values" {
 
     const value_ty: datatype.DataType = .int32;
     const list_ty = datatype.DataType{ .list = .{ .child = .{ .name = "item", .type = &value_ty } } };
-    const data = try ArrayData.init(allocator, list_ty, 3, 0, 0, &.{ null, offsets }, &.{child}, null, true);
+    const data = try ArrayData.initRetained(allocator, list_ty, 3, 0, 0, &.{ null, offsets }, &.{child}, null);
     defer data.release();
     try data.validate();
 
@@ -161,7 +161,7 @@ test "LargeListArray uses large offsets" {
     const child_values = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
     errdefer child_values.release();
     child_values.freeze();
-    const child = try ArrayData.init(allocator, .int32, 2, 0, 0, &.{ null, child_values }, &.{}, null, false);
+    const child = try ArrayData.initOwned(allocator, .int32, 2, 0, 0, &.{ null, child_values }, &.{}, null);
     defer child.release();
 
     const offsets = try Buffer.allocate(allocator, 3 * @sizeOf(i64));
@@ -174,7 +174,7 @@ test "LargeListArray uses large offsets" {
 
     const value_ty: datatype.DataType = .int32;
     const list_ty = datatype.DataType{ .large_list = .{ .child = .{ .name = "item", .type = &value_ty } } };
-    const data = try ArrayData.init(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null, true);
+    const data = try ArrayData.initRetained(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null);
     defer data.release();
     try data.validate();
 

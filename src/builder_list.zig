@@ -133,7 +133,7 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
                 .nullable = self.child_nullable,
             };
             const ty = dataTypeForKind(kind, child_field);
-            const data = try ArrayData.init(self.allocator, ty, n, 0, null_count, &.{ validity_buf, offsets_buf }, &.{child_data}, null, false);
+            const data = try ArrayData.initOwned(self.allocator, ty, n, 0, null_count, &.{ validity_buf, offsets_buf }, &.{child_data}, null);
             self.resetSlots();
             return data;
         }

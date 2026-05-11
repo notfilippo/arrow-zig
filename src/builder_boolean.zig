@@ -92,7 +92,7 @@ pub const BooleanBuilder = struct {
         const values_buf = try self.values.finish(self.allocator);
         const validity_buf: ?*Buffer = try self.validity.finishNullable(self.allocator);
 
-        return ArrayData.init(self.allocator, .bool, n, 0, null_count, &.{ validity_buf, values_buf }, &.{}, null, false);
+        return ArrayData.initOwned(self.allocator, .bool, n, 0, null_count, &.{ validity_buf, values_buf }, &.{}, null);
     }
 
     fn unsafeAppend(self: *BooleanBuilder, v: bool) void {

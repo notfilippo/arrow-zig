@@ -22,7 +22,12 @@ pub const ArrayData = struct {
     dictionary: ?*ArrayData,
     ref_count: RefCount,
 
-    pub fn init(
+    const Ownership = enum {
+        owned,
+        retained,
+    };
+
+    pub fn initOwned(
         allocator: Allocator,
         ty: datatype.DataType,
         len: usize,
@@ -31,7 +36,33 @@ pub const ArrayData = struct {
         buffers: []const ?*Buffer,
         children: []const *ArrayData,
         dictionary: ?*ArrayData,
-        comptime do_retain: bool,
+    ) !*ArrayData {
+        return init(allocator, ty, len, offset, null_count, buffers, children, dictionary, .owned);
+    }
+
+    pub fn initRetained(
+        allocator: Allocator,
+        ty: datatype.DataType,
+        len: usize,
+        offset: usize,
+        null_count: usize,
+        buffers: []const ?*Buffer,
+        children: []const *ArrayData,
+        dictionary: ?*ArrayData,
+    ) !*ArrayData {
+        return init(allocator, ty, len, offset, null_count, buffers, children, dictionary, .retained);
+    }
+
+    fn init(
+        allocator: Allocator,
+        ty: datatype.DataType,
+        len: usize,
+        offset: usize,
+        null_count: usize,
+        buffers: []const ?*Buffer,
+        children: []const *ArrayData,
+        dictionary: ?*ArrayData,
+        ownership: Ownership,
     ) !*ArrayData {
         _ = try checked.add(offset, len);
         const self = try allocator.create(ArrayData);
@@ -46,25 +77,31 @@ pub const ArrayData = struct {
         const owned_children = try allocator.alloc(*ArrayData, children.len);
         errdefer allocator.free(owned_children);
 
-        if (do_retain) {
-            for (buffers, 0..) |buf, i| {
-                owned_buffers[i] = if (buf) |b| b.retain() else null;
-            }
-            errdefer for (owned_buffers) |buf| {
-                if (buf) |b| b.release();
-            };
-            for (children, 0..) |child, i| {
-                owned_children[i] = child.retain();
-            }
-            errdefer for (owned_children) |child| {
-                child.release();
-            };
-        } else {
-            @memcpy(owned_buffers, buffers);
-            @memcpy(owned_children, children);
+        switch (ownership) {
+            .retained => {
+                for (buffers, 0..) |buf, i| {
+                    owned_buffers[i] = if (buf) |b| b.retain() else null;
+                }
+                errdefer for (owned_buffers) |buf| {
+                    if (buf) |b| b.release();
+                };
+                for (children, 0..) |child, i| {
+                    owned_children[i] = child.retain();
+                }
+                errdefer for (owned_children) |child| {
+                    child.release();
+                };
+            },
+            .owned => {
+                @memcpy(owned_buffers, buffers);
+                @memcpy(owned_children, children);
+            },
         }
 
-        const dict = if (do_retain) (if (dictionary) |d| d.retain() else null) else dictionary;
+        const dict = switch (ownership) {
+            .retained => if (dictionary) |d| d.retain() else null,
+            .owned => dictionary,
+        };
 
         self.* = .{
             .allocator = allocator,
@@ -86,7 +123,7 @@ pub const ArrayData = struct {
     }
 
     pub fn cloneRetained(self: *const ArrayData) !*ArrayData {
-        return init(self.allocator, self.type, self.len, self.offset, self.null_count, self.buffers, self.children, self.dictionary, true);
+        return initRetained(self.allocator, self.type, self.len, self.offset, self.null_count, self.buffers, self.children, self.dictionary);
     }
 
     pub fn validate(self: *const ArrayData) (ValidateError || checked.Error || datatype.ValidationError)!void {
@@ -98,7 +135,7 @@ pub const ArrayData = struct {
         const clamped = @min(length, self.len - off);
         const abs_offset = try checked.add(self.offset, off);
         const nc = slicedNullCount(self.null_count, self.len, off, clamped);
-        return init(self.allocator, self.type, clamped, abs_offset, nc, self.buffers, self.children, self.dictionary, true);
+        return initRetained(self.allocator, self.type, clamped, abs_offset, nc, self.buffers, self.children, self.dictionary);
     }
 
     pub fn nullCount(self: *const ArrayData) usize {
@@ -152,7 +189,7 @@ test "ArrayData init overflow" {
 
     try std.testing.expectError(
         error.Overflow,
-        ArrayData.init(allocator, .int32, 1, std.math.maxInt(usize), 0, &.{ null, values }, &.{}, null, false),
+        ArrayData.initOwned(allocator, .int32, 1, std.math.maxInt(usize), 0, &.{ null, values }, &.{}, null),
     );
 }
 
@@ -162,7 +199,7 @@ test "ArrayData cloneRetained retains buffers" {
     errdefer values.release();
     values.freeze();
 
-    const data = try ArrayData.init(allocator, .int32, 4, 0, 0, &.{ null, values }, &.{}, null, false);
+    const data = try ArrayData.initOwned(allocator, .int32, 4, 0, 0, &.{ null, values }, &.{}, null);
     defer data.release();
 
     const clone = try data.cloneRetained();
@@ -178,7 +215,7 @@ test "ArrayData init owns nested type metadata" {
     const values = try Buffer.allocate(allocator, 4 * @sizeOf(i32));
     errdefer values.release();
     values.freeze();
-    const child = try ArrayData.init(allocator, .int32, 4, 0, 0, &.{ null, values }, &.{}, null, false);
+    const child = try ArrayData.initOwned(allocator, .int32, 4, 0, 0, &.{ null, values }, &.{}, null);
     defer child.release();
 
     const child_ty: datatype.DataType = .int32;
@@ -192,7 +229,7 @@ test "ArrayData init owns nested type metadata" {
     offsets.freeze();
     defer offsets.release();
 
-    const data = try ArrayData.init(allocator, ty, 1, 0, 0, &.{ null, offsets }, &.{child}, null, true);
+    const data = try ArrayData.initRetained(allocator, ty, 1, 0, 0, &.{ null, offsets }, &.{child}, null);
     defer data.release();
 
     try std.testing.expect(data.type.list.child.type != &child_ty);
@@ -210,10 +247,10 @@ test "ArrayData init retained retains buffers and children" {
     errdefer child_values.release();
     child_values.freeze();
 
-    const child = try ArrayData.init(allocator, .uint8, 4, 0, 0, &.{ null, child_values }, &.{}, null, false);
+    const child = try ArrayData.initOwned(allocator, .uint8, 4, 0, 0, &.{ null, child_values }, &.{}, null);
     defer child.release();
 
-    const data = try ArrayData.init(allocator, .int32, 4, 0, 0, &.{ null, values }, &.{child}, child, true);
+    const data = try ArrayData.initRetained(allocator, .int32, 4, 0, 0, &.{ null, values }, &.{child}, child);
     defer data.release();
 
     try std.testing.expectEqual(@as(usize, 2), values.refCount());
@@ -231,7 +268,7 @@ test "ArrayData slice retains buffers and adjusts metadata" {
     errdefer values.release();
     values.freeze();
 
-    const data = try ArrayData.init(allocator, .int32, 5, 0, 1, &.{ validity, values }, &.{}, null, false);
+    const data = try ArrayData.initOwned(allocator, .int32, 5, 0, 1, &.{ validity, values }, &.{}, null);
     defer data.release();
 
     const sliced = try data.slice(1, 3);
@@ -251,7 +288,7 @@ test "ArrayData slice clamps length and rejects bad offset" {
     errdefer values.release();
     values.freeze();
 
-    const data = try ArrayData.init(allocator, .int32, 5, 0, 0, &.{ null, values }, &.{}, null, false);
+    const data = try ArrayData.initOwned(allocator, .int32, 5, 0, 0, &.{ null, values }, &.{}, null);
     defer data.release();
 
     const sliced = try data.slice(3, 99);

@@ -443,7 +443,7 @@ test "exportArray exports nested list arrays" {
     const values = try @import("buffer.zig").Buffer.allocate(allocator, 2 * @sizeOf(i32));
     errdefer values.release();
     values.freeze();
-    const child = try ArrayData.init(allocator, .int32, 2, 0, 0, &.{ null, values }, &.{}, null, false);
+    const child = try ArrayData.initOwned(allocator, .int32, 2, 0, 0, &.{ null, values }, &.{}, null);
     defer child.release();
 
     const offsets = try @import("buffer.zig").Buffer.allocate(allocator, 3 * @sizeOf(i32));
@@ -456,7 +456,7 @@ test "exportArray exports nested list arrays" {
 
     const value_ty: datatype.DataType = .int32;
     const list_ty = datatype.DataType{ .list = .{ .child = .{ .type = &value_ty } } };
-    const data = try ArrayData.init(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null, true);
+    const data = try ArrayData.initRetained(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null);
     defer data.release();
 
     var exported: ArrowArray = undefined;

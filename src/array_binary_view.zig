@@ -134,7 +134,7 @@ test "BinaryArray reads ranges and slices" {
     @memcpy(values.data[0..5], "abcde");
     values.freeze();
 
-    const data = try ArrayData.init(allocator, .binary, 3, 0, 0, &.{ null, offsets, values }, &.{}, null, false);
+    const data = try ArrayData.initOwned(allocator, .binary, 3, 0, 0, &.{ null, offsets, values }, &.{}, null);
     defer data.release();
     const arr = try BinaryArray.fromData(data);
 
