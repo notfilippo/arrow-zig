@@ -2,6 +2,7 @@ const common = @import("array_view_common.zig");
 const fixed = @import("array_fixed_view.zig");
 const binary = @import("array_binary_view.zig");
 const list = @import("array_list_view.zig");
+const struct_view = @import("array_struct_view.zig");
 
 pub const ArrayKind = common.ArrayKind;
 pub const SliceError = common.SliceError;
@@ -30,6 +31,7 @@ pub const ValueRange = list.ValueRange;
 pub const ListView = list.ListView;
 pub const ListArray = list.ListArray;
 pub const LargeListArray = list.LargeListArray;
+pub const StructArray = struct_view.StructArray;
 
 pub fn NumericArray(comptime T: type) type {
     return fixed.NumericArray(T);
@@ -40,4 +42,5 @@ test {
     _ = fixed;
     _ = binary;
     _ = list;
+    _ = struct_view;
 }
