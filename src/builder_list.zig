@@ -192,7 +192,7 @@ test "ListBuilder builds numeric child lists" {
     try std.testing.expectEqual(@as(usize, 0), arr.valueRange(1).len);
     try std.testing.expect(arr.isNull(3));
 
-    const child = try array.NumericArray(i32).fromData(arr.childData());
+    const child = try array.NumericArray(i32).fromData(arr.childBaseData());
     try std.testing.expectEqual(@as(usize, 3), child.len);
     try std.testing.expectEqual(@as(i32, 3), child.value(2));
 }

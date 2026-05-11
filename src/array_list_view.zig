@@ -59,7 +59,7 @@ pub fn ListView(comptime kind: ListKind) type {
             return self.data;
         }
 
-        pub fn childData(self: Self) *const ArrayData {
+        pub fn childBaseData(self: Self) *const ArrayData {
             return self.data.children[0];
         }
 
