@@ -15,7 +15,9 @@ const datatype = @import("datatype.zig");
 const bitmap = @import("bitmap.zig");
 const array_validate = @import("array_validate.zig");
 const offset_data = @import("offsets.zig");
-const Buffer = @import("buffer.zig").Buffer;
+const buffer_mod = @import("buffer.zig");
+const Buffer = buffer_mod.Buffer;
+const ExternalOwnerHandle = buffer_mod.ExternalOwnerHandle;
 const RefCount = @import("refcount.zig").RefCount;
 
 pub const unknown_null_count = bitmap.unknown_null_count;
@@ -32,6 +34,7 @@ pub const ArrayData = struct {
     buffers: []?*Buffer,
     children: []*ArrayData,
     dictionary: ?*ArrayData,
+    external_owner: ?*ExternalOwnerHandle,
     ref_count: RefCount,
 
     const Ownership = enum {
@@ -52,7 +55,23 @@ pub const ArrayData = struct {
         children: []const *ArrayData,
         dictionary: ?*ArrayData,
     ) InitError!*ArrayData {
-        return init(allocator, ty, len, offset, null_count, buffers, children, dictionary, .owned);
+        return init(allocator, ty, len, offset, null_count, buffers, children, dictionary, .owned, null);
+    }
+
+    /// Create storage by consuming inputs and retaining an external owner.
+    /// Used by importers whose buffers may all be absent or empty.
+    pub fn initOwnedExternal(
+        allocator: Allocator,
+        ty: datatype.DataType,
+        len: usize,
+        offset: usize,
+        null_count: usize,
+        buffers: []const ?*Buffer,
+        children: []const *ArrayData,
+        dictionary: ?*ArrayData,
+        owner: *ExternalOwnerHandle,
+    ) InitError!*ArrayData {
+        return init(allocator, ty, len, offset, null_count, buffers, children, dictionary, .owned, owner);
     }
 
     /// Create storage by retaining the supplied buffers, children, and dictionary.
@@ -68,7 +87,7 @@ pub const ArrayData = struct {
         children: []const *ArrayData,
         dictionary: ?*ArrayData,
     ) InitError!*ArrayData {
-        return init(allocator, ty, len, offset, null_count, buffers, children, dictionary, .retained);
+        return init(allocator, ty, len, offset, null_count, buffers, children, dictionary, .retained, null);
     }
 
     fn init(
@@ -81,6 +100,7 @@ pub const ArrayData = struct {
         children: []const *ArrayData,
         dictionary: ?*ArrayData,
         ownership: Ownership,
+        external_owner: ?*ExternalOwnerHandle,
     ) InitError!*ArrayData {
         _ = try checked.add(offset, len);
         const self = try allocator.create(ArrayData);
@@ -121,6 +141,9 @@ pub const ArrayData = struct {
             .owned => dictionary,
         };
 
+        const owner = if (external_owner) |o| o.retain() else null;
+        errdefer if (owner) |o| o.deinit();
+
         self.* = .{
             .allocator = allocator,
             .type = owned_type,
@@ -130,6 +153,7 @@ pub const ArrayData = struct {
             .buffers = owned_buffers,
             .children = owned_children,
             .dictionary = dict,
+            .external_owner = owner,
             .ref_count = RefCount.init(1),
         };
         return self;
@@ -141,7 +165,7 @@ pub const ArrayData = struct {
     }
 
     pub fn cloneRetained(self: *const ArrayData) InitError!*ArrayData {
-        return initRetained(self.allocator, self.type, self.len, self.offset, self.null_count, self.buffers, self.children, self.dictionary);
+        return init(self.allocator, self.type, self.len, self.offset, self.null_count, self.buffers, self.children, self.dictionary, .retained, self.external_owner);
     }
 
     pub fn validate(self: *const ArrayData) (ValidateError || checked.Error || datatype.ValidationError)!void {
@@ -153,7 +177,7 @@ pub const ArrayData = struct {
         const clamped = @min(length, self.len - off);
         const abs_offset = try checked.add(self.offset, off);
         const nc = slicedNullCount(self.null_count, self.len, off, clamped);
-        return initRetained(self.allocator, self.type, clamped, abs_offset, nc, self.buffers, self.children, self.dictionary);
+        return init(self.allocator, self.type, clamped, abs_offset, nc, self.buffers, self.children, self.dictionary, .retained, self.external_owner);
     }
 
     pub fn nullCount(self: *const ArrayData) usize {
@@ -182,6 +206,7 @@ pub const ArrayData = struct {
             child.deinit();
         }
         if (self.dictionary) |dict| dict.deinit();
+        if (self.external_owner) |owner| owner.deinit();
         allocator.free(self.buffers);
         allocator.free(self.children);
         datatype.deinitOwned(allocator, &self.type);

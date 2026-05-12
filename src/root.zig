@@ -4,8 +4,8 @@
 //! Public entry point for the Arrow Zig package.
 //!
 //! The package exposes columnar buffers, array storage, typed views, builders,
-//! data types, bitmap helpers, config, and Arrow C Data Interface export
-//! helpers.
+//! data types, bitmap helpers, config, and Arrow C Data Interface import and
+//! export helpers.
 
 /// Array storage and typed array views.
 pub const array = @import("array.zig");
@@ -19,7 +19,7 @@ pub const buffer = @import("buffer.zig");
 /// Mutable builders for producing `ArrayData`.
 pub const builder = @import("builder.zig");
 
-/// Arrow C Data Interface export helpers.
+/// Arrow C Data Interface import and export helpers.
 pub const cdi = @import("cdi.zig");
 
 /// Compile time package configuration.

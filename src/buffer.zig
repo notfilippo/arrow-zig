@@ -34,6 +34,7 @@ pub const AllocateError = Allocator.Error || checked.Error;
 pub const ReserveError = Allocator.Error || checked.Error;
 pub const SliceError = Allocator.Error || checked.Error || error{OffsetOutOfBounds};
 pub const WrapError = Allocator.Error || BufferContractError;
+pub const CdiWrapError = Allocator.Error || error{MisalignedBuffer};
 
 pub const ExternalReleaseFn = *const fn (ctx: *anyopaque) void;
 
@@ -77,6 +78,8 @@ pub const ExternalOwnerHandle = struct {
 /// `size` is the number of bytes of valid data. `capacity` is the number of
 /// allocated bytes, always a multiple of 64 for internally allocated buffers.
 /// Invariant: `size <= capacity`.
+/// CDI import buffers record visible bytes as capacity because producer
+/// padding exists by contract but the byte count is not known.
 ///
 /// Root buffers may either own their allocation directly or retain an external
 /// owner handle. Slice-child buffers hold a retained parent pointer and do not
@@ -180,6 +183,27 @@ pub const Buffer = struct {
     ) WrapError!*Buffer {
         try validateExternalContract(size, bytes);
         return initExternal(allocator, owner, @constCast(bytes.ptr), size, bytes.len, false);
+    }
+
+    /// Wrap immutable CDI memory with a computed visible size.
+    /// The Arrow C Data Interface producer is trusted for padding.
+    pub fn wrapCdiConst(
+        allocator: Allocator,
+        owner: *ExternalOwnerHandle,
+        ptr: *const anyopaque,
+        size: usize,
+    ) CdiWrapError!*Buffer {
+        if (@intFromPtr(ptr) % arrow_alignment != 0) return error.MisalignedBuffer;
+        const bytes: [*]const u8 = @ptrCast(ptr);
+        return initExternal(allocator, owner, @constCast(bytes), size, size, false);
+    }
+
+    /// Retain a CDI owner for a required empty buffer whose pointer is null.
+    pub fn wrapCdiEmptyConst(
+        allocator: Allocator,
+        owner: *ExternalOwnerHandle,
+    ) Allocator.Error!*Buffer {
+        return initExternal(allocator, owner, undefined, 0, 0, false);
     }
 
     /// Create a child buffer whose data window is [off, off+len) within self's allocation.
@@ -492,5 +516,34 @@ test "external owner shared across buffers releases once" {
     try std.testing.expectEqual(@as(usize, 0), release_count);
 
     buf1.deinit();
+    try std.testing.expectEqual(@as(usize, 1), release_count);
+}
+
+test "wrapCdiConst trusts padding" {
+    const a = std.testing.allocator;
+    const mem = try a.alignedAlloc(u8, arrow_align, 64);
+    @memset(mem, 0xFF);
+    mem[0] = 7;
+
+    var release_count: usize = 0;
+    var ctx = ExternalMemCtx{
+        .allocator = a,
+        .mem = mem,
+        .release_count = &release_count,
+    };
+
+    var owner = ExternalOwnerHandle.init(&ctx, releaseExternalMem);
+    const buf = Buffer.wrapCdiConst(a, &owner, mem.ptr, 1) catch |err| {
+        owner.deinit();
+        return err;
+    };
+    owner.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), buf.size);
+    try std.testing.expectEqual(@as(usize, 1), buf.capacity);
+    try std.testing.expect(!buf.is_mutable);
+    try std.testing.expectEqual(@as(u8, 7), buf.dataSlice()[0]);
+
+    buf.deinit();
     try std.testing.expectEqual(@as(usize, 1), release_count);
 }

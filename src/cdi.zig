@@ -1,18 +1,24 @@
 // Copyright 2026 Filippo Rossi
 // SPDX-License-Identifier: Apache-2.0
 
-//! Arrow C Data Interface export.
+//! Arrow C Data Interface import and export.
 //!
-//! Exported schemas and arrays retain the source metadata and array storage
-//! until the C Data Interface release callback is invoked.
+//! Exported schemas and arrays retain source metadata and array storage until
+//! the C Data Interface release callback is invoked. Imported arrays consume
+//! the top level `ArrowArray` on success and keep its release callback alive
+//! until the returned `ArrayData` is deinitialized.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const array = @import("array.zig");
+const bitmap = @import("bitmap.zig");
+const buffer = @import("buffer.zig");
 const checked = @import("checked.zig");
 const datatype = @import("datatype.zig");
 
 const ArrayData = array.ArrayData;
+const Buffer = buffer.Buffer;
+const ExternalOwnerHandle = buffer.ExternalOwnerHandle;
 
 pub const schema_flag_dictionary_ordered: i64 = 1;
 pub const schema_flag_nullable: i64 = 2;
@@ -23,6 +29,18 @@ pub const SchemaExportError = Allocator.Error || datatype.ValidationError || err
 };
 
 pub const ArrayExportError = SchemaExportError || array.ValidateError || checked.Error;
+pub const ArrayImportError =
+    Allocator.Error ||
+    checked.Error ||
+    datatype.ValidationError ||
+    array.ValidateError ||
+    buffer.CdiWrapError ||
+    error{
+        ReleasedArray,
+        NegativeLength,
+        InvalidNullCount,
+        ValueOutOfRange,
+    };
 
 pub const ArrowSchema = extern struct {
     format: ?[*:0]const u8,
@@ -65,6 +83,14 @@ const ArrayPrivate = struct {
     children_storage: []ArrowArray,
     child_ptrs: []*ArrowArray,
     dictionary: ?*ArrowArray,
+};
+
+// Children and dictionaries stay owned by the moved top level ArrowArray.
+const ImportedArrayOwner = struct {
+    allocator: Allocator,
+    handle: ExternalOwnerHandle,
+    moved: ArrowArray,
+    moved_valid: bool,
 };
 
 pub fn exportType(allocator: Allocator, ty: datatype.DataType, out: *ArrowSchema) SchemaExportError!void {
@@ -218,12 +244,250 @@ pub fn exportArray(allocator: Allocator, data: *ArrayData, out: *ArrowArray) Arr
     };
 }
 
+/// Import one typed Arrow C Data Interface array without copying buffers.
+/// On success, consumes only the top level `ArrowArray` and marks it released.
+/// The moved C array is released when the last imported data or buffer drops.
+pub fn importArray(allocator: Allocator, ty: datatype.DataType, arr: *ArrowArray) ArrayImportError!*ArrayData {
+    if (arrayIsReleased(arr)) return error.ReleasedArray;
+    try ty.validate();
+
+    const owner = try allocator.create(ImportedArrayOwner);
+    owner.* = undefined;
+    owner.allocator = allocator;
+    owner.moved_valid = false;
+    owner.handle = ExternalOwnerHandle.init(owner, releaseImportedArrayOwner);
+
+    errdefer owner.handle.deinit();
+
+    const data = try importArrayNode(allocator, ty, arr, &owner.handle);
+    errdefer data.deinit();
+
+    try data.validate();
+
+    owner.moved = arr.*;
+    owner.moved_valid = true;
+    arr.release = null;
+    arr.private_data = null;
+
+    owner.handle.deinit();
+    return data;
+}
+
 pub fn schemaIsReleased(schema: *const ArrowSchema) bool {
     return schema.release == null;
 }
 
 pub fn arrayIsReleased(arr: *const ArrowArray) bool {
     return arr.release == null;
+}
+
+fn importArrayNode(
+    allocator: Allocator,
+    ty: datatype.DataType,
+    arr: *ArrowArray,
+    owner: *ExternalOwnerHandle,
+) ArrayImportError!*ArrayData {
+    if (arrayIsReleased(arr)) return error.ReleasedArray;
+
+    const len = try importLength(arr.length);
+    const offset = try importOffset(arr.offset);
+    const null_count = try importNullCount(ty, arr.null_count, len);
+    const layout = ty.layout();
+
+    if (arr.n_buffers < 0) return error.InvalidBufferCount;
+    const n_buffers = try i64ToUsize(arr.n_buffers);
+    if (n_buffers != layout.buffers.len) return error.InvalidBufferCount;
+    if (layout.buffers.len > 0 and arr.buffers == null) return error.InvalidBufferCount;
+
+    const child_count = ty.childCount();
+    if (arr.n_children < 0) return error.InvalidChildCount;
+    const n_children = try i64ToUsize(arr.n_children);
+    if (n_children != child_count) return error.InvalidChildCount;
+    if (child_count > 0 and arr.children == null) return error.InvalidChildCount;
+
+    if (layout.has_dictionary) {
+        if (arr.dictionary == null) return error.MissingDictionary;
+    } else if (arr.dictionary != null) {
+        return error.UnexpectedDictionary;
+    }
+
+    const buffers = try allocator.alloc(?*Buffer, layout.buffers.len);
+    defer allocator.free(buffers);
+    @memset(buffers, null);
+
+    var objects_owned = false;
+    errdefer if (!objects_owned) {
+        for (buffers) |buf| {
+            if (buf) |b| b.deinit();
+        }
+    };
+
+    for (layout.buffers, 0..) |spec, i| {
+        buffers[i] = try importBuffer(allocator, owner, ty, arr, spec, i, len, offset);
+    }
+
+    const children = try allocator.alloc(*ArrayData, child_count);
+    defer allocator.free(children);
+
+    var imported_children: usize = 0;
+    errdefer if (!objects_owned) {
+        for (children[0..imported_children]) |child| child.deinit();
+    };
+
+    for (0..child_count) |i| {
+        const child_ty = childFieldAt(ty, i).?.type.*;
+        children[i] = try importArrayNode(allocator, child_ty, arr.children.?[i], owner);
+        imported_children += 1;
+    }
+
+    var dictionary: ?*ArrayData = null;
+    errdefer if (!objects_owned) {
+        if (dictionary) |dict| dict.deinit();
+    };
+
+    if (layout.has_dictionary) {
+        const dict_ty = ty.dictionary.value_type.*;
+        dictionary = try importArrayNode(allocator, dict_ty, arr.dictionary.?, owner);
+    }
+
+    const data = try ArrayData.initOwnedExternal(
+        allocator,
+        ty,
+        len,
+        offset,
+        null_count,
+        buffers,
+        children,
+        dictionary,
+        owner,
+    );
+    objects_owned = true;
+    return data;
+}
+
+fn importBuffer(
+    allocator: Allocator,
+    owner: *ExternalOwnerHandle,
+    ty: datatype.DataType,
+    arr: *const ArrowArray,
+    spec: datatype.BufferSpec,
+    index: usize,
+    len: usize,
+    offset: usize,
+) ArrayImportError!?*Buffer {
+    const size = try visibleBufferSize(ty, arr, spec, index, len, offset);
+    const ptr = arr.buffers.?[index] orelse {
+        if (spec.kind == .validity) return null;
+        if (size == 0) return try Buffer.wrapCdiEmptyConst(allocator, owner);
+        return missingBufferError(spec.kind);
+    };
+    return try Buffer.wrapCdiConst(allocator, owner, ptr, size);
+}
+
+fn visibleBufferSize(
+    ty: datatype.DataType,
+    arr: *const ArrowArray,
+    spec: datatype.BufferSpec,
+    index: usize,
+    len: usize,
+    offset: usize,
+) ArrayImportError!usize {
+    const total = try checked.add(offset, len);
+    return switch (spec.kind) {
+        .validity => if (len == 0) 0 else try bitmap.byteLenChecked(total),
+        .values => try valuesBufferSize(ty, arr, spec, len, total),
+        .offsets => try offsetsBufferSize(arr, index, spec.byte_width, len, total),
+        .type_ids, .union_offsets => try checked.mul(total, spec.byte_width),
+    };
+}
+
+fn valuesBufferSize(
+    ty: datatype.DataType,
+    arr: *const ArrowArray,
+    spec: datatype.BufferSpec,
+    len: usize,
+    total: usize,
+) ArrayImportError!usize {
+    if (len == 0) return 0;
+    if (spec.bit_width == 1) return try bitmap.byteLenChecked(total);
+    if (spec.byte_width != 0) return try checked.mul(total, spec.byte_width);
+    const offset_width: usize = switch (ty) {
+        .binary, .utf8 => @sizeOf(i32),
+        .large_binary, .large_utf8 => @sizeOf(i64),
+        else => unreachable,
+    };
+    const offsets = arr.buffers.?[1] orelse return error.MissingOffsetsBuffer;
+    return try readOffsetAt(offsets, total, offset_width);
+}
+
+fn offsetsBufferSize(
+    arr: *const ArrowArray,
+    index: usize,
+    byte_width: usize,
+    len: usize,
+    total: usize,
+) ArrayImportError!usize {
+    if (len == 0) return 0;
+    if (arr.buffers.?[index] == null) return error.MissingOffsetsBuffer;
+    return try checked.mul(try checked.add(total, 1), byte_width);
+}
+
+fn readOffsetAt(ptr: *const anyopaque, index: usize, byte_width: usize) ArrayImportError!usize {
+    if (@intFromPtr(ptr) % buffer.arrow_alignment != 0) return error.MisalignedBuffer;
+    const bytes: [*]const u8 = @ptrCast(ptr);
+    const start = try checked.mul(index, byte_width);
+    return switch (byte_width) {
+        @sizeOf(i32) => try signedOffsetToUsize(std.mem.readInt(i32, bytes[start..][0..@sizeOf(i32)], .little)),
+        @sizeOf(i64) => try signedOffsetToUsize(std.mem.readInt(i64, bytes[start..][0..@sizeOf(i64)], .little)),
+        else => unreachable,
+    };
+}
+
+fn signedOffsetToUsize(value: anytype) ArrayImportError!usize {
+    if (value < 0) return error.NegativeOffset;
+    if (@as(u128, @intCast(value)) > @as(u128, std.math.maxInt(usize))) return error.ValueOutOfRange;
+    return @intCast(value);
+}
+
+fn missingBufferError(kind: datatype.BufferKind) ArrayImportError {
+    return switch (kind) {
+        .validity => unreachable,
+        .values => error.MissingValuesBuffer,
+        .offsets => error.MissingOffsetsBuffer,
+        .type_ids => error.MissingTypeIdsBuffer,
+        .union_offsets => error.MissingUnionOffsetsBuffer,
+    };
+}
+
+fn importLength(value: i64) ArrayImportError!usize {
+    if (value < 0) return error.NegativeLength;
+    return i64ToUsize(value);
+}
+
+fn importOffset(value: i64) ArrayImportError!usize {
+    if (value < 0) return error.NegativeOffset;
+    return i64ToUsize(value);
+}
+
+fn importNullCount(ty: datatype.DataType, value: i64, len: usize) ArrayImportError!usize {
+    if (value == -1) return if (ty.id() == .null_) len else array.unknown_null_count;
+    if (value < -1) return error.InvalidNullCount;
+    const null_count = try i64ToUsize(value);
+    if (null_count > len) return error.NullCountOutOfBounds;
+    return null_count;
+}
+
+fn i64ToUsize(value: i64) ArrayImportError!usize {
+    const unsigned: u64 = @intCast(value);
+    if (@as(u128, unsigned) > @as(u128, std.math.maxInt(usize))) return error.ValueOutOfRange;
+    return @intCast(unsigned);
+}
+
+fn releaseImportedArrayOwner(ctx_ptr: *anyopaque) void {
+    const owner: *ImportedArrayOwner = @ptrCast(@alignCast(ctx_ptr));
+    const allocator = owner.allocator;
+    if (owner.moved_valid) releaseArrayIfNeeded(&owner.moved);
+    allocator.destroy(owner);
 }
 
 fn releaseSchema(schema: *ArrowSchema) callconv(.c) void {
@@ -278,7 +542,7 @@ fn releaseArrayIfNeeded(arr: *ArrowArray) void {
     if (arr.release) |release| release(arr);
 }
 
-fn bufferPointer(buf: *const @import("buffer.zig").Buffer) ?*const anyopaque {
+fn bufferPointer(buf: *const Buffer) ?*const anyopaque {
     if (buf.size == 0) return null;
     return @ptrCast(buf.data);
 }
@@ -364,118 +628,6 @@ fn timeUnitCode(unit: datatype.TimeUnit) []const u8 {
     };
 }
 
-test "exportType primitive schema" {
-    const allocator = std.testing.allocator;
-    var schema: ArrowSchema = undefined;
-    try exportType(allocator, .int32, &schema);
-    defer schema.release.?(&schema);
-
-    try std.testing.expectEqualStrings("i", std.mem.span(schema.format.?));
-    try std.testing.expectEqual(schema_flag_nullable, schema.flags);
-    try std.testing.expect(!schemaIsReleased(&schema));
-}
-
-test "exportType binary schemas" {
-    const allocator = std.testing.allocator;
-    var schema: ArrowSchema = undefined;
-    try exportType(allocator, .utf8, &schema);
-    defer schema.release.?(&schema);
-    try std.testing.expectEqualStrings("u", std.mem.span(schema.format.?));
-}
-
-test "exportType nested list schema" {
-    const allocator = std.testing.allocator;
-    const value_ty: datatype.DataType = .int32;
-    const list_ty = datatype.DataType{ .list = .{ .child = .{ .name = "item", .type = &value_ty } } };
-
-    var schema: ArrowSchema = undefined;
-    try exportType(allocator, list_ty, &schema);
-    defer schema.release.?(&schema);
-
-    try std.testing.expectEqualStrings("+l", std.mem.span(schema.format.?));
-    try std.testing.expectEqual(@as(i64, 1), schema.n_children);
-    try std.testing.expect(schema.children != null);
-    try std.testing.expectEqualStrings("item", std.mem.span(schema.children.?[0].name.?));
-    try std.testing.expectEqualStrings("i", std.mem.span(schema.children.?[0].format.?));
-}
-
-test "exportType dictionary schema" {
-    const allocator = std.testing.allocator;
-    const index_ty: datatype.DataType = .int8;
-    const value_ty: datatype.DataType = .utf8;
-    const dictionary_ty = datatype.DataType{ .dictionary = .{
-        .index_type = &index_ty,
-        .value_type = &value_ty,
-        .ordered = true,
-    } };
-
-    var schema: ArrowSchema = undefined;
-    try exportType(allocator, dictionary_ty, &schema);
-    defer schema.release.?(&schema);
-
-    try std.testing.expectEqualStrings("c", std.mem.span(schema.format.?));
-    try std.testing.expect(schema.flags & schema_flag_dictionary_ordered != 0);
-    try std.testing.expect(schema.dictionary != null);
-    try std.testing.expectEqualStrings("u", std.mem.span(schema.dictionary.?.format.?));
-}
-
-test "exportArray keeps array data alive" {
-    const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
-    var b = builder.BinaryBuilder.init(allocator);
-    defer b.deinit();
-    try b.append("abc");
-    try b.appendNull();
-
-    const data = try b.finish();
-    defer data.deinit();
-
-    var exported: ArrowArray = undefined;
-    try exportArray(allocator, data, &exported);
-    try std.testing.expectEqual(@as(usize, 2), data.refCount());
-    try std.testing.expectEqual(@as(i64, 2), exported.length);
-    try std.testing.expectEqual(@as(i64, 1), exported.null_count);
-    try std.testing.expectEqual(@as(i64, 3), exported.n_buffers);
-    try std.testing.expect(exported.buffers.?[1] != null);
-    try std.testing.expect(exported.buffers.?[2] != null);
-
-    exported.release.?(&exported);
-    try std.testing.expect(arrayIsReleased(&exported));
-    try std.testing.expectEqual(@as(usize, 1), data.refCount());
-}
-
-test "exportArray exports nested list arrays" {
-    const allocator = std.testing.allocator;
-    const values = try @import("buffer.zig").Buffer.allocate(allocator, 2 * @sizeOf(i32));
-    errdefer values.deinit();
-    values.freeze();
-    const child = try ArrayData.initOwned(allocator, .int32, 2, 0, 0, &.{ null, values }, &.{}, null);
-    defer child.deinit();
-
-    const offsets = try @import("buffer.zig").Buffer.allocate(allocator, 3 * @sizeOf(i32));
-    errdefer offsets.deinit();
-    std.mem.writeInt(i32, offsets.data[0..4], 0, .little);
-    std.mem.writeInt(i32, offsets.data[4..8], 1, .little);
-    std.mem.writeInt(i32, offsets.data[8..12], 2, .little);
-    offsets.freeze();
-    defer offsets.deinit();
-
-    const value_ty: datatype.DataType = .int32;
-    const list_ty = datatype.DataType{ .list = .{ .child = .{ .type = &value_ty } } };
-    const data = try ArrayData.initRetained(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null);
-    defer data.deinit();
-
-    var exported: ArrowArray = undefined;
-    try exportArray(allocator, data, &exported);
-    try std.testing.expectEqual(@as(usize, 2), data.refCount());
-    try std.testing.expectEqual(@as(usize, 3), child.refCount());
-    try std.testing.expectEqual(@as(i64, 1), exported.n_children);
-    try std.testing.expect(exported.children != null);
-    try std.testing.expectEqual(@as(i64, 2), exported.children.?[0].length);
-    try std.testing.expect(exported.children.?[0].buffers.?[1] != null);
-
-    exported.release.?(&exported);
-    try std.testing.expect(arrayIsReleased(&exported));
-    try std.testing.expectEqual(@as(usize, 1), data.refCount());
-    try std.testing.expectEqual(@as(usize, 2), child.refCount());
+test {
+    _ = @import("cdi_test.zig");
 }

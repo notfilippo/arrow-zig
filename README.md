@@ -68,6 +68,20 @@ count reaches zero.
 on success. On error, caller ownership is unchanged. `ArrayData.initRetained()`
 retains each supplied object, so the caller keeps its existing references.
 
+## Arrow C Data Interface
+
+`arrow.cdi` exports schemas and arrays, and imports arrays when the caller
+supplies the `datatype.DataType`.
+
+`cdi.importArray(allocator, ty, &arr)` consumes the top level `ArrowArray` on
+success. The input is marked released. The returned `ArrayData` keeps the moved
+C array alive and calls its release callback when the final imported array,
+child, dictionary, or buffer reference is dropped.
+
+Imported CDI buffers are zero copy and immutable. The importer trusts producer
+padding from the Arrow contract, checks 64 byte alignment for non null buffers,
+and does not inspect padding bytes. Do not mutate imported CDI buffers.
+
 ## Layout guarantees
 
 - **64-byte alignment.** All buffers are allocated with 64-byte alignment per the Arrow spec (SIMD-safe reads without masking).
@@ -76,4 +90,4 @@ retains each supplied object, so the caller keeps its existing references.
 - **Deferred null count.** `null_count` may be `arrow.unknown_null_count` after a `slice()`. `nullCount()` computes on demand without mutating the view. Builders track the count eagerly during construction.
 - **Views + owned storage.** Builders return ref-counted `ArrayData`. Typed arrays such as `Int32Array`, `Date32Array`, and `TimestampArray` are cheap non-owning views created with `fromData()`.
 - **Zero-copy slicing.** `slice(off, len)` returns another non-owning view and clamps `len` to the available range. Use `sliceChecked()` for offset validation, or `sliceOwned()` / `cloneRetained()` when a slice needs its own retained owner.
-- **External memory.** External allocations can be wrapped with `ExternalOwnerHandle` and `Buffer.wrapExternal*()`. For buffers with logical size smaller than capacity, use the padded variants and provide zeroed padding.
+- **External memory.** External allocations can be wrapped with `ExternalOwnerHandle`, `Buffer.wrap()`, and `Buffer.wrapConst()`. For buffers with logical size smaller than capacity, provide the padded byte range with zeroed padding.
