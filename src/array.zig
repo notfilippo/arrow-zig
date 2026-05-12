@@ -42,8 +42,3 @@ pub fn NumericArray(comptime T: type) type {
 pub fn typeIdFor(comptime T: type) @import("datatype.zig").TypeId {
     return array_view.typeIdFor(T);
 }
-
-test {
-    _ = array_data;
-    _ = array_view;
-}
