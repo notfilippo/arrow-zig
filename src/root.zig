@@ -37,4 +37,6 @@ pub const refcount = @import("refcount.zig");
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
+    std.testing.refAllDecls(@import("cdi_alloc_test.zig"));
+    std.testing.refAllDecls(@import("cdi_test.zig"));
 }

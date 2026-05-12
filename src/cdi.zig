@@ -664,8 +664,3 @@ fn timeUnitCode(unit: datatype.TimeUnit) []const u8 {
         .nanosecond => "n",
     };
 }
-
-test {
-    _ = @import("cdi_alloc_test.zig");
-    _ = @import("cdi_test.zig");
-}

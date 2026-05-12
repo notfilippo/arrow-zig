@@ -32,9 +32,3 @@ pub const countAndSetBits = ops.countAndSetBits;
 pub const orBits = ops.orBits;
 pub const orNotBits = ops.orNotBits;
 pub const xorBits = ops.xorBits;
-
-test {
-    _ = bits;
-    _ = ops;
-    _ = builder;
-}

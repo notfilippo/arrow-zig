@@ -474,7 +474,3 @@ fn cloneDictionaryForFailureTest(allocator: Allocator) !void {
 test "DataType cloneOwned dictionary handles allocation failures" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneDictionaryForFailureTest, .{});
 }
-
-test {
-    _ = datatype_layout;
-}

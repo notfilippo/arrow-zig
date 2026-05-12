@@ -45,11 +45,3 @@ pub const StructArray = struct_view.StructArray;
 pub fn NumericArray(comptime T: type) type {
     return fixed.NumericArray(T);
 }
-
-test {
-    _ = common;
-    _ = fixed;
-    _ = binary;
-    _ = list;
-    _ = struct_view;
-}
