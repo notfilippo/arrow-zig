@@ -84,13 +84,7 @@ pub fn VarBinaryView(comptime kind: VarBinaryKind) type {
         }
 
         pub fn slice(self: Self, off: usize, length: usize) Self {
-            const clamped = common.clampedLen(self.len, off, length) catch unreachable;
-            return .{
-                .data = self.data,
-                .offset = self.offset + off,
-                .len = clamped,
-                .null_count = array_data.slicedNullCount(self.null_count, self.len, off, clamped),
-            };
+            return self.sliceChecked(off, length) catch unreachable;
         }
 
         pub fn sliceChecked(self: Self, off: usize, length: usize) common.SliceError!Self {

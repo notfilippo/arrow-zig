@@ -72,13 +72,7 @@ pub const StructArray = struct {
     }
 
     pub fn slice(self: StructArray, off: usize, length: usize) StructArray {
-        const clamped = common.clampedLen(self.len, off, length) catch unreachable;
-        return .{
-            .data = self.data,
-            .offset = self.offset + off,
-            .len = clamped,
-            .null_count = array_data.slicedNullCount(self.null_count, self.len, off, clamped),
-        };
+        return self.sliceChecked(off, length) catch unreachable;
     }
 
     pub fn sliceChecked(self: StructArray, off: usize, length: usize) common.SliceError!StructArray {

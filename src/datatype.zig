@@ -365,8 +365,11 @@ fn deinitUnionMeta(allocator: Allocator, meta: UnionMeta) void {
 
 fn validateUnionMeta(meta: UnionMeta) ValidationError!void {
     if (meta.fields.len != meta.type_ids.len) return error.InvalidUnionTypeIds;
-    for (meta.type_ids) |id| {
+    for (meta.type_ids, 0..) |id, i| {
         if (id < 0) return error.InvalidUnionTypeIds;
+        for (meta.type_ids[0..i]) |seen| {
+            if (seen == id) return error.InvalidUnionTypeIds;
+        }
     }
     for (meta.fields) |field| try field.type.validate();
 }
@@ -415,6 +418,15 @@ test "DataType.validate" {
     const value_ty: DataType = .int32;
     const dict = DataType{ .dictionary = .{ .index_type = &index_ty, .value_type = &value_ty } };
     try std.testing.expectError(error.InvalidDictionaryIndexType, dict.validate());
+
+    const union_field_ty: DataType = .int32;
+    const fields = [_]Field{
+        .{ .name = "a", .type = &union_field_ty },
+        .{ .name = "b", .type = &union_field_ty },
+    };
+    const duplicate_ids = [_]i8{ 1, 1 };
+    const duplicate_union = DataType{ .dense_union = .{ .fields = &fields, .type_ids = &duplicate_ids } };
+    try std.testing.expectError(error.InvalidUnionTypeIds, duplicate_union.validate());
 }
 
 test "DataType cloneOwned owns child pointers" {

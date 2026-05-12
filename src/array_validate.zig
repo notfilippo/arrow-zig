@@ -197,6 +197,7 @@ fn validateDictionary(data: anytype, total: usize, meta: datatype.DictionaryMeta
 }
 
 fn validateDictionaryIndices(data: anytype, index_ty: datatype.DataType, dict_len: usize) Error!void {
+    if (data.len == 0) return;
     const values = data.buffers[1] orelse return error.MissingValuesBuffer;
     const validity = if (data.buffers[0]) |buf| buf.dataSlice() else null;
     switch (index_ty) {
@@ -461,6 +462,10 @@ test "validate dictionary storage" {
     const bad_index = try ArrayData.initRetained(allocator, dict_ty, 1, 0, 0, &.{ null, bad_index_values }, &.{}, dict);
     defer bad_index.deinit();
     try std.testing.expectError(error.DictionaryIndexOutOfBounds, bad_index.validate());
+
+    const empty = try ArrayData.initRetained(allocator, dict_ty, 0, 0, 0, &.{ null, null }, &.{}, dict);
+    defer empty.deinit();
+    try empty.validate();
 }
 
 test "validate dense union storage" {
