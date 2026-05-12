@@ -12,13 +12,20 @@ Requires Zig 0.16.0+.
 ## Build
 
 ```sh
-zig build        # build library
-zig build test   # run all tests
+zig build
+zig build test
+zig build test -Dnanoarrow=true
+zig build ci
 ```
 
-Pass `-Dsingle_threaded=true` to swap atomic reference-count operations for plain integer ops (no fences, no lock prefix). Useful for single-threaded pipelines where the overhead is unnecessary. Read `arrow.config.thread_mode` when code needs to inspect the selected mode.
+`zig build ci` runs license checks, docs, regular tests, single threaded tests,
+and nanoarrow interop tests in both thread modes.
 
-## Quick example
+Pass `-Dsingle_threaded=true` to use plain refcount ops instead of atomics.
+
+## Examples
+
+Build and read an `int32` array:
 
 ```zig
 const arrow = @import("arrow");
@@ -28,7 +35,7 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
-    var b = arrow.Int32Builder.init(allocator);
+    var b = arrow.builder.NumericBuilder(i32).init(allocator);
     defer b.deinit();
 
     try b.append(10);
@@ -38,69 +45,54 @@ pub fn main() !void {
     const data = try b.finish();
     defer data.deinit();
 
-    const arr = try arrow.Int32Array.fromData(data);
-    std.debug.print("len={} null_count={}\n", .{ arr.len, arr.nullCount() });
-    std.debug.print("arr[0]={} arr[2]={}\n", .{ arr.value(0), arr.value(2) });
+    const arr = try arrow.array.NumericArray(i32).fromData(data);
+    std.debug.print("{} {}\n", .{ arr.value(0), arr.value(2) });
 
-    // Zero-copy non-owning slice.
     const s = arr.slice(0, 2);
-    std.debug.print("s[1] is null: {}\n", .{s.isNull(1)});
+    std.debug.print("slice nulls: {}\n", .{s.nullCount()});
 }
 ```
 
-For logical temporal types on numeric storage, initialize the builder with an explicit type:
+Build UTF8 strings:
 
 ```zig
-var b = try arrow.NumericBuilder(i32).initType(allocator, .date32);
+var b = arrow.builder.Utf8Builder.init(allocator);
+defer b.deinit();
+
+try b.append("alpha");
+try b.appendNull();
+try b.append("beta");
+
+const data = try b.finish();
+defer data.deinit();
+
+const arr = try arrow.array.Utf8Array.fromData(data);
+std.debug.print("{s}\n", .{arr.value(2)});
 ```
 
-## Ownership
+Use a logical type over numeric storage:
 
-Builders own temporary buffers. `finish()` transfers a refcounted `ArrayData`
-reference to the caller. Call `deinit()` when that reference is no longer
-needed.
+```zig
+var b = try arrow.builder.NumericBuilder(i32).initType(allocator, .date32);
+defer b.deinit();
+```
 
-`ArrayData`, `Buffer`, and external owner handles are refcounted. `retain()`
-adds one reference. `deinit()` drops one reference and frees storage when the
-count reaches zero.
+Round trip through the Arrow C Data Interface:
 
-`ArrayData.initOwned()` consumes the supplied buffers, children, and dictionary
-on success. On error, caller ownership is unchanged. `ArrayData.initRetained()`
-retains each supplied object, so the caller keeps its existing references.
+```zig
+var out: arrow.cdi.ArrowArray = undefined;
+try arrow.cdi.exportArray(allocator, data, &out);
+errdefer if (out.release) |release| release(&out);
 
-## Arrow C Data Interface
+const imported = try arrow.cdi.importArray(allocator, data.type, &out);
+defer imported.deinit();
+```
 
-`arrow.cdi` exports and imports Arrow C Data Interface schemas and arrays.
+## Notes
 
-`cdi.exportType()` and `cdi.exportField()` copy type metadata into an
-`ArrowSchema`. `cdi.exportArray()` fills an `ArrowArray` and retains the source
-`ArrayData`. The exported C structs stay valid until their `release` callback
-is called.
-
-`cdi.importType()` copies an `ArrowSchema` into an owned `datatype.DataType`.
-`cdi.importField()` also copies the schema name and nullable flag into an owned
-`datatype.Field`. Schema import does not consume the schema. Deinitialize
-returned type and field values with `datatype.deinitOwned()` and
-`datatype.deinitOwnedField()`.
-
-`cdi.importArrayFromSchema(allocator, &schema, &arr)` imports the schema, then
-imports the array. `cdi.importArray(allocator, ty, &arr)` skips schema import
-when the caller already has the type. Both array import paths consume the top
-level `ArrowArray` on success and mark it released. The returned `ArrayData`
-keeps the moved C array alive and calls its release callback when the final
-imported array, child, dictionary, or buffer reference is dropped.
-
-Imported CDI buffers are zero copy and immutable. The importer trusts producer
-padding from the Arrow contract and does not inspect padding bytes. Imported
-buffers keep their source alignment, which may be weaker than Arrow Zig
-internal buffers. Do not mutate imported CDI buffers.
-
-## Layout guarantees
-
-- **64-byte alignment.** Buffers allocated by Arrow Zig use 64-byte alignment.
-- **Zeroed padding.** Internal buffer padding and newly reserved tail capacity are zeroed.
-- **LSB-first bitmaps.** Validity and boolean values use LSB-first bit packing.
-- **Deferred null count.** `null_count` may be `arrow.unknown_null_count` after a `slice()`. `nullCount()` computes on demand without mutating the view. Builders track the count eagerly during construction.
-- **Views + owned storage.** Builders return ref-counted `ArrayData`. Typed arrays such as `Int32Array`, `Date32Array`, and `TimestampArray` are cheap non-owning views created with `fromData()`.
-- **Zero-copy slicing.** `slice(off, len)` returns another non-owning view and clamps `len` to the available range. Use `sliceChecked()` for offset validation, or `sliceOwned()` / `cloneRetained()` when a slice needs its own retained owner.
-- **External memory.** External allocations can be wrapped with `ExternalOwnerHandle`, `Buffer.wrap()`, and `Buffer.wrapConst()`. External buffers preserve source pointer alignment. Padding is trusted by the caller. `Buffer.fromOwned()` still requires a 64-byte aligned padded slice because Arrow Zig later frees it directly.
+- `finish()` returns a refcounted `*arrow.array.ArrayData`. Call `deinit()`.
+- Typed arrays are cheap views over `ArrayData`; they do not retain it.
+- `slice()` returns another view. Use `sliceOwned()` when the slice needs its own retained data.
+- Arrow Zig allocations are 64 byte aligned and padded.
+- Imported C Data Interface buffers are zero copy, immutable, and keep source alignment.
+- `cdi.importArray()` consumes the top level `ArrowArray` on success.

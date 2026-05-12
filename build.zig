@@ -14,14 +14,8 @@ pub fn build(b: *std.Build) void {
     const test_nanoarrow = b.option(
         bool,
         "nanoarrow",
-        "Run optional nanoarrow interop tests. Default: false.",
+        "Also run nanoarrow interop tests in the test step. CI always runs them.",
     ) orelse false;
-
-    const mod = b.addModule("arrow", .{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-    });
-    addBuildOptions(b, mod, single_threaded);
 
     const license_mod = b.createModule(.{
         .root_source_file = b.path("tools/check_license_headers.zig"),
@@ -36,43 +30,14 @@ pub fn build(b: *std.Build) void {
     license_step.dependOn(&b.addRunArtifact(license_tests).step);
     license_step.dependOn(&b.addRunArtifact(license_check).step);
 
-    const ci_default_mod = b.createModule(.{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-    });
-    addBuildOptions(b, ci_default_mod, false);
-
-    const ci_single_threaded_mod = b.createModule(.{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-    });
-    addBuildOptions(b, ci_single_threaded_mod, true);
-
-    const docs_mod = b.createModule(.{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-    });
-    addBuildOptions(b, docs_mod, false);
-    const docs_lib = b.addLibrary(.{
-        .name = "arrow_docs",
-        .root_module = docs_mod,
-    });
-    const docs = docs_lib.getEmittedDocs();
-
     const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mod })).step);
+    test_step.dependOn(addRootTest(b, target, single_threaded, "test"));
 
     const ci_step = b.step("ci", "Run CI checks");
     ci_step.dependOn(license_step);
-    docs.addStepDependencies(ci_step);
-    ci_step.dependOn(&b.addRunArtifact(b.addTest(.{
-        .name = "test_default",
-        .root_module = ci_default_mod,
-    })).step);
-    ci_step.dependOn(&b.addRunArtifact(b.addTest(.{
-        .name = "test_single_threaded",
-        .root_module = ci_single_threaded_mod,
-    })).step);
+    ci_step.dependOn(addDocsCheck(b, target));
+    ci_step.dependOn(addRootTest(b, target, false, "test_default"));
+    ci_step.dependOn(addRootTest(b, target, true, "test_single_threaded"));
 
     if (b.lazyDependency("nanoarrow", .{})) |nanoarrow_dep| {
         const nanoarrow_config = b.addConfigHeader(.{
@@ -92,6 +57,36 @@ pub fn build(b: *std.Build) void {
         ci_step.dependOn(addNanoarrowTest(b, target, nanoarrow_dep, nanoarrow_config, false, "test_nanoarrow_default"));
         ci_step.dependOn(addNanoarrowTest(b, target, nanoarrow_dep, nanoarrow_config, true, "test_nanoarrow_single_threaded"));
     }
+}
+
+fn addArrowModule(b: *std.Build, target: std.Build.ResolvedTarget, single_threaded: bool) *std.Build.Module {
+    const mod = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+    });
+    addBuildOptions(b, mod, single_threaded);
+    return mod;
+}
+
+fn addRootTest(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    single_threaded: bool,
+    name: []const u8,
+) *std.Build.Step {
+    return &b.addRunArtifact(b.addTest(.{
+        .name = name,
+        .root_module = addArrowModule(b, target, single_threaded),
+    })).step;
+}
+
+fn addDocsCheck(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step {
+    const docs_lib = b.addLibrary(.{
+        .name = "arrow_docs",
+        .root_module = addArrowModule(b, target, false),
+    });
+    _ = docs_lib.getEmittedDocs();
+    return &docs_lib.step;
 }
 
 fn addBuildOptions(b: *std.Build, mod: *std.Build.Module, single_threaded: bool) void {
