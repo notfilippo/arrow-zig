@@ -15,7 +15,8 @@ const Allocator = std.mem.Allocator;
 const array = @import("array.zig");
 const bitmap = @import("bitmap.zig");
 const buffer = @import("buffer.zig");
-const cdi_schema_import = @import("cdi_schema_import.zig");
+const cdi_types = @import("cdi/types.zig");
+const schema_import = @import("cdi/schema_import.zig");
 const checked = @import("checked.zig");
 const datatype = @import("datatype.zig");
 
@@ -23,14 +24,14 @@ const ArrayData = array.ArrayData;
 const Buffer = buffer.Buffer;
 const ExternalOwnerHandle = buffer.ExternalOwnerHandle;
 
-pub const schema_flag_dictionary_ordered: i64 = 1;
-pub const schema_flag_nullable: i64 = 2;
+pub const schema_flag_dictionary_ordered = cdi_types.schema_flag_dictionary_ordered;
+pub const schema_flag_nullable = cdi_types.schema_flag_nullable;
 
 pub const SchemaExportError = Allocator.Error || datatype.ValidationError || error{
     InvalidTimeUnit,
     ValueOutOfRange,
 };
-pub const SchemaImportError = cdi_schema_import.Error;
+pub const SchemaImportError = schema_import.Error;
 
 pub const ArrayExportError = SchemaExportError || array.ValidateError || checked.Error;
 pub const ArrayImportError =
@@ -46,30 +47,8 @@ pub const ArrayImportError =
     };
 pub const SchemaArrayImportError = SchemaImportError || ArrayImportError;
 
-pub const ArrowSchema = extern struct {
-    format: ?[*:0]const u8,
-    name: ?[*:0]const u8,
-    metadata: ?[*:0]const u8,
-    flags: i64,
-    n_children: i64,
-    children: ?[*]*ArrowSchema,
-    dictionary: ?*ArrowSchema,
-    release: ?*const fn (*ArrowSchema) callconv(.c) void,
-    private_data: ?*anyopaque,
-};
-
-pub const ArrowArray = extern struct {
-    length: i64,
-    null_count: i64,
-    offset: i64,
-    n_buffers: i64,
-    n_children: i64,
-    buffers: ?[*]?*const anyopaque,
-    children: ?[*]*ArrowArray,
-    dictionary: ?*ArrowArray,
-    release: ?*const fn (*ArrowArray) callconv(.c) void,
-    private_data: ?*anyopaque,
-};
+pub const ArrowSchema = cdi_types.ArrowSchema;
+pub const ArrowArray = cdi_types.ArrowArray;
 
 const SchemaPrivate = struct {
     allocator: Allocator,
@@ -109,14 +88,14 @@ pub fn exportField(allocator: Allocator, field: datatype.Field, out: *ArrowSchem
 /// The schema is not consumed. Deinitialize the returned type with
 /// `datatype.deinitOwned()` when done.
 pub fn importType(allocator: Allocator, schema: *const ArrowSchema) SchemaImportError!datatype.DataType {
-    return cdi_schema_import.importType(allocator, schema);
+    return schema_import.importType(allocator, schema);
 }
 
 /// Import a C Data Interface schema into an owned field.
 /// The schema is not consumed. Deinitialize the returned field with
 /// `datatype.deinitOwnedField()` when done.
 pub fn importField(allocator: Allocator, schema: *const ArrowSchema) SchemaImportError!datatype.Field {
-    return cdi_schema_import.importField(allocator, schema);
+    return schema_import.importField(allocator, schema);
 }
 
 /// Import a C Data Interface array by first importing its schema.
@@ -663,4 +642,10 @@ fn timeUnitCode(unit: datatype.TimeUnit) []const u8 {
         .microsecond => "u",
         .nanosecond => "n",
     };
+}
+
+test {
+    std.testing.refAllDecls(@import("cdi/alloc_test.zig"));
+    std.testing.refAllDecls(@import("cdi/array_test.zig"));
+    std.testing.refAllDecls(@import("cdi/schema_test.zig"));
 }

@@ -55,6 +55,7 @@ pub const LargeBinaryArray = array_view.LargeBinaryArray;
 pub const LargeUtf8Array = array_view.LargeUtf8Array;
 pub const ListArray = array_view.ListArray;
 pub const LargeListArray = array_view.LargeListArray;
+pub const StructArray = array_view.StructArray;
 
 pub const dataTypeAcceptsZigType = array_view.dataTypeAcceptsZigType;
 pub const FixedWidthView = array_view.FixedWidthView;

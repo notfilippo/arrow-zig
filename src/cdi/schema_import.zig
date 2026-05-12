@@ -5,10 +5,12 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const datatype = @import("datatype.zig");
+const cdi_types = @import("types.zig");
+const datatype = @import("../datatype.zig");
 
-const schema_flag_dictionary_ordered: i64 = 1;
-const schema_flag_nullable: i64 = 2;
+const ArrowSchema = cdi_types.ArrowSchema;
+const schema_flag_dictionary_ordered = cdi_types.schema_flag_dictionary_ordered;
+const schema_flag_nullable = cdi_types.schema_flag_nullable;
 
 pub const Error =
     Allocator.Error ||
@@ -22,21 +24,21 @@ pub const Error =
         ValueOutOfRange,
     };
 
-pub fn importType(allocator: Allocator, schema: anytype) Error!datatype.DataType {
+pub fn importType(allocator: Allocator, schema: *const ArrowSchema) Error!datatype.DataType {
     var ty = try importTypeNode(allocator, schema);
     errdefer datatype.deinitOwned(allocator, &ty);
     try ty.validate();
     return ty;
 }
 
-pub fn importField(allocator: Allocator, schema: anytype) Error!datatype.Field {
+pub fn importField(allocator: Allocator, schema: *const ArrowSchema) Error!datatype.Field {
     const field = try importFieldNode(allocator, schema);
     errdefer deinitImportedField(allocator, field);
     try field.type.validate();
     return field;
 }
 
-fn importTypeNode(allocator: Allocator, schema: anytype) Error!datatype.DataType {
+fn importTypeNode(allocator: Allocator, schema: *const ArrowSchema) Error!datatype.DataType {
     if (schema.release == null) return error.ReleasedSchema;
     const format_ptr = schema.format orelse return error.MissingFormat;
     var ty = try importFormatType(allocator, schema, std.mem.span(format_ptr));
@@ -79,7 +81,7 @@ fn importTypeNode(allocator: Allocator, schema: anytype) Error!datatype.DataType
 
 fn importFormatType(
     allocator: Allocator,
-    schema: anytype,
+    schema: *const ArrowSchema,
     format: []const u8,
 ) Error!datatype.DataType {
     if (std.mem.eql(u8, format, "n")) return noChildType(schema, .null_);
@@ -107,14 +109,14 @@ fn importFormatType(
     };
 }
 
-fn noChildType(schema: anytype, ty: datatype.DataType) Error!datatype.DataType {
+fn noChildType(schema: *const ArrowSchema, ty: datatype.DataType) Error!datatype.DataType {
     try expectSchemaChildCount(schema, 0);
     return ty;
 }
 
 fn importTemporalType(
     allocator: Allocator,
-    schema: anytype,
+    schema: *const ArrowSchema,
     format: []const u8,
 ) Error!datatype.DataType {
     try expectSchemaChildCount(schema, 0);
@@ -140,7 +142,7 @@ fn importTemporalType(
 
 fn importNestedType(
     allocator: Allocator,
-    schema: anytype,
+    schema: *const ArrowSchema,
     format: []const u8,
 ) Error!datatype.DataType {
     if (std.mem.eql(u8, format, "+l")) return .{ .list = .{ .child = try importSingleChildField(allocator, schema) } };
@@ -154,7 +156,7 @@ fn importNestedType(
 
 fn importFixedSizeListType(
     allocator: Allocator,
-    schema: anytype,
+    schema: *const ArrowSchema,
     len_text: []const u8,
 ) Error!datatype.DataType {
     const len = try parseUsize(len_text);
@@ -164,12 +166,12 @@ fn importFixedSizeListType(
     } };
 }
 
-fn importSingleChildField(allocator: Allocator, schema: anytype) Error!datatype.Field {
+fn importSingleChildField(allocator: Allocator, schema: *const ArrowSchema) Error!datatype.Field {
     try expectSchemaChildCount(schema, 1);
     return try importFieldNode(allocator, schema.children.?[0]);
 }
 
-fn importSchemaFields(allocator: Allocator, schema: anytype) Error![]const datatype.Field {
+fn importSchemaFields(allocator: Allocator, schema: *const ArrowSchema) Error![]const datatype.Field {
     const count = try schemaChildCount(schema);
     if (count > 0 and schema.children == null) return error.InvalidChildCount;
     const fields = try allocator.alloc(datatype.Field, count);
@@ -187,7 +189,7 @@ fn importSchemaFields(allocator: Allocator, schema: anytype) Error![]const datat
     return fields;
 }
 
-fn importFieldNode(allocator: Allocator, schema: anytype) Error!datatype.Field {
+fn importFieldNode(allocator: Allocator, schema: *const ArrowSchema) Error!datatype.Field {
     var ty = try importTypeNode(allocator, schema);
     var ty_owned = true;
     errdefer if (ty_owned) datatype.deinitOwned(allocator, &ty);
@@ -216,7 +218,7 @@ fn deinitImportedField(allocator: Allocator, field: datatype.Field) void {
 
 fn importUnionType(
     allocator: Allocator,
-    schema: anytype,
+    schema: *const ArrowSchema,
     ids_text: []const u8,
     dense: bool,
 ) Error!datatype.DataType {
@@ -236,13 +238,13 @@ fn importUnionType(
         .{ .sparse_union = .{ .fields = fields, .type_ids = type_ids } };
 }
 
-fn expectSchemaChildCount(schema: anytype, expected: usize) Error!void {
+fn expectSchemaChildCount(schema: *const ArrowSchema, expected: usize) Error!void {
     const actual = try schemaChildCount(schema);
     if (actual != expected) return error.InvalidChildCount;
     if (actual > 0 and schema.children == null) return error.InvalidChildCount;
 }
 
-fn schemaChildCount(schema: anytype) Error!usize {
+fn schemaChildCount(schema: *const ArrowSchema) Error!usize {
     if (schema.n_children < 0) return error.InvalidChildCount;
     const unsigned: u64 = @intCast(schema.n_children);
     if (@as(u128, unsigned) > @as(u128, std.math.maxInt(usize))) return error.ValueOutOfRange;

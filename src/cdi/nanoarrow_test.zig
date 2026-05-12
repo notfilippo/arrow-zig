@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const std = @import("std");
-const array = @import("array.zig");
-const bitmap = @import("bitmap.zig");
-const cdi = @import("cdi.zig");
+const arrow = @import("arrow");
+const array = arrow.array;
+const bitmap = arrow.bitmap;
+const cdi = arrow.cdi;
 
 const ArrayData = array.ArrayData;
-const StructArray = @import("array_struct_view.zig").StructArray;
+const StructArray = array.StructArray;
 const MakeFixture = *const fn (*cdi.ArrowSchema, *cdi.ArrowArray) callconv(.c) c_int;
 
 extern fn arrow_zig_nanoarrow_make_null(schema: *cdi.ArrowSchema, arr: *cdi.ArrowArray) c_int;

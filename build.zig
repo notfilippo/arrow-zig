@@ -104,11 +104,12 @@ fn addNanoarrowTest(
     name: []const u8,
 ) *std.Build.Step {
     const nanoarrow_mod = b.createModule(.{
-        .root_source_file = b.path("src/cdi_nanoarrow_test.zig"),
+        .root_source_file = b.path("src/cdi/nanoarrow_test.zig"),
         .target = target,
         .link_libc = true,
     });
     addBuildOptions(b, nanoarrow_mod, single_threaded);
+    nanoarrow_mod.addImport("arrow", addArrowModule(b, target, single_threaded));
     nanoarrow_mod.addConfigHeader(nanoarrow_config);
     nanoarrow_mod.addIncludePath(nanoarrow_dep.path("src"));
     nanoarrow_mod.addCSourceFiles(.{
@@ -119,7 +120,7 @@ fn addNanoarrowTest(
             "utils.c",
         },
     });
-    nanoarrow_mod.addCSourceFile(.{ .file = b.path("src/cdi_nanoarrow_bridge.c") });
+    nanoarrow_mod.addCSourceFile(.{ .file = b.path("src/cdi/nanoarrow_bridge.c") });
     return &b.addRunArtifact(b.addTest(.{
         .name = name,
         .root_module = nanoarrow_mod,

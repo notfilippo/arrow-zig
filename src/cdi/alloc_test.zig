@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const std = @import("std");
-const array = @import("array.zig");
-const buffer = @import("buffer.zig");
-const cdi = @import("cdi.zig");
-const datatype = @import("datatype.zig");
+const array = @import("../array.zig");
+const buffer = @import("../buffer.zig");
+const cdi = @import("../cdi.zig");
+const datatype = @import("../datatype.zig");
 
 const ArrayData = array.ArrayData;
 const ArrowArray = cdi.ArrowArray;
