@@ -6,7 +6,13 @@
     .version = "0.0.0",
     .fingerprint = 0xd837ee3e25d02e1f,
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .nanoarrow = .{
+            .url = "https://github.com/apache/arrow-nanoarrow/archive/refs/tags/apache-arrow-nanoarrow-0.8.0.tar.gz",
+            .hash = "N-V-__8AAJW-WgAA1OoCKbjOoObKCeS69aUy_snBnB1yv013",
+            .lazy = true,
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

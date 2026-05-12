@@ -85,7 +85,10 @@ fn headerStyle(file: []const u8) HeaderStyle {
     if (std.mem.eql(u8, file, "LICENSE")) {
         return .skip;
     }
-    if (std.mem.endsWith(u8, file, ".zig") or std.mem.endsWith(u8, file, ".zon")) {
+    if (std.mem.endsWith(u8, file, ".zig") or
+        std.mem.endsWith(u8, file, ".zon") or
+        std.mem.endsWith(u8, file, ".c"))
+    {
         return .slash;
     }
     if (std.mem.endsWith(u8, file, ".yml") or
@@ -143,6 +146,7 @@ test "header style detection" {
     try std.testing.expectEqual(HeaderStyle.skip, headerStyle("LICENSE"));
     try std.testing.expectEqual(HeaderStyle.slash, headerStyle("src/root.zig"));
     try std.testing.expectEqual(HeaderStyle.slash, headerStyle("build.zig.zon"));
+    try std.testing.expectEqual(HeaderStyle.slash, headerStyle("src/test.c"));
     try std.testing.expectEqual(HeaderStyle.hash, headerStyle(".github/workflows/ci.yml"));
     try std.testing.expectEqual(HeaderStyle.hash, headerStyle(".gitignore"));
     try std.testing.expectEqual(HeaderStyle.markdown, headerStyle("README.md"));
