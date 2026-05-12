@@ -70,13 +70,25 @@ retains each supplied object, so the caller keeps its existing references.
 
 ## Arrow C Data Interface
 
-`arrow.cdi` exports schemas and arrays, and imports arrays when the caller
-supplies the `datatype.DataType`.
+`arrow.cdi` exports and imports Arrow C Data Interface schemas and arrays.
 
-`cdi.importArray(allocator, ty, &arr)` consumes the top level `ArrowArray` on
-success. The input is marked released. The returned `ArrayData` keeps the moved
-C array alive and calls its release callback when the final imported array,
-child, dictionary, or buffer reference is dropped.
+`cdi.exportType()` and `cdi.exportField()` copy type metadata into an
+`ArrowSchema`. `cdi.exportArray()` fills an `ArrowArray` and retains the source
+`ArrayData`. The exported C structs stay valid until their `release` callback
+is called.
+
+`cdi.importType()` copies an `ArrowSchema` into an owned `datatype.DataType`.
+`cdi.importField()` also copies the schema name and nullable flag into an owned
+`datatype.Field`. Schema import does not consume the schema. Deinitialize
+returned type and field values with `datatype.deinitOwned()` and
+`datatype.deinitOwnedField()`.
+
+`cdi.importArrayFromSchema(allocator, &schema, &arr)` imports the schema, then
+imports the array. `cdi.importArray(allocator, ty, &arr)` skips schema import
+when the caller already has the type. Both array import paths consume the top
+level `ArrowArray` on success and mark it released. The returned `ArrayData`
+keeps the moved C array alive and calls its release callback when the final
+imported array, child, dictionary, or buffer reference is dropped.
 
 Imported CDI buffers are zero copy and immutable. The importer trusts producer
 padding from the Arrow contract, checks 64 byte alignment for non null buffers,

@@ -3,16 +3,19 @@
 
 //! Arrow C Data Interface import and export.
 //!
-//! Exported schemas and arrays retain source metadata and array storage until
-//! the C Data Interface release callback is invoked. Imported arrays consume
-//! the top level `ArrowArray` on success and keep its release callback alive
-//! until the returned `ArrayData` is deinitialized.
+//! Export copies schemas into C Data Interface structs and retains exported
+//! array storage until the C release callback is invoked.
+//!
+//! Schema import copies C Data Interface schemas into owned `DataType` values.
+//! Array import consumes only the top level `ArrowArray` on success and keeps
+//! its release callback alive until imported data and buffers are dropped.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const array = @import("array.zig");
 const bitmap = @import("bitmap.zig");
 const buffer = @import("buffer.zig");
+const cdi_schema_import = @import("cdi_schema_import.zig");
 const checked = @import("checked.zig");
 const datatype = @import("datatype.zig");
 
@@ -27,6 +30,7 @@ pub const SchemaExportError = Allocator.Error || datatype.ValidationError || err
     InvalidTimeUnit,
     ValueOutOfRange,
 };
+pub const SchemaImportError = cdi_schema_import.Error;
 
 pub const ArrayExportError = SchemaExportError || array.ValidateError || checked.Error;
 pub const ArrayImportError =
@@ -41,6 +45,7 @@ pub const ArrayImportError =
         InvalidNullCount,
         ValueOutOfRange,
     };
+pub const SchemaArrayImportError = SchemaImportError || ArrayImportError;
 
 pub const ArrowSchema = extern struct {
     format: ?[*:0]const u8,
@@ -99,6 +104,28 @@ pub fn exportType(allocator: Allocator, ty: datatype.DataType, out: *ArrowSchema
 
 pub fn exportField(allocator: Allocator, field: datatype.Field, out: *ArrowSchema) SchemaExportError!void {
     try exportSchemaNode(allocator, field.type.*, field, field.nullable, out);
+}
+
+/// Import a C Data Interface schema into an owned data type.
+/// The schema is not consumed. Deinitialize the returned type with
+/// `datatype.deinitOwned()` when done.
+pub fn importType(allocator: Allocator, schema: *const ArrowSchema) SchemaImportError!datatype.DataType {
+    return cdi_schema_import.importType(allocator, schema);
+}
+
+/// Import a C Data Interface schema into an owned field.
+/// The schema is not consumed. Deinitialize the returned field with
+/// `datatype.deinitOwnedField()` when done.
+pub fn importField(allocator: Allocator, schema: *const ArrowSchema) SchemaImportError!datatype.Field {
+    return cdi_schema_import.importField(allocator, schema);
+}
+
+/// Import a C Data Interface array by first importing its schema.
+/// On success, consumes only the top level `ArrowArray`.
+pub fn importArrayFromSchema(allocator: Allocator, schema: *const ArrowSchema, arr: *ArrowArray) SchemaArrayImportError!*ArrayData {
+    var ty = try importType(allocator, schema);
+    defer datatype.deinitOwned(allocator, &ty);
+    return try importArray(allocator, ty, arr);
 }
 
 fn exportSchemaNode(

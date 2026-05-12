@@ -134,6 +134,11 @@ pub fn deinitOwned(allocator: Allocator, ty: *DataType) void {
     ty.* = .null_;
 }
 
+/// Deinitialize a field with owned name and type metadata.
+pub fn deinitOwnedField(allocator: Allocator, field: Field) void {
+    deinitField(allocator, field);
+}
+
 pub const DataType = union(TypeId) {
     null_,
     bool,
