@@ -29,7 +29,9 @@ pub fn build(b: *std.Build) void {
         .name = "check_license_headers",
         .root_module = license_mod,
     });
+    const license_tests = b.addTest(.{ .root_module = license_mod });
     const license_step = b.step("test-license", "Check license headers");
+    license_step.dependOn(&b.addRunArtifact(license_tests).step);
     license_step.dependOn(&b.addRunArtifact(license_check).step);
 
     const test_step = b.step("test", "Run tests");

@@ -22,9 +22,8 @@ pub fn main(init: std.process.Init) !void {
     };
 
     var missing = false;
-    var lines = std.mem.splitScalar(u8, files, '\n');
-    while (lines.next()) |raw_file| {
-        const file = std.mem.trimEnd(u8, raw_file, "\r");
+    var paths = std.mem.splitScalar(u8, files, 0);
+    while (paths.next()) |file| {
         if (file.len == 0) {
             continue;
         }
@@ -67,7 +66,7 @@ pub fn main(init: std.process.Init) !void {
 
 fn getTrackedFiles(allocator: std.mem.Allocator, io: std.Io) ![]const u8 {
     const result = try std.process.run(allocator, io, .{
-        .argv = &.{ "git", "ls-files" },
+        .argv = &.{ "git", "ls-files", "-z" },
     });
     switch (result.term) {
         .exited => |code| {
@@ -138,4 +137,37 @@ fn lineAt(contents: []const u8, line_number: usize) ?[]const u8 {
         }
     }
     return null;
+}
+
+test "header style detection" {
+    try std.testing.expectEqual(HeaderStyle.skip, headerStyle("LICENSE"));
+    try std.testing.expectEqual(HeaderStyle.slash, headerStyle("src/root.zig"));
+    try std.testing.expectEqual(HeaderStyle.slash, headerStyle("build.zig.zon"));
+    try std.testing.expectEqual(HeaderStyle.hash, headerStyle(".github/workflows/ci.yml"));
+    try std.testing.expectEqual(HeaderStyle.hash, headerStyle(".gitignore"));
+    try std.testing.expectEqual(HeaderStyle.markdown, headerStyle("README.md"));
+    try std.testing.expectEqual(HeaderStyle.unknown, headerStyle("image.png"));
+}
+
+test "header checks" {
+    try std.testing.expect(hasHeader(
+        "// Copyright 2026 Filippo Rossi\n// SPDX-License-Identifier: Apache-2.0\n\n",
+        .slash,
+    ));
+    try std.testing.expect(hasHeader(
+        "# Copyright 2026 Filippo Rossi\n# SPDX-License-Identifier: Apache-2.0\n\n",
+        .hash,
+    ));
+    try std.testing.expect(hasHeader(
+        "#!/bin/sh\n# Copyright 2026 Filippo Rossi\n# SPDX-License-Identifier: Apache-2.0\n\n",
+        .hash,
+    ));
+    try std.testing.expect(hasHeader(
+        "<!--\nCopyright 2026 Filippo Rossi\nSPDX-License-Identifier: Apache-2.0\n-->\n\n",
+        .markdown,
+    ));
+    try std.testing.expect(!hasHeader(
+        "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n",
+        .hash,
+    ));
 }
