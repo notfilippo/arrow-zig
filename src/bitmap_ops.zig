@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Bitmap boolean operations.
 //!
 //! Operations support arbitrary bit offsets and lengths so sliced arrays can be

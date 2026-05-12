@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Arrow array storage validation.
 //!
 //! Validation checks buffer counts, byte sizes, null count consistency, child

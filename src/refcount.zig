@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Reference count abstraction.
 //!
 //! Uses atomic counters by default, and plain counters when

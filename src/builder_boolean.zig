@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Boolean array builder.
 //!
 //! Values and validity are both stored as Arrow bitmaps, with null values

@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! List and large list array views.
 //!
 //! List values are represented by ranges into a single child array. Owned value

@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Fixed width typed array views.
 //!
 //! Includes booleans, numeric physical types, and logical temporal views backed

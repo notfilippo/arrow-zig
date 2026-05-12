@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Numeric and logical temporal builders.
 //!
 //! Numeric builders store fixed width values and validity bits. `initType`

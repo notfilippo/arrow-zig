@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Binary and UTF8 builders.
 //!
 //! Builders append byte ranges into a values buffer and record offsets for each

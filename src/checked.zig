@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Checked arithmetic helpers.
 //!
 //! Shared overflow checked operations keep size and offset calculations

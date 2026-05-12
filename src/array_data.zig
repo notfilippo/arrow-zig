@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Reference counted Arrow array storage.
 //!
 //! `ArrayData` stores the data type, logical range, null count, buffers,

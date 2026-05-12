@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! List and large list builders.
 //!
 //! The child builder owns values. Each appended list slot records the current

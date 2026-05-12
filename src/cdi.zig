@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Arrow C Data Interface export.
 //!
 //! Exported schemas and arrays retain the source metadata and array storage

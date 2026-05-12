@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Arrow data type metadata.
 //!
 //! Data types describe physical storage, logical metadata, nested fields,

@@ -1,3 +1,6 @@
+# Copyright 2026 Filippo Rossi
+# SPDX-License-Identifier: Apache-2.0
+
 name: CI
 
 on:
@@ -14,6 +17,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Check license headers
+        run: sh scripts/check_license_headers.sh
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2

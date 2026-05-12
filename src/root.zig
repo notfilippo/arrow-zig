@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Public entry point for the Arrow Zig package.
 //!
 //! The package exposes columnar buffers, array storage, typed views, builders,

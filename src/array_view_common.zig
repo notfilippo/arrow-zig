@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Shared helpers for typed array views.
 //!
 //! This module contains type matching, null count lookup, and slice bound

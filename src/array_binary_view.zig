@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Variable width binary and UTF8 array views.
 //!
 //! Values are read from Arrow offset and value buffers. Slices keep the same

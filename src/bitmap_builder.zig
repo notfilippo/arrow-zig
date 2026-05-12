@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Incremental builder for Arrow bitmaps.
 //!
 //! The builder tracks total bits and false bits, then produces an immutable

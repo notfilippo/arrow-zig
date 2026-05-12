@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Offset buffer helpers.
 //!
 //! Binary and list arrays use monotonic int32 or int64 offsets. This module

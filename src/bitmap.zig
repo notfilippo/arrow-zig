@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Bitmap helpers and builder facade.
 //!
 //! Arrow validity and boolean arrays use least significant bit first packing.

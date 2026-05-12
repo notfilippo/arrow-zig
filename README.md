@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 Filippo Rossi
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # arrow-zig
 
 Apache Arrow columnar format in Zig. [Arrow Columnar Format spec](https://arrow.apache.org/docs/format/Columnar.html).

@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Compile time package configuration.
 //!
 //! Values here reflect build options selected by `build.zig`.

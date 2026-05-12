@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Arrow buffers and external memory ownership.
 //!
 //! Buffers are reference counted and keep Arrow alignment and padding

@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Struct array view.
 //!
 //! Struct arrays expose child fields by index or name while sharing the parent

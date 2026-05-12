@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Bit level primitives for Arrow bitmaps.
 //!
 //! Helpers here read, write, copy, invert, and count packed bits using Arrow

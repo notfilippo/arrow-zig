@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Array builder facade.
 //!
 //! Builders collect mutable values and null state, then transfer immutable

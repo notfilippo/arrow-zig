@@ -1,3 +1,6 @@
+// Copyright 2026 Filippo Rossi
+// SPDX-License-Identifier: Apache-2.0
+
 //! Buffer layout rules for Arrow data types.
 //!
 //! Layouts state which buffers are required for each type and how nulls are
