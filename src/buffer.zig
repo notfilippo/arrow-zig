@@ -9,7 +9,7 @@ pub const arrow_alignment: usize = 64;
 /// std.mem.Alignment for the Arrow 64-byte requirement.
 const arrow_align: std.mem.Alignment = .fromByteUnits(arrow_alignment);
 
-fn nextCapacity(current: usize, needed: usize) !usize {
+fn nextCapacity(current: usize, needed: usize) checked.Error!usize {
     const doubled = checked.mul(current, 2) catch needed;
     const cap = if (current == 0) needed else @max(needed, doubled);
     return checked.roundUpToPowerOfTwo(cap, 64);
@@ -20,6 +20,11 @@ pub const BufferContractError = error{
     SizeExceedsCapacity,
     NonZeroPadding,
 };
+
+pub const AllocateError = Allocator.Error || checked.Error;
+pub const ReserveError = Allocator.Error || checked.Error;
+pub const SliceError = Allocator.Error || checked.Error || error{OffsetOutOfBounds};
+pub const WrapError = Allocator.Error || BufferContractError;
 
 pub const ExternalReleaseFn = *const fn (ctx: *anyopaque) void;
 
@@ -83,7 +88,7 @@ pub const Buffer = struct {
     /// Allocate a new mutable buffer of the given logical size. Bytes in the
     /// logical range [0, size) are uninitialized; padding bytes [size, capacity)
     /// are zeroed. Capacity is rounded up to a multiple of 64.
-    pub fn allocate(allocator: Allocator, size: usize) !*Buffer {
+    pub fn allocate(allocator: Allocator, size: usize) AllocateError!*Buffer {
         const self = try allocator.create(Buffer);
         errdefer allocator.destroy(self);
 
@@ -127,7 +132,7 @@ pub const Buffer = struct {
         allocator: Allocator,
         size: usize,
         bytes: []align(arrow_alignment) u8,
-    ) !*Buffer {
+    ) WrapError!*Buffer {
         try validateExternalContract(size, bytes);
         const self = try allocator.create(Buffer);
         self.* = .{
@@ -151,7 +156,7 @@ pub const Buffer = struct {
         owner: *ExternalOwnerHandle,
         size: usize,
         bytes: []align(arrow_alignment) u8,
-    ) !*Buffer {
+    ) WrapError!*Buffer {
         try validateExternalContract(size, bytes);
         return initExternal(allocator, owner, bytes.ptr, size, bytes.len, true);
     }
@@ -163,7 +168,7 @@ pub const Buffer = struct {
         owner: *ExternalOwnerHandle,
         size: usize,
         bytes: []align(arrow_alignment) const u8,
-    ) !*Buffer {
+    ) WrapError!*Buffer {
         try validateExternalContract(size, bytes);
         return initExternal(allocator, owner, @constCast(bytes.ptr), size, bytes.len, false);
     }
@@ -172,14 +177,14 @@ pub const Buffer = struct {
     /// self is retained; the child has its own refcount and must be deinitialized separately.
     /// Child is frozen regardless of parent's mutability. No re-alignment check is
     /// performed: the parent must already satisfy the 64-byte alignment guarantee.
-    pub fn sliceBuffer(self: *Buffer, allocator: Allocator, off: usize, len: usize) !*Buffer {
+    pub fn sliceBuffer(self: *Buffer, allocator: Allocator, off: usize, len: usize) SliceError!*Buffer {
         const end = try checked.add(off, len);
-        std.debug.assert(end <= self.size);
+        if (end > self.size) return error.OffsetOutOfBounds;
         const child = try allocator.create(Buffer);
         child.* = .{
             .data = self.data + off,
             .size = len,
-            .capacity = 0, // borrowed; reserve() is blocked on borrowed children
+            .capacity = 0,
             .allocator = allocator,
             .is_mutable = false,
             .parent = self.retain(),
@@ -234,7 +239,7 @@ pub const Buffer = struct {
     /// Grow capacity to at least new_capacity (rounded to next 64-byte boundary).
     /// Only valid on mutable, directly owned root buffers. Newly available bytes
     /// [size, capacity) are zeroed.
-    pub fn reserve(self: *Buffer, new_capacity: usize) !void {
+    pub fn reserve(self: *Buffer, new_capacity: usize) ReserveError!void {
         std.debug.assert(self.is_mutable);
         std.debug.assert(self.parent == null);
         std.debug.assert(self.external_owner == null);
@@ -262,7 +267,7 @@ pub const Buffer = struct {
         size: usize,
         capacity: usize,
         is_mutable: bool,
-    ) !*Buffer {
+    ) Allocator.Error!*Buffer {
         const self = try allocator.create(Buffer);
         self.* = .{
             .data = ptr,
@@ -278,7 +283,7 @@ pub const Buffer = struct {
     }
 };
 
-fn validateExternalContract(size: usize, bytes: []const u8) (checked.Error || BufferContractError)!void {
+fn validateExternalContract(size: usize, bytes: []const u8) BufferContractError!void {
     if (size > bytes.len) return error.SizeExceedsCapacity;
     if (bytes.len == 0) return;
     if (bytes.len % arrow_alignment != 0) return error.InvalidCapacity;
@@ -299,7 +304,7 @@ fn releaseExternalMem(ctx_ptr: *anyopaque) void {
     ctx.allocator.free(ctx.mem);
 }
 
-test "allocate and release" {
+test "allocate and deinit" {
     const a = std.testing.allocator;
     const buf = try Buffer.allocate(a, 100);
     try std.testing.expectEqual(@as(usize, 100), buf.size);
@@ -307,7 +312,7 @@ test "allocate and release" {
     buf.deinit();
 }
 
-test "retain and double release" {
+test "retain and double deinit" {
     const a = std.testing.allocator;
     const buf = try Buffer.allocate(a, 64);
     _ = buf.retain();
@@ -317,7 +322,7 @@ test "retain and double release" {
     buf.deinit();
 }
 
-test "empty buffer release" {
+test "empty buffer deinit" {
     const a = std.testing.allocator;
     const buf = try Buffer.allocate(a, 0);
     try std.testing.expectEqual(@as(usize, 0), buf.size);
@@ -339,6 +344,14 @@ test "sliceBuffer parent lifetime" {
     parent.deinit();
     try std.testing.expectEqual(@as(u8, 0xCD), child.data[0]);
     child.deinit();
+}
+
+test "sliceBuffer rejects out of bounds ranges" {
+    const a = std.testing.allocator;
+    const parent = try Buffer.allocate(a, 16);
+    defer parent.deinit();
+
+    try std.testing.expectError(error.OffsetOutOfBounds, parent.sliceBuffer(a, 8, 9));
 }
 
 test "three-deep chain" {

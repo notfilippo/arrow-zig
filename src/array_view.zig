@@ -1,12 +1,10 @@
 const common = @import("array_view_common.zig");
-const array_data = @import("array_data.zig");
 const fixed = @import("array_fixed_view.zig");
 const binary = @import("array_binary_view.zig");
 const list = @import("array_list_view.zig");
 const struct_view = @import("array_struct_view.zig");
 
 pub const ArrayKind = common.ArrayKind;
-pub const OwnedSliceError = array_data.DataSliceError;
 pub const SliceError = common.SliceError;
 pub const ViewError = common.ViewError;
 pub const dataTypeAcceptsZigType = common.dataTypeAcceptsZigType;

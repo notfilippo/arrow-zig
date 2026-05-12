@@ -41,18 +41,18 @@ pub fn Builder(comptime Offset: type) type {
         pub fn append(self: *Self, allocator: Allocator, value: usize) Error!void {
             const buf = try self.ensureStarted(allocator);
             const index = buf.size / @sizeOf(Offset);
-            try self.reserveSlots(allocator, index + 1);
+            try self.reserveSlots(allocator, try checked.add(index, 1));
             try write(Offset, buf, index, value);
-            buf.size += @sizeOf(Offset);
+            buf.size = try checked.add(buf.size, @sizeOf(Offset));
         }
 
         pub fn appendRepeat(self: *Self, allocator: Allocator, n: usize, value: usize) Error!void {
             if (n == 0) return;
             const buf = try self.ensureStarted(allocator);
             const start = buf.size / @sizeOf(Offset);
-            try self.reserveSlots(allocator, start + n);
+            try self.reserveSlots(allocator, try checked.add(start, n));
             for (0..n) |i| try write(Offset, buf, start + i, value);
-            buf.size += n * @sizeOf(Offset);
+            buf.size = try checked.add(buf.size, try checked.mul(n, @sizeOf(Offset)));
         }
 
         pub fn finish(self: *Self, allocator: Allocator) Error!*Buffer {

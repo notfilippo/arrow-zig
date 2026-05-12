@@ -20,6 +20,8 @@ pub const BitmapBuilder = struct {
     pub fn deinit(self: *BitmapBuilder) void {
         if (self.buf) |b| b.deinit();
         self.buf = null;
+        self.len = 0;
+        self.false_count = 0;
     }
 
     pub fn append(self: *BitmapBuilder, allocator: Allocator, valid: bool) Error!void {
@@ -68,6 +70,7 @@ pub const BitmapBuilder = struct {
             if (self.buf) |b| b.deinit();
             self.buf = null;
             self.len = 0;
+            self.false_count = 0;
             return null;
         }
         return try self.finish(allocator);

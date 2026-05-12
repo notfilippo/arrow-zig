@@ -50,17 +50,13 @@ pub const StructArray = struct {
     }
 
     pub fn fieldBaseNamed(self: StructArray, name: []const u8) ?*const ArrayData {
-        for (self.data.type.struct_.fields, 0..) |field_meta, i| {
-            if (std.mem.eql(u8, field_meta.name, name)) return self.data.children[i];
-        }
-        return null;
+        const index = self.fieldIndexNamed(name) orelse return null;
+        return self.data.children[index];
     }
 
     pub fn fieldNamedOwned(self: StructArray, name: []const u8) array_data.DataSliceError!?*ArrayData {
-        for (self.data.type.struct_.fields, 0..) |field_meta, i| {
-            if (std.mem.eql(u8, field_meta.name, name)) return self.fieldOwned(i);
-        }
-        return null;
+        const index = self.fieldIndexNamed(name) orelse return null;
+        return self.fieldOwned(index);
     }
 
     pub fn isValid(self: StructArray, i: usize) bool {
@@ -103,6 +99,13 @@ pub const StructArray = struct {
 
     pub fn cloneRetained(self: StructArray) array_data.DataSliceError!*ArrayData {
         return self.sliceOwned(0, self.len);
+    }
+
+    fn fieldIndexNamed(self: StructArray, name: []const u8) ?usize {
+        for (self.data.type.struct_.fields, 0..) |field_meta, i| {
+            if (std.mem.eql(u8, field_meta.name, name)) return i;
+        }
+        return null;
     }
 };
 

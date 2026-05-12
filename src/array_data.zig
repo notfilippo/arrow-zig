@@ -12,7 +12,6 @@ pub const unknown_null_count = bitmap.unknown_null_count;
 pub const ValidateError = array_validate.Error;
 pub const InitError = Allocator.Error || checked.Error;
 pub const DataSliceError = InitError || error{OffsetOutOfBounds};
-pub const SliceError = DataSliceError;
 
 pub const ArrayData = struct {
     allocator: Allocator,

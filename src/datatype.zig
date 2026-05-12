@@ -103,11 +103,7 @@ pub fn cloneOwned(allocator: Allocator, ty: DataType) Allocator.Error!DataType {
         .struct_ => |meta| .{ .struct_ = .{ .fields = try cloneFields(allocator, meta.fields) } },
         .sparse_union => |meta| .{ .sparse_union = try cloneUnionMeta(allocator, meta) },
         .dense_union => |meta| .{ .dense_union = try cloneUnionMeta(allocator, meta) },
-        .dictionary => |meta| .{ .dictionary = .{
-            .index_type = try cloneTypePtr(allocator, meta.index_type.*),
-            .value_type = try cloneTypePtr(allocator, meta.value_type.*),
-            .ordered = meta.ordered,
-        } },
+        .dictionary => |meta| .{ .dictionary = try cloneDictionaryMeta(allocator, meta) },
         else => ty,
     };
 }
@@ -334,6 +330,18 @@ fn cloneUnionMeta(allocator: Allocator, meta: UnionMeta) Allocator.Error!UnionMe
     };
 }
 
+fn cloneDictionaryMeta(allocator: Allocator, meta: DictionaryMeta) Allocator.Error!DictionaryMeta {
+    const index_type = try cloneTypePtr(allocator, meta.index_type.*);
+    errdefer deinitTypePtr(allocator, index_type);
+
+    const value_type = try cloneTypePtr(allocator, meta.value_type.*);
+    return .{
+        .index_type = index_type,
+        .value_type = value_type,
+        .ordered = meta.ordered,
+    };
+}
+
 fn deinitTypePtr(allocator: Allocator, ty: *const DataType) void {
     const ptr = @constCast(ty);
     deinitOwned(allocator, ptr);
@@ -422,6 +430,24 @@ test "DataType cloneOwned owns child pointers" {
     try std.testing.expect(cloned.struct_.fields.ptr != fields[0..].ptr);
     try std.testing.expect(cloned.struct_.fields[0].type != &child_ty);
     try std.testing.expectEqualStrings("items", cloned.struct_.fields[0].name);
+}
+
+fn cloneDictionaryForFailureTest(allocator: Allocator) !void {
+    const index_ty: DataType = .int32;
+    const child_ty: DataType = .int64;
+    const fields = [_]Field{.{ .name = "value", .type = &child_ty }};
+    const value_ty = DataType{ .struct_ = .{ .fields = &fields } };
+    const source = DataType{ .dictionary = .{
+        .index_type = &index_ty,
+        .value_type = &value_ty,
+    } };
+
+    var cloned = try cloneOwned(allocator, source);
+    defer deinitOwned(allocator, &cloned);
+}
+
+test "DataType cloneOwned dictionary handles allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneDictionaryForFailureTest, .{});
 }
 
 test {

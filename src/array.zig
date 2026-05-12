@@ -9,9 +9,7 @@ pub const unknown_null_count = array_data.unknown_null_count;
 
 pub const ArrayKind = array_view.ArrayKind;
 pub const ListKind = array_view.ListKind;
-pub const OwnedSliceError = array_view.OwnedSliceError;
 pub const SliceError = array_view.SliceError;
-pub const ViewSliceError = array_view.SliceError;
 pub const ValueRange = array_view.ValueRange;
 pub const VarBinaryKind = array_view.VarBinaryKind;
 pub const ViewError = array_view.ViewError;
