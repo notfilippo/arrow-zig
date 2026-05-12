@@ -23,8 +23,5 @@ jobs:
         with:
           version: 0.16.0
 
-      - name: Check license headers
-        run: zig build test-license
-
-      - name: Run tests
-        run: zig build test
+      - name: Run CI checks
+        run: zig build ci
