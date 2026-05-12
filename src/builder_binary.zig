@@ -1,3 +1,8 @@
+//! Binary and UTF8 builders.
+//!
+//! Builders append byte ranges into a values buffer and record offsets for each
+//! slot. UTF8 builders validate input before appending.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("checked.zig");

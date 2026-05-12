@@ -1,3 +1,8 @@
+//! Struct array view.
+//!
+//! Struct arrays expose child fields by index or name while sharing the parent
+//! logical range.
+
 const std = @import("std");
 const datatype = @import("datatype.zig");
 const array_data = @import("array_data.zig");

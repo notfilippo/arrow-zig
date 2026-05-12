@@ -1,3 +1,8 @@
+//! List and large list builders.
+//!
+//! The child builder owns values. Each appended list slot records the current
+//! child length as the next offset.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("checked.zig");

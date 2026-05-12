@@ -1,3 +1,8 @@
+//! Incremental builder for Arrow bitmaps.
+//!
+//! The builder tracks total bits and false bits, then produces an immutable
+//! Arrow buffer or `null` when all bits are valid.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("checked.zig");

@@ -1,3 +1,8 @@
+//! Variable width binary and UTF8 array views.
+//!
+//! Values are read from Arrow offset and value buffers. Slices keep the same
+//! backing storage and adjust the logical view range.
+
 const std = @import("std");
 const datatype = @import("datatype.zig");
 const offset_data = @import("offsets.zig");

@@ -1,3 +1,9 @@
+//! Arrow buffers and external memory ownership.
+//!
+//! Buffers are reference counted and keep Arrow alignment and padding
+//! guarantees. They can own memory directly, retain external memory, or hold a
+//! retained slice parent.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("checked.zig");

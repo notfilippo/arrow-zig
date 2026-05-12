@@ -1,3 +1,8 @@
+//! Shared helpers for typed array views.
+//!
+//! This module contains type matching, null count lookup, and slice bound
+//! helpers used by fixed width, binary, list, and struct views.
+
 const datatype = @import("datatype.zig");
 const bitmap = @import("bitmap.zig");
 const checked = @import("checked.zig");

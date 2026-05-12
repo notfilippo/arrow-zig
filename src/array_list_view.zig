@@ -1,3 +1,8 @@
+//! List and large list array views.
+//!
+//! List values are represented by ranges into a single child array. Owned value
+//! access returns retained child slices.
+
 const std = @import("std");
 const datatype = @import("datatype.zig");
 const offset_data = @import("offsets.zig");

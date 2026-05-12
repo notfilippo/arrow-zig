@@ -1,4 +1,7 @@
 //! Arrow C Data Interface export.
+//!
+//! Exported schemas and arrays retain the source metadata and array storage
+//! until the C Data Interface release callback is invoked.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

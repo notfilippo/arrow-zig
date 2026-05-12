@@ -1,3 +1,9 @@
+//! Typed array view facade.
+//!
+//! Views validate the storage type once, then expose typed accessors without
+//! taking ownership. Use `sliceOwned` or `cloneRetained` when a retained
+//! `ArrayData` reference is needed.
+
 const common = @import("array_view_common.zig");
 const fixed = @import("array_fixed_view.zig");
 const binary = @import("array_binary_view.zig");

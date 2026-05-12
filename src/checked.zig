@@ -1,3 +1,8 @@
+//! Checked arithmetic helpers.
+//!
+//! Shared overflow checked operations keep size and offset calculations
+//! consistent across builders, buffers, and validation.
+
 const std = @import("std");
 
 pub const Error = error{Overflow};

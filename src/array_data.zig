@@ -1,3 +1,10 @@
+//! Reference counted Arrow array storage.
+//!
+//! `ArrayData` stores the data type, logical range, null count, buffers,
+//! children, and optional dictionary for one Arrow array. Callers can either
+//! transfer ownership with `initOwned` or retain existing inputs with
+//! `initRetained`.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("checked.zig");

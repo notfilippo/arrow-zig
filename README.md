@@ -11,7 +11,7 @@ zig build        # build library
 zig build test   # run all tests
 ```
 
-Pass `-Dsingle_threaded=true` to swap atomic reference-count operations for plain integer ops (no fences, no lock prefix). Useful for single-threaded pipelines where the overhead is unnecessary.
+Pass `-Dsingle_threaded=true` to swap atomic reference-count operations for plain integer ops (no fences, no lock prefix). Useful for single-threaded pipelines where the overhead is unnecessary. Read `arrow.config.thread_mode` when code needs to inspect the selected mode.
 
 ## Quick example
 

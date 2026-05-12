@@ -1,13 +1,15 @@
-const std = @import("std");
-const build_options = @import("build_options");
+//! Reference count abstraction.
+//!
+//! Uses atomic counters by default, and plain counters when
+//! `config.thread_mode` is `.single_threaded`.
 
-pub const Threading = enum { threaded, single_threaded };
-pub const threading: Threading = if (build_options.single_threaded) .single_threaded else .threaded;
+const std = @import("std");
+const config = @import("config.zig");
 
 /// Shared refcount abstraction used by buffers, external owner handles, and
 /// array storage. The interface intentionally mirrors the atomic API subset the
 /// library needs: `init`, `fetchAdd`, `fetchSub`, and `load`.
-pub const RefCount = if (threading == .threaded) std.atomic.Value(usize) else NonAtomicValue(usize);
+pub const RefCount = if (config.thread_mode == .threaded) std.atomic.Value(usize) else NonAtomicValue(usize);
 
 fn NonAtomicValue(comptime T: type) type {
     return struct {

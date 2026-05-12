@@ -1,3 +1,8 @@
+//! Fixed width typed array views.
+//!
+//! Includes booleans, numeric physical types, and logical temporal views backed
+//! by int32 or int64 storage.
+
 const std = @import("std");
 const datatype = @import("datatype.zig");
 const bitmap = @import("bitmap.zig");

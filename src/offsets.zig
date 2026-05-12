@@ -1,3 +1,8 @@
+//! Offset buffer helpers.
+//!
+//! Binary and list arrays use monotonic int32 or int64 offsets. This module
+//! builds, reads, writes, and validates those buffers.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("checked.zig");

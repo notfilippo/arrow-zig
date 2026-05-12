@@ -1,3 +1,8 @@
+//! Array builder facade.
+//!
+//! Builders collect mutable values and null state, then transfer immutable
+//! `ArrayData` storage to the caller with `finish`.
+
 const numeric = @import("builder_numeric.zig");
 const boolean = @import("builder_boolean.zig");
 const binary = @import("builder_binary.zig");

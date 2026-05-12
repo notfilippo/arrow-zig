@@ -1,3 +1,8 @@
+//! Bitmap boolean operations.
+//!
+//! Operations support arbitrary bit offsets and lengths so sliced arrays can be
+//! processed without first aligning or copying their bitmaps.
+
 const std = @import("std");
 const bits = @import("bitmap_bits.zig");
 

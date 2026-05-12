@@ -1,3 +1,9 @@
+//! Numeric and logical temporal builders.
+//!
+//! Numeric builders store fixed width values and validity bits. `initType`
+//! allows logical Arrow types such as date, time, timestamp, and duration when
+//! they match the Zig storage type.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("checked.zig");

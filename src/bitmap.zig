@@ -1,3 +1,9 @@
+//! Bitmap helpers and builder facade.
+//!
+//! Arrow validity and boolean arrays use least significant bit first packing.
+//! This facade exposes bit access, copying, counting, boolean operations, and
+//! bitmap building.
+
 const bits = @import("bitmap_bits.zig");
 const ops = @import("bitmap_ops.zig");
 const builder = @import("bitmap_builder.zig");

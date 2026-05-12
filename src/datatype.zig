@@ -1,3 +1,8 @@
+//! Arrow data type metadata.
+//!
+//! Data types describe physical storage, logical metadata, nested fields,
+//! dictionaries, and layout expectations used by builders and validation.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const datatype_layout = @import("datatype_layout.zig");

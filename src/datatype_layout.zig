@@ -1,3 +1,8 @@
+//! Buffer layout rules for Arrow data types.
+//!
+//! Layouts state which buffers are required for each type and how nulls are
+//! represented.
+
 const std = @import("std");
 
 pub const NullLayout = enum { bitmap, none, always_null };

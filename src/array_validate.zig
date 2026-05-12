@@ -1,3 +1,9 @@
+//! Arrow array storage validation.
+//!
+//! Validation checks buffer counts, byte sizes, null count consistency, child
+//! layout, dictionary indices, and union offsets against the declared
+//! `DataType`.
+
 const std = @import("std");
 const checked = @import("checked.zig");
 const datatype = @import("datatype.zig");

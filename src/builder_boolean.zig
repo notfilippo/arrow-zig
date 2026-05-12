@@ -1,3 +1,8 @@
+//! Boolean array builder.
+//!
+//! Values and validity are both stored as Arrow bitmaps, with null values
+//! represented by false validity bits.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("checked.zig");

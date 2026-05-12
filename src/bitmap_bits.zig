@@ -1,3 +1,8 @@
+//! Bit level primitives for Arrow bitmaps.
+//!
+//! Helpers here read, write, copy, invert, and count packed bits using Arrow
+//! least significant bit first ordering.
+
 const std = @import("std");
 const checked = @import("checked.zig");
 

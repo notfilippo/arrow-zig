@@ -1,17 +1,42 @@
+//! Array storage and typed array view facade.
+//!
+//! `ArrayData` owns the Arrow layout pieces. Typed arrays such as `Int32Array`,
+//! `BinaryArray`, and `ListArray` are small views over retained storage.
+
 const array_data = @import("array_data.zig");
 const array_view = @import("array_view.zig");
 
+/// Reference counted array storage.
 pub const ArrayData = array_data.ArrayData;
+
+/// Error set for retained array slices.
 pub const DataSliceError = array_data.DataSliceError;
+
+/// Error set for array storage creation.
 pub const InitError = array_data.InitError;
+
+/// Error set for storage validation.
 pub const ValidateError = array_data.ValidateError;
+
+/// Sentinel for deferred null count calculation.
 pub const unknown_null_count = array_data.unknown_null_count;
 
+/// Compile time kind for fixed width array views.
 pub const ArrayKind = array_view.ArrayKind;
+
+/// Compile time kind for list array views.
 pub const ListKind = array_view.ListKind;
+
+/// Error set for non owning view slices.
 pub const SliceError = array_view.SliceError;
+
+/// Offset and length pair for list values.
 pub const ValueRange = array_view.ValueRange;
+
+/// Compile time kind for variable width binary views.
 pub const VarBinaryKind = array_view.VarBinaryKind;
+
+/// Error set for creating typed views from storage.
 pub const ViewError = array_view.ViewError;
 
 pub const BooleanArray = array_view.BooleanArray;
