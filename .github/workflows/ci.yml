@@ -18,13 +18,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Check license headers
-        run: sh scripts/check_license_headers.sh
-
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
+
+      - name: Check license headers
+        run: zig build test-license
 
       - name: Run tests
         run: zig build test

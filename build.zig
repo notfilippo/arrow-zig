@@ -21,6 +21,17 @@ pub fn build(b: *std.Build) void {
     });
     mod.addOptions("build_options", build_options);
 
+    const license_mod = b.createModule(.{
+        .root_source_file = b.path("tools/check_license_headers.zig"),
+        .target = b.graph.host,
+    });
+    const license_check = b.addExecutable(.{
+        .name = "check_license_headers",
+        .root_module = license_mod,
+    });
+    const license_step = b.step("test-license", "Check license headers");
+    license_step.dependOn(&b.addRunArtifact(license_check).step);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mod })).step);
 }
