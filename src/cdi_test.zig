@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const array = @import("array.zig");
+const bitmap = @import("bitmap.zig");
 const builder = @import("builder.zig");
 const buffer = @import("buffer.zig");
 const cdi = @import("cdi.zig");
@@ -782,11 +783,12 @@ test "importArray rejects dictionary mismatches" {
     try std.testing.expectError(error.UnexpectedDictionary, importArray(allocator, .null_, &unexpected_dictionary));
 }
 
-test "importArray rejects misaligned not null buffer" {
+test "importArray accepts unaligned C Data Interface buffer" {
     const allocator = std.testing.allocator;
     const mem = try allocator.alignedAlloc(u8, .fromByteUnits(buffer.arrow_alignment), buffer.arrow_alignment);
     defer allocator.free(mem);
     @memset(mem, 0);
+    std.mem.writeInt(i32, mem[1..5], 42, .little);
 
     var arr = minimalArray();
     arr.length = 1;
@@ -797,5 +799,42 @@ test "importArray rejects misaligned not null buffer" {
     };
     arr.buffers = &buffers;
 
-    try std.testing.expectError(error.MisalignedBuffer, importArray(allocator, .int32, &arr));
+    const imported = try importArray(allocator, .int32, &arr);
+    defer imported.deinit();
+
+    const view = try array.NumericArray(i32).fromData(imported);
+    try std.testing.expectEqual(@as(i32, 42), view.value(0));
+}
+
+test "importArray validates unaligned validity buffer" {
+    const allocator = std.testing.allocator;
+    const validity_mem = try allocator.alignedAlloc(u8, .fromByteUnits(buffer.arrow_alignment), buffer.arrow_alignment);
+    defer allocator.free(validity_mem);
+    @memset(validity_mem, 0);
+
+    const values_mem = try allocator.alignedAlloc(u8, .fromByteUnits(buffer.arrow_alignment), 66 * @sizeOf(i32));
+    defer allocator.free(values_mem);
+    @memset(values_mem, 0);
+
+    const validity = validity_mem[1..10];
+    bitmap.setBitsTo(validity, 0, 66, true);
+    bitmap.clearBit(validity, 4);
+
+    var arr = minimalArray();
+    arr.length = 65;
+    arr.offset = 1;
+    arr.null_count = 1;
+    arr.n_buffers = 2;
+    var buffers = [_]?*const anyopaque{
+        @ptrCast(validity.ptr),
+        @ptrCast(values_mem.ptr),
+    };
+    arr.buffers = &buffers;
+
+    const imported = try importArray(allocator, .int32, &arr);
+    defer imported.deinit();
+
+    const view = try array.NumericArray(i32).fromData(imported);
+    try std.testing.expectEqual(@as(usize, 1), view.nullCount());
+    try std.testing.expect(view.isNull(3));
 }

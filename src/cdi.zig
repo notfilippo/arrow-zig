@@ -38,7 +38,6 @@ pub const ArrayImportError =
     checked.Error ||
     datatype.ValidationError ||
     array.ValidateError ||
-    buffer.CdiWrapError ||
     error{
         ReleasedArray,
         NegativeLength,
@@ -405,10 +404,22 @@ fn importBuffer(
     const size = try visibleBufferSize(ty, arr, spec, index, len, offset);
     const ptr = arr.buffers.?[index] orelse {
         if (spec.kind == .validity) return null;
-        if (size == 0) return try Buffer.wrapCdiEmptyConst(allocator, owner);
+        if (size == 0) return wrapImportedBuffer(allocator, owner, &.{});
         return missingBufferError(spec.kind);
     };
-    return try Buffer.wrapCdiConst(allocator, owner, ptr, size);
+    const bytes: [*]const u8 = @ptrCast(ptr);
+    return wrapImportedBuffer(allocator, owner, bytes[0..size]);
+}
+
+fn wrapImportedBuffer(
+    allocator: Allocator,
+    owner: *ExternalOwnerHandle,
+    bytes: []const u8,
+) Allocator.Error!*Buffer {
+    return Buffer.wrapConst(allocator, owner, bytes.len, bytes) catch |err| switch (err) {
+        error.SizeExceedsCapacity => unreachable,
+        else => |e| return e,
+    };
 }
 
 fn visibleBufferSize(
@@ -460,7 +471,6 @@ fn offsetsBufferSize(
 }
 
 fn readOffsetAt(ptr: *const anyopaque, index: usize, byte_width: usize) ArrayImportError!usize {
-    if (@intFromPtr(ptr) % buffer.arrow_alignment != 0) return error.MisalignedBuffer;
     const bytes: [*]const u8 = @ptrCast(ptr);
     const start = try checked.mul(index, byte_width);
     return switch (byte_width) {

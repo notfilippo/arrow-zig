@@ -1,10 +1,6 @@
 // Copyright 2026 Filippo Rossi
 // SPDX-License-Identifier: Apache-2.0
 
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-
 #include "nanoarrow/nanoarrow.h"
 
 #define TRY(EXPR)                       \
@@ -19,75 +15,10 @@ typedef int (*ArrowZigFixtureBuilder)(
     struct ArrowSchema* schema,
     struct ArrowArray* array);
 
-static void arrow_zig_aligned_free(
-    struct ArrowBufferAllocator* allocator,
-    uint8_t* ptr,
-    int64_t size) {
-  (void)allocator;
-  (void)size;
-  if (ptr != NULL) {
-    free(((void**)ptr)[-1]);
-  }
-}
-
-static uint8_t* arrow_zig_aligned_reallocate(
-    struct ArrowBufferAllocator* allocator,
-    uint8_t* ptr,
-    int64_t old_size,
-    int64_t new_size) {
-  if (new_size == 0) {
-    arrow_zig_aligned_free(allocator, ptr, old_size);
-    return NULL;
-  }
-
-  uint8_t* raw = (uint8_t*)malloc((size_t)new_size + 64 + sizeof(void*));
-  if (raw == NULL) {
-    return NULL;
-  }
-
-  uintptr_t aligned_addr =
-      ((uintptr_t)(raw + sizeof(void*) + 63)) & ~(uintptr_t)63;
-  uint8_t* aligned = (uint8_t*)aligned_addr;
-  ((void**)aligned)[-1] = raw;
-
-  if (ptr != NULL) {
-    int64_t copy_size = old_size < new_size ? old_size : new_size;
-    if (copy_size > 0) {
-      memcpy(aligned, ptr, (size_t)copy_size);
-    }
-    arrow_zig_aligned_free(allocator, ptr, old_size);
-  }
-
-  return aligned;
-}
-
-static struct ArrowBufferAllocator arrow_zig_aligned_allocator = {
-    &arrow_zig_aligned_reallocate,
-    &arrow_zig_aligned_free,
-    NULL};
-
-static int arrow_zig_use_aligned_buffers(struct ArrowArray* array) {
-  for (int64_t i = 0; i < NANOARROW_MAX_FIXED_BUFFERS; i++) {
-    TRY(ArrowBufferSetAllocator(
-        ArrowArrayBuffer(array, i), arrow_zig_aligned_allocator));
-  }
-
-  for (int64_t i = 0; i < array->n_children; i++) {
-    TRY(arrow_zig_use_aligned_buffers(array->children[i]));
-  }
-
-  if (array->dictionary != NULL) {
-    TRY(arrow_zig_use_aligned_buffers(array->dictionary));
-  }
-
-  return NANOARROW_OK;
-}
-
 static int arrow_zig_start_array(
     struct ArrowSchema* schema,
     struct ArrowArray* array) {
   TRY(ArrowArrayInitFromSchema(array, schema, NULL));
-  TRY(arrow_zig_use_aligned_buffers(array));
   return ArrowArrayStartAppending(array);
 }
 

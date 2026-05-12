@@ -3,19 +3,19 @@
 
 //! Arrow buffers and external memory ownership.
 //!
-//! Buffers are reference counted and keep Arrow alignment and padding
-//! guarantees. They can own memory directly, retain external memory, or hold a
-//! retained slice parent.
+//! Buffers are reference counted byte storage. Internal allocations use Arrow
+//! padding and alignment rules. External buffers keep their source pointer and
+//! trust caller supplied padding.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("checked.zig");
 const RefCount = @import("refcount.zig").RefCount;
 
-/// Arrow specification: all buffers must be aligned to 64 bytes for SIMD safety.
+/// Alignment used for buffers allocated by Arrow Zig.
 pub const arrow_alignment: usize = 64;
 
-/// std.mem.Alignment for the Arrow 64-byte requirement.
+/// std.mem.Alignment for internal buffer allocation.
 const arrow_align: std.mem.Alignment = .fromByteUnits(arrow_alignment);
 
 fn nextCapacity(current: usize, needed: usize) checked.Error!usize {
@@ -33,8 +33,8 @@ pub const BufferContractError = error{
 pub const AllocateError = Allocator.Error || checked.Error;
 pub const ReserveError = Allocator.Error || checked.Error;
 pub const SliceError = Allocator.Error || checked.Error || error{OffsetOutOfBounds};
-pub const WrapError = Allocator.Error || BufferContractError;
-pub const CdiWrapError = Allocator.Error || error{MisalignedBuffer};
+pub const FromOwnedError = Allocator.Error || BufferContractError;
+pub const WrapError = Allocator.Error || error{SizeExceedsCapacity};
 
 pub const ExternalReleaseFn = *const fn (ctx: *anyopaque) void;
 
@@ -78,8 +78,8 @@ pub const ExternalOwnerHandle = struct {
 /// `size` is the number of bytes of valid data. `capacity` is the number of
 /// allocated bytes, always a multiple of 64 for internally allocated buffers.
 /// Invariant: `size <= capacity`.
-/// CDI import buffers record visible bytes as capacity because producer
-/// padding exists by contract but the byte count is not known.
+/// Some imported buffers record visible bytes as capacity because padding
+/// exists by an external contract but the byte count is not known.
 ///
 /// Root buffers may either own their allocation directly or retain an external
 /// owner handle. Slice-child buffers hold a retained parent pointer and do not
@@ -144,7 +144,7 @@ pub const Buffer = struct {
         allocator: Allocator,
         size: usize,
         bytes: []align(arrow_alignment) u8,
-    ) WrapError!*Buffer {
+    ) FromOwnedError!*Buffer {
         try validateExternalContract(size, bytes);
         const self = try allocator.create(Buffer);
         self.* = .{
@@ -160,56 +160,34 @@ pub const Buffer = struct {
         return self;
     }
 
-    /// Wrap externally owned mutable memory. `size` is the logical byte length;
-    /// `bytes.len` must be 0 or a multiple of 64. Padding bytes [size, bytes.len) must be zero.
+    /// Wrap externally owned mutable memory. `size` is the logical byte length.
+    /// `bytes` is the visible allocation range and padding is trusted.
     /// `owner` is retained until the final buffer reference is deinitialized.
     pub fn wrap(
         allocator: Allocator,
         owner: *ExternalOwnerHandle,
         size: usize,
-        bytes: []align(arrow_alignment) u8,
+        bytes: []u8,
     ) WrapError!*Buffer {
-        try validateExternalContract(size, bytes);
+        if (size > bytes.len) return error.SizeExceedsCapacity;
         return initExternal(allocator, owner, bytes.ptr, size, bytes.len, true);
     }
 
-    /// Like `wrap` but for immutable external memory. `@constCast` is used internally;
-    /// the buffer's `is_mutable` flag is cleared so `mutableSlice()` will assert.
+    /// Like `wrap` but for immutable external memory.
     pub fn wrapConst(
         allocator: Allocator,
         owner: *ExternalOwnerHandle,
         size: usize,
-        bytes: []align(arrow_alignment) const u8,
+        bytes: []const u8,
     ) WrapError!*Buffer {
-        try validateExternalContract(size, bytes);
+        if (size > bytes.len) return error.SizeExceedsCapacity;
         return initExternal(allocator, owner, @constCast(bytes.ptr), size, bytes.len, false);
-    }
-
-    /// Wrap immutable CDI memory with a computed visible size.
-    /// The Arrow C Data Interface producer is trusted for padding.
-    pub fn wrapCdiConst(
-        allocator: Allocator,
-        owner: *ExternalOwnerHandle,
-        ptr: *const anyopaque,
-        size: usize,
-    ) CdiWrapError!*Buffer {
-        if (@intFromPtr(ptr) % arrow_alignment != 0) return error.MisalignedBuffer;
-        const bytes: [*]const u8 = @ptrCast(ptr);
-        return initExternal(allocator, owner, @constCast(bytes), size, size, false);
-    }
-
-    /// Retain a CDI owner for a required empty buffer whose pointer is null.
-    pub fn wrapCdiEmptyConst(
-        allocator: Allocator,
-        owner: *ExternalOwnerHandle,
-    ) Allocator.Error!*Buffer {
-        return initExternal(allocator, owner, undefined, 0, 0, false);
     }
 
     /// Create a child buffer whose data window is [off, off+len) within self's allocation.
     /// self is retained; the child has its own refcount and must be deinitialized separately.
-    /// Child is frozen regardless of parent's mutability. No re-alignment check is
-    /// performed: the parent must already satisfy the 64-byte alignment guarantee.
+    /// Child is frozen regardless of parent's mutability and keeps the parent
+    /// pointer alignment.
     pub fn sliceBuffer(self: *Buffer, allocator: Allocator, off: usize, len: usize) SliceError!*Buffer {
         const end = try checked.add(off, len);
         if (end > self.size) return error.OffsetOutOfBounds;
@@ -479,6 +457,19 @@ test "wrap uses logical size" {
     try std.testing.expectEqual(@as(u8, 6), buf.dataSlice()[1]);
 }
 
+test "wrap rejects size exceeding visible range" {
+    const a = std.testing.allocator;
+    const mem = try a.alignedAlloc(u8, arrow_align, 64);
+
+    var release_count: usize = 0;
+    var ctx = ExternalMemCtx{ .allocator = a, .mem = mem, .release_count = &release_count };
+    var owner = ExternalOwnerHandle.init(&ctx, releaseExternalMem);
+
+    try std.testing.expectError(error.SizeExceedsCapacity, Buffer.wrap(a, &owner, 2, mem[0..1]));
+    owner.deinit();
+    try std.testing.expectEqual(@as(usize, 1), release_count);
+}
+
 test "external owner shared across buffers releases once" {
     const a = std.testing.allocator;
     const mem = try a.alignedAlloc(u8, arrow_align, 128);
@@ -519,11 +510,11 @@ test "external owner shared across buffers releases once" {
     try std.testing.expectEqual(@as(usize, 1), release_count);
 }
 
-test "wrapCdiConst trusts padding" {
+test "wrapConst trusts padding and keeps source alignment" {
     const a = std.testing.allocator;
     const mem = try a.alignedAlloc(u8, arrow_align, 64);
     @memset(mem, 0xFF);
-    mem[0] = 7;
+    mem[1] = 7;
 
     var release_count: usize = 0;
     var ctx = ExternalMemCtx{
@@ -533,14 +524,14 @@ test "wrapCdiConst trusts padding" {
     };
 
     var owner = ExternalOwnerHandle.init(&ctx, releaseExternalMem);
-    const buf = Buffer.wrapCdiConst(a, &owner, mem.ptr, 1) catch |err| {
+    const buf = Buffer.wrapConst(a, &owner, 1, mem[1..3]) catch |err| {
         owner.deinit();
         return err;
     };
     owner.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), buf.size);
-    try std.testing.expectEqual(@as(usize, 1), buf.capacity);
+    try std.testing.expectEqual(@as(usize, 2), buf.capacity);
     try std.testing.expect(!buf.is_mutable);
     try std.testing.expectEqual(@as(u8, 7), buf.dataSlice()[0]);
 

@@ -91,15 +91,16 @@ keeps the moved C array alive and calls its release callback when the final
 imported array, child, dictionary, or buffer reference is dropped.
 
 Imported CDI buffers are zero copy and immutable. The importer trusts producer
-padding from the Arrow contract, checks 64 byte alignment for non null buffers,
-and does not inspect padding bytes. Do not mutate imported CDI buffers.
+padding from the Arrow contract and does not inspect padding bytes. Imported
+buffers keep their source alignment, which may be weaker than Arrow Zig
+internal buffers. Do not mutate imported CDI buffers.
 
 ## Layout guarantees
 
-- **64-byte alignment.** All buffers are allocated with 64-byte alignment per the Arrow spec (SIMD-safe reads without masking).
+- **64-byte alignment.** Buffers allocated by Arrow Zig use 64-byte alignment.
 - **Zeroed padding.** Internal buffer padding and newly reserved tail capacity are zeroed.
 - **LSB-first bitmaps.** Validity and boolean values use LSB-first bit packing.
 - **Deferred null count.** `null_count` may be `arrow.unknown_null_count` after a `slice()`. `nullCount()` computes on demand without mutating the view. Builders track the count eagerly during construction.
 - **Views + owned storage.** Builders return ref-counted `ArrayData`. Typed arrays such as `Int32Array`, `Date32Array`, and `TimestampArray` are cheap non-owning views created with `fromData()`.
 - **Zero-copy slicing.** `slice(off, len)` returns another non-owning view and clamps `len` to the available range. Use `sliceChecked()` for offset validation, or `sliceOwned()` / `cloneRetained()` when a slice needs its own retained owner.
-- **External memory.** External allocations can be wrapped with `ExternalOwnerHandle`, `Buffer.wrap()`, and `Buffer.wrapConst()`. For buffers with logical size smaller than capacity, provide the padded byte range with zeroed padding.
+- **External memory.** External allocations can be wrapped with `ExternalOwnerHandle`, `Buffer.wrap()`, and `Buffer.wrapConst()`. External buffers preserve source pointer alignment. Padding is trusted by the caller. `Buffer.fromOwned()` still requires a 64-byte aligned padded slice because Arrow Zig later frees it directly.

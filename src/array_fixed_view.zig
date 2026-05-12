@@ -82,8 +82,8 @@ pub fn FixedWidthView(comptime kind: ArrayKind) type {
             }) {
                 return bitmap.getBit(buf.dataSlice(), self.offset + i);
             } else {
-                const ptr: [*]const VT = @ptrCast(@alignCast(buf.data));
-                return ptr[self.offset + i];
+                const start = (self.offset + i) * @sizeOf(VT);
+                return readValue(VT, buf.dataSlice()[start..][0..@sizeOf(VT)]);
             }
         }
 
@@ -141,6 +141,14 @@ pub fn FixedWidthView(comptime kind: ArrayKind) type {
             }) @compileError("falseCount is only available on BooleanArray");
             return self.len - self.nullCount() - self.trueCount();
         }
+    };
+}
+
+fn readValue(comptime T: type, bytes: *const [@sizeOf(T)]u8) T {
+    return switch (@typeInfo(T)) {
+        .int => std.mem.readInt(T, bytes, .little),
+        .float => @bitCast(std.mem.readInt(std.meta.Int(.unsigned, @bitSizeOf(T)), bytes, .little)),
+        else => @compileError("unsupported Arrow fixed width value: " ++ @typeName(T)),
     };
 }
 
