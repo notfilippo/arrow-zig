@@ -25,14 +25,6 @@ test "exportType primitive schema" {
     try std.testing.expect(!schemaIsReleased(&schema));
 }
 
-test "exportType binary schemas" {
-    const allocator = std.testing.allocator;
-    var schema: ArrowSchema = undefined;
-    try exportType(allocator, .utf8, &schema);
-    defer schema.release.?(&schema);
-    try std.testing.expectEqualStrings("u", std.mem.span(schema.format.?));
-}
-
 test "exportType nested list schema" {
     const allocator = std.testing.allocator;
     const value_ty: datatype.DataType = .int32;

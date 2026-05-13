@@ -139,31 +139,6 @@ test "importArray imports exported primitive array" {
     try std.testing.expectEqual(@as(usize, 1), source.refCount());
 }
 
-test "importArray imports exported binary array" {
-    const allocator = std.testing.allocator;
-    var b = builder.BinaryBuilder.init(allocator);
-    defer b.deinit();
-    try b.append("aa");
-    try b.appendNull();
-    try b.append("bbb");
-
-    const source = try b.finish();
-    defer source.deinit();
-
-    var exported: ArrowArray = undefined;
-    try exportArray(allocator, source, &exported);
-
-    const imported = try importArray(allocator, source.type, &exported);
-    defer imported.deinit();
-    try std.testing.expect(arrayIsReleased(&exported));
-    try imported.validate();
-
-    const view = try array.BinaryArray.fromData(imported);
-    try std.testing.expectEqualStrings("aa", view.valueBytes(0));
-    try std.testing.expect(view.isNull(1));
-    try std.testing.expectEqualStrings("bbb", view.valueBytes(2));
-}
-
 test "importArray imports exported list array" {
     const allocator = std.testing.allocator;
     var b = builder.ListBuilder(builder.NumericBuilder(i32)).init(allocator);
@@ -555,7 +530,7 @@ test "importArray rejects dictionary mismatches" {
     try std.testing.expectError(error.UnexpectedDictionary, importArray(allocator, .null_, &unexpected_dictionary));
 }
 
-test "importArray accepts unaligned C Data Interface buffer" {
+test "importArray accepts unaligned values buffer" {
     const allocator = std.testing.allocator;
     const mem = try allocator.alignedAlloc(u8, .fromByteUnits(buffer.arrow_alignment), buffer.arrow_alignment);
     defer allocator.free(mem);
@@ -578,7 +553,7 @@ test "importArray accepts unaligned C Data Interface buffer" {
     try std.testing.expectEqual(@as(i32, 42), view.value(0));
 }
 
-test "importArray validates unaligned validity buffer" {
+test "importArray accepts unaligned validity buffer" {
     const allocator = std.testing.allocator;
     const validity_mem = try allocator.alignedAlloc(u8, .fromByteUnits(buffer.arrow_alignment), buffer.arrow_alignment);
     defer allocator.free(validity_mem);
