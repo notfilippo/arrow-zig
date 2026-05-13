@@ -9,6 +9,7 @@ const datatype = @import("../datatype.zig");
 
 const ArrayData = array.ArrayData;
 const ArrowArray = cdi.ArrowArray;
+const ArrowArrayStream = cdi.ArrowArrayStream;
 const ArrowSchema = cdi.ArrowSchema;
 const Buffer = buffer.Buffer;
 
@@ -26,6 +27,14 @@ test "importArrayFromSchema handles allocation failures" {
 
 test "importArray handles nested allocation failures" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkImportArrayAllocationFailure, .{});
+}
+
+test "exportArrayStream handles allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkExportArrayStreamAllocationFailure, .{});
+}
+
+test "importArrayStream handles allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkImportArrayStreamAllocationFailure, .{});
 }
 
 fn checkImportTypeAllocationFailure(allocator: std.mem.Allocator) !void {
@@ -87,6 +96,42 @@ fn checkImportArrayAllocationFailure(allocator: std.mem.Allocator) !void {
     defer if (exported.release) |release| release(&exported);
 
     const imported = try cdi.importArray(allocator, source.type, &exported);
+    defer imported.deinit();
+
+    try imported.validate();
+}
+
+fn checkExportArrayStreamAllocationFailure(allocator: std.mem.Allocator) !void {
+    const setup = std.testing.allocator;
+    const source = try binaryArray(setup);
+    defer source.deinit();
+
+    var stream: ArrowArrayStream = undefined;
+    try cdi.exportArrayStream(allocator, source.type, &.{source}, &stream);
+    defer if (stream.release) |release| release(&stream);
+
+    var schema: ArrowSchema = undefined;
+    try expectStreamOk(stream.get_schema.?(&stream, &schema));
+    defer if (schema.release) |release| release(&schema);
+
+    var arr: ArrowArray = undefined;
+    try expectStreamOk(stream.get_next.?(&stream, &arr));
+    defer if (arr.release) |release| release(&arr);
+}
+
+fn checkImportArrayStreamAllocationFailure(allocator: std.mem.Allocator) !void {
+    const setup = std.testing.allocator;
+    const source = try binaryArray(setup);
+    defer source.deinit();
+
+    var stream: ArrowArrayStream = undefined;
+    try cdi.exportArrayStream(setup, source.type, &.{source}, &stream);
+    defer if (stream.release) |release| release(&stream);
+
+    const imported_stream = try cdi.importArrayStream(allocator, &stream);
+    defer imported_stream.deinit();
+
+    const imported = (try imported_stream.next()).?;
     defer imported.deinit();
 
     try imported.validate();
@@ -161,5 +206,13 @@ fn testSchema(format: ?[*:0]const u8, name: ?[*:0]const u8, nullable: bool) Arro
         .dictionary = null,
         .release = noopSchemaRelease,
         .private_data = null,
+    };
+}
+
+fn expectStreamOk(code: c_int) !void {
+    return switch (code) {
+        0 => {},
+        12 => error.OutOfMemory,
+        else => error.StreamCallbackFailed,
     };
 }

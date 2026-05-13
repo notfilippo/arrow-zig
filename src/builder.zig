@@ -5,6 +5,31 @@
 //!
 //! Builders collect mutable values and null state, then transfer immutable
 //! `ArrayData` storage to the caller with `finish`.
+//!
+//! `finish()` returns a reference counted `*array.ArrayData`. Call `deinit()`
+//! when done. Typed array views do not retain the storage.
+//!
+//! ```zig
+//! var b = arrow.builder.Utf8Builder.init(allocator);
+//! defer b.deinit();
+//!
+//! try b.append("alpha");
+//! try b.appendNull();
+//! try b.append("beta");
+//!
+//! const data = try b.finish();
+//! defer data.deinit();
+//!
+//! const values = try arrow.array.Utf8Array.fromData(data);
+//! std.debug.print("{s}\n", .{values.value(2)});
+//! ```
+//!
+//! Numeric builders can also produce compatible logical Arrow types.
+//!
+//! ```zig
+//! var dates = try arrow.builder.NumericBuilder(i32).initType(allocator, .date32);
+//! defer dates.deinit();
+//! ```
 
 const numeric = @import("builder_numeric.zig");
 const boolean = @import("builder_boolean.zig");

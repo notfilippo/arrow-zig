@@ -6,6 +6,30 @@
 //! The package exposes columnar buffers, array storage, typed views, builders,
 //! data types, bitmap helpers, config, and Arrow C Data Interface import and
 //! export helpers.
+//!
+//! Build arrays with `builder`, then create typed views from `array.ArrayData`.
+//!
+//! ```zig
+//! const arrow = @import("arrow");
+//! const std = @import("std");
+//!
+//! pub fn main() !void {
+//!     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+//!     const allocator = gpa.allocator();
+//!
+//!     var b = arrow.builder.NumericBuilder(i32).init(allocator);
+//!     defer b.deinit();
+//!     try b.append(10);
+//!     try b.appendNull();
+//!     try b.append(30);
+//!
+//!     const data = try b.finish();
+//!     defer data.deinit();
+//!
+//!     const values = try arrow.array.NumericArray(i32).fromData(data);
+//!     std.debug.print("{} {}\n", .{ values.value(0), values.value(2) });
+//! }
+//! ```
 
 /// Array storage and typed array views.
 pub const array = @import("array.zig");
