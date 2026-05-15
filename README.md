@@ -9,45 +9,44 @@ Apache Arrow columnar format in Zig.
 
 Requires Zig 0.16.0+.
 
-## Build
-
-```sh
-zig build
-zig build test
-zig build test -Dnanoarrow=true
-zig build ci
-```
-
-`zig build ci` runs license checks, docs, regular tests, single threaded tests,
-and nanoarrow interop tests in both thread modes.
-
-Pass `-Dsingle_threaded=true` to use plain refcount ops instead of atomics.
+Docs: https://notfilippo.github.io/arrow-zig/
 
 ## Example
 
 ```zig
 const arrow = @import("arrow");
+const std = @import("std");
 
-var b = arrow.builder.NumericBuilder(i32).init(allocator);
-defer b.deinit();
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
-try b.append(10);
-try b.appendNull();
-try b.append(30);
+    var b = arrow.builder.NumericBuilder(i32).init(allocator);
+    defer b.deinit();
 
-const data = try b.finish();
-defer data.deinit();
+    try b.append(10);
+    try b.appendNull();
+    try b.append(30);
 
-const values = try arrow.array.NumericArray(i32).fromData(data);
+    const data = try b.finish();
+    defer data.deinit();
+
+    const values = try arrow.array.NumericArray(i32).fromData(data);
+    std.debug.print("{}\n", .{values.value(2)});
+}
 ```
 
-## Docs
+## Contributing
 
-Public API docs live in Zig doc comments.
+Run the full local check before sending changes:
 
 ```sh
-zig build-lib -femit-docs -fno-emit-bin src/root.zig
+zig build ci
 ```
+
+This runs license checks, generated docs, regular tests, single threaded tests,
+and nanoarrow interop tests in both thread modes.
 
 Format and ABI details follow the [Arrow Columnar Format](https://arrow.apache.org/docs/format/Columnar.html)
 and [Arrow C Data Interface](https://arrow.apache.org/docs/format/CDataInterface.html).
