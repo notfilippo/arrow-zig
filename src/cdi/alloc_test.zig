@@ -6,6 +6,7 @@ const array = @import("../array.zig");
 const buffer = @import("../buffer.zig");
 const cdi = @import("../cdi.zig");
 const datatype = @import("../datatype.zig");
+const record_batch_mod = @import("../record_batch.zig");
 const schema_mod = @import("../schema.zig");
 
 const ArrayData = array.ArrayData;
@@ -13,6 +14,7 @@ const ArrowArray = cdi.ArrowArray;
 const ArrowArrayStream = cdi.ArrowArrayStream;
 const ArrowSchema = cdi.ArrowSchema;
 const Buffer = buffer.Buffer;
+const RecordBatch = record_batch_mod.RecordBatch;
 
 test "importType handles allocation failures" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkImportTypeAllocationFailure, .{});
@@ -32,6 +34,14 @@ test "exportSchema handles allocation failures" {
 
 test "importArrayFromSchema handles allocation failures" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkImportArrayFromSchemaAllocationFailure, .{});
+}
+
+test "exportRecordBatch handles allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkExportRecordBatchAllocationFailure, .{});
+}
+
+test "importRecordBatch handles allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkImportRecordBatchAllocationFailure, .{});
 }
 
 test "importArray handles nested allocation failures" {
@@ -120,6 +130,35 @@ fn checkImportArrayFromSchemaAllocationFailure(allocator: std.mem.Allocator) !vo
     try imported.validate();
 }
 
+fn checkExportRecordBatchAllocationFailure(allocator: std.mem.Allocator) !void {
+    const setup = std.testing.allocator;
+    const batch = try testRecordBatch(setup);
+    defer batch.deinit();
+
+    var schema: ArrowSchema = undefined;
+    var arr: ArrowArray = undefined;
+    try cdi.exportRecordBatch(allocator, batch, &schema, &arr);
+    defer if (schema.release) |release| release(&schema);
+    defer if (arr.release) |release| release(&arr);
+}
+
+fn checkImportRecordBatchAllocationFailure(allocator: std.mem.Allocator) !void {
+    const setup = std.testing.allocator;
+    const batch = try testRecordBatch(setup);
+    defer batch.deinit();
+
+    var schema: ArrowSchema = undefined;
+    var arr: ArrowArray = undefined;
+    try cdi.exportRecordBatch(setup, batch, &schema, &arr);
+    defer if (schema.release) |release| release(&schema);
+    defer if (arr.release) |release| release(&arr);
+
+    const imported = try cdi.importRecordBatch(allocator, &schema, &arr);
+    defer imported.deinit();
+
+    try imported.schema.validate();
+}
+
 fn checkImportArrayAllocationFailure(allocator: std.mem.Allocator) !void {
     const setup = std.testing.allocator;
     const source = try dictionaryListArray(setup);
@@ -199,6 +238,20 @@ fn testArrowSchema(allocator: std.mem.Allocator) !*schema_mod.Schema {
         .{ .key = "source", .value = "alloc" },
     };
     return schema_mod.Schema.init(allocator, &fields, &metadata);
+}
+
+fn testRecordBatch(allocator: std.mem.Allocator) !*RecordBatch {
+    const values = try binaryArray(allocator);
+    defer values.deinit();
+
+    const value_ty: datatype.DataType = .binary;
+    const fields = [_]datatype.Field{
+        .{ .name = "data", .type = &value_ty },
+    };
+    const batch_schema = try schema_mod.Schema.init(allocator, &fields, &.{});
+    defer batch_schema.deinit();
+
+    return RecordBatch.initRetained(allocator, batch_schema, 2, &.{values});
 }
 
 fn dictionaryListArray(allocator: std.mem.Allocator) !*ArrayData {

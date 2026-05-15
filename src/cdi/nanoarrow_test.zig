@@ -101,6 +101,33 @@ test "importArrayFromSchema imports nanoarrow struct array" {
     try std.testing.expectEqualStrings("five", words.value(1));
 }
 
+test "importRecordBatch imports nanoarrow struct array" {
+    const allocator = std.testing.allocator;
+
+    var schema: cdi.ArrowSchema = undefined;
+    var arr: cdi.ArrowArray = undefined;
+    try expectOk(arrow_zig_nanoarrow_make_struct(&schema, &arr));
+    defer releaseSchema(&schema);
+    defer releaseArray(&arr);
+
+    const batch = try cdi.importRecordBatch(allocator, &schema, &arr);
+    defer batch.deinit();
+
+    try std.testing.expect(!cdi.schemaIsReleased(&schema));
+    try std.testing.expect(cdi.arrayIsReleased(&arr));
+    try std.testing.expectEqual(@as(usize, 2), batch.len);
+    try std.testing.expectEqual(@as(usize, 2), batch.fieldCount());
+    try std.testing.expectEqualStrings("number", batch.field(0).?.name);
+    try std.testing.expectEqualStrings("word", batch.field(1).?.name);
+
+    const numbers = try array.NumericArray(i32).fromData(batch.columnNamed("number").?);
+    const words = try array.Utf8Array.fromData(batch.columnNamed("word").?);
+    try std.testing.expectEqual(@as(i32, 4), numbers.value(0));
+    try std.testing.expectEqual(@as(i32, 5), numbers.value(1));
+    try std.testing.expectEqualStrings("four", words.value(0));
+    try std.testing.expectEqualStrings("five", words.value(1));
+}
+
 test "importArrayFromSchema imports nanoarrow dictionary array" {
     const imported = try importFixture(arrow_zig_nanoarrow_make_dictionary);
     defer imported.deinit();

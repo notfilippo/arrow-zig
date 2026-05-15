@@ -162,6 +162,7 @@ pub const Buffer = struct {
 
     /// Wrap externally owned mutable memory. `size` is the logical byte length.
     /// `bytes` is the visible allocation range and padding is trusted.
+    /// Pointer alignment is preserved as supplied by the owner.
     /// `owner` is retained until the final buffer reference is deinitialized.
     pub fn wrap(
         allocator: Allocator,
@@ -174,6 +175,7 @@ pub const Buffer = struct {
     }
 
     /// Like `wrap` but for immutable external memory.
+    /// Pointer alignment is preserved as supplied by the owner.
     pub fn wrapConst(
         allocator: Allocator,
         owner: *ExternalOwnerHandle,

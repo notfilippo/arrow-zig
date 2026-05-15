@@ -80,10 +80,23 @@ pub const RecordBatch = struct {
     /// Struct row nulls are rejected because batches have no row validity.
     pub fn fromStructData(allocator: Allocator, data: *const ArrayData) Error!*RecordBatch {
         if (data.type.id() != .struct_) return error.NotStructArray;
+        const batch_schema = try Schema.init(allocator, data.type.struct_.fields, &.{});
+        defer batch_schema.deinit();
+        return fromStructDataRetainedSchema(allocator, batch_schema, data);
+    }
+
+    /// Create a batch from struct storage and retain the supplied schema.
+    /// Sliced struct arrays become sliced columns in the batch.
+    /// Struct row nulls are rejected because batches have no row validity.
+    pub fn fromStructDataRetainedSchema(
+        allocator: Allocator,
+        batch_schema: *Schema,
+        data: *const ArrayData,
+    ) Error!*RecordBatch {
+        if (data.type.id() != .struct_) return error.NotStructArray;
         try data.validate();
         if (data.nullCount() != 0) return error.StructNullsUnsupported;
 
-        const fields_meta = data.type.struct_.fields;
         const sliced_columns = try allocator.alloc(*ArrayData, data.children.len);
         defer allocator.free(sliced_columns);
 
@@ -96,7 +109,7 @@ pub const RecordBatch = struct {
             sliced += 1;
         }
 
-        const batch = try initFieldsRetained(allocator, fields_meta, data.len, sliced_columns);
+        const batch = try initRetained(allocator, batch_schema, data.len, sliced_columns);
         for (sliced_columns) |column_data| column_data.deinit();
         return batch;
     }
@@ -165,7 +178,9 @@ fn validateColumns(batch_schema: *const Schema, columns: []const *ArrayData, len
 
     for (columns, 0..) |column_data, i| {
         try column_data.validate();
-        if (!datatype.DataType.equals(batch_schema.field(i).?.type.*, column_data.type)) return error.ColumnTypeMismatch;
+        const field_meta = batch_schema.field(i).?;
+        if (!datatype.DataType.equals(field_meta.type.*, column_data.type)) return error.ColumnTypeMismatch;
+        if (!field_meta.nullable and column_data.nullCount() != 0) return error.NonNullableNulls;
         if (column_data.len != len) return error.ColumnLengthMismatch;
     }
 }
@@ -195,6 +210,15 @@ fn numberArray(allocator: Allocator, values: []const i32) !*ArrayData {
     var b = builder.NumericBuilder(i32).init(allocator);
     defer b.deinit();
     try b.appendSlice(values);
+    return b.finish();
+}
+
+fn numberArrayWithNull(allocator: Allocator) !*ArrayData {
+    const builder = @import("builder.zig");
+    var b = builder.NumericBuilder(i32).init(allocator);
+    defer b.deinit();
+    try b.append(1);
+    try b.appendNull();
     return b.finish();
 }
 
@@ -327,6 +351,8 @@ test "RecordBatch rejects inconsistent inputs" {
     const allocator = std.testing.allocator;
     const numbers = try numberArray(allocator, &.{ 1, 2 });
     defer numbers.deinit();
+    const numbers_with_null = try numberArrayWithNull(allocator);
+    defer numbers_with_null.deinit();
     const short = try numberArray(allocator, &.{1});
     defer short.deinit();
     const flags = try boolArray(allocator, &.{ true, false });
@@ -340,6 +366,9 @@ test "RecordBatch rejects inconsistent inputs" {
     const flag_fields = [_]datatype.Field{
         .{ .name = "number", .type = &flag_ty },
     };
+    const required_number_fields = [_]datatype.Field{
+        .{ .name = "number", .type = &number_ty, .nullable = false },
+    };
 
     try std.testing.expectError(
         error.FieldColumnCountMismatch,
@@ -352,6 +381,10 @@ test "RecordBatch rejects inconsistent inputs" {
     try std.testing.expectError(
         error.ColumnLengthMismatch,
         RecordBatch.initFieldsRetained(allocator, &.{ number_fields[0], number_fields[0] }, 2, &.{ numbers, short }),
+    );
+    try std.testing.expectError(
+        error.NonNullableNulls,
+        RecordBatch.initFieldsRetained(allocator, &required_number_fields, 2, &.{numbers_with_null}),
     );
     try std.testing.expectError(error.NotStructArray, RecordBatch.fromStructData(allocator, numbers));
 

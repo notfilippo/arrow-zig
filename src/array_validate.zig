@@ -41,6 +41,7 @@ pub const Error = error{
     DictionaryIndexOutOfBounds,
     DictionaryTypeMismatch,
     InvalidDictionaryIndexType,
+    NonNullableNulls,
     UnexpectedChild,
     UnexpectedDictionary,
 };
@@ -141,6 +142,7 @@ fn validateListLike(data: anytype, total: usize, child_field: datatype.Field, co
     const child = data.children[0];
     if (!datatype.DataType.equals(child.type, child_field.type.*)) return error.ChildTypeMismatch;
     try child.validate();
+    try validateNullable(child_field, child);
 
     const offsets = try validateOffsetsBuffer(data, total, Offset);
     if (offsets) |offset_buf| try validateOffsets(data, offset_buf, child.len, Offset);
@@ -150,6 +152,7 @@ fn validateFixedSizeList(data: anytype, total: usize, meta: datatype.FixedSizeLi
     const child = data.children[0];
     if (!datatype.DataType.equals(child.type, meta.child.type.*)) return error.ChildTypeMismatch;
     try child.validate();
+    try validateNullable(meta.child, child);
 
     const needed = try checked.mul(total, meta.len);
     if (child.len < needed) return error.ChildLengthTooSmall;
@@ -159,6 +162,7 @@ fn validateStruct(data: anytype, total: usize, meta: datatype.StructMeta) (Error
     for (data.children, meta.fields) |child, field| {
         try child.validate();
         if (!datatype.DataType.equals(child.type, field.type.*)) return error.ChildTypeMismatch;
+        try validateNullable(field, child);
         if (child.len < total) return error.ChildLengthTooSmall;
     }
 }
@@ -259,6 +263,11 @@ fn validateOffsetsBuffer(data: anytype, total: usize, comptime Offset: type) (Er
 
 fn validateOffsets(data: anytype, offsets: *const Buffer, limit: usize, comptime Offset: type) Error!void {
     try offset_data.validateMonotonic(Offset, offsets, data.offset, data.len, limit);
+}
+
+fn validateNullable(field: datatype.Field, child: anytype) Error!void {
+    if (field.nullable) return;
+    if (child.nullCount() != 0) return error.NonNullableNulls;
 }
 
 fn childIndexFor(meta: datatype.UnionMeta, code: i8) ?usize {
@@ -423,11 +432,38 @@ test "validate list and struct storage" {
     defer list.deinit();
     try list.validate();
 
+    const child_validity = try Buffer.allocate(allocator, 1);
+    errdefer child_validity.deinit();
+    child_validity.data[0] = 0b00000001;
+    child_validity.freeze();
+    defer child_validity.deinit();
+    const child_with_null = try ArrayData.initRetained(allocator, .int32, 2, 0, 1, &.{ child_validity, child_values }, &.{}, null);
+    defer child_with_null.deinit();
+
+    const required_list_ty = datatype.DataType{ .list = .{ .child = .{
+        .name = "item",
+        .type = &value_ty,
+        .nullable = false,
+    } } };
+    const required_list = try ArrayData.initRetained(allocator, required_list_ty, 1, 0, 0, &.{ null, offsets }, &.{child_with_null}, null);
+    defer required_list.deinit();
+    try std.testing.expectError(error.NonNullableNulls, required_list.validate());
+
     const fields = [_]datatype.Field{.{ .name = "a", .type = &value_ty }};
     const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &fields } };
     const struct_data = try ArrayData.initRetained(allocator, struct_ty, 3, 0, 0, &.{null}, &.{child}, null);
     defer struct_data.deinit();
     try struct_data.validate();
+
+    const required_fields = [_]datatype.Field{.{
+        .name = "a",
+        .type = &value_ty,
+        .nullable = false,
+    }};
+    const required_struct_ty = datatype.DataType{ .struct_ = .{ .fields = &required_fields } };
+    const required_struct = try ArrayData.initRetained(allocator, required_struct_ty, 2, 0, 0, &.{null}, &.{child_with_null}, null);
+    defer required_struct.deinit();
+    try std.testing.expectError(error.NonNullableNulls, required_struct.validate());
 
     const invalid_struct = try ArrayData.initRetained(allocator, struct_ty, 6, 0, 0, &.{null}, &.{child}, null);
     defer invalid_struct.deinit();
