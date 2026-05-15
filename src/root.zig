@@ -3,9 +3,9 @@
 
 //! Public entry point for the Arrow Zig package.
 //!
-//! The package exposes columnar buffers, array storage, typed views, builders,
-//! data types, bitmap helpers, config, and Arrow C Data Interface import and
-//! export helpers.
+//! The package exposes columnar buffers, array storage, typed views, record
+//! batches, builders, data types, bitmap helpers, config, and Arrow C Data
+//! Interface import and export helpers.
 //!
 //! Build arrays with `builder`, then create typed views from `array.ArrayData`.
 //!
@@ -54,6 +54,9 @@ pub const datatype = @import("datatype.zig");
 
 /// Offset buffer helpers for binary and list arrays.
 pub const offsets = @import("offsets.zig");
+
+/// Record batch schema and column storage.
+pub const record_batch = @import("record_batch.zig");
 
 /// Shared reference count abstraction.
 pub const refcount = @import("refcount.zig");
