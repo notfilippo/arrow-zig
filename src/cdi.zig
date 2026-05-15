@@ -6,12 +6,13 @@
 //! Export copies schemas into C Data Interface structs and retains exported
 //! array storage until the C release callback is invoked.
 //!
-//! Schema import copies C Data Interface schemas into owned `DataType` values.
-//! Array import consumes only the top level `ArrowArray` on success and keeps
-//! its release callback alive until imported data and buffers are dropped.
+//! Schema import copies C Data Interface schemas into owned `DataType`,
+//! `Field`, or `Schema` values. Array import consumes only the top level
+//! `ArrowArray` on success and keeps its release callback alive until imported
+//! data and buffers are dropped.
 //!
 //! Array stream import consumes the top level `ArrowArrayStream` on success.
-//! Exported streams are one pass and retain their source batches until release.
+//! Exported streams are one pass and retain their source arrays until release.
 //!
 //! Export one array to CDI, then import it back without copying buffers.
 //!
@@ -24,7 +25,7 @@
 //! defer imported.deinit();
 //! ```
 //!
-//! Stream export retains each batch until the stream is released or consumed by
+//! Stream export retains each array until the stream is released or consumed by
 //! `importArrayStream`.
 //!
 //! ```zig
@@ -35,9 +36,9 @@
 //! const imported_stream = try arrow.cdi.importArrayStream(allocator, &stream);
 //! defer imported_stream.deinit();
 //!
-//! while (try imported_stream.next()) |batch| {
-//!     defer batch.deinit();
-//!     const values = try arrow.array.NumericArray(i32).fromData(batch);
+//! while (try imported_stream.next()) |data| {
+//!     defer data.deinit();
+//!     const values = try arrow.array.NumericArray(i32).fromData(data);
 //!     _ = values;
 //! }
 //! ```
@@ -47,22 +48,22 @@ const Allocator = std.mem.Allocator;
 const array = @import("array.zig");
 const bitmap = @import("bitmap.zig");
 const buffer = @import("buffer.zig");
+const cdi_metadata = @import("cdi/metadata.zig");
 const cdi_types = @import("cdi/types.zig");
 const schema_import = @import("cdi/schema_import.zig");
 const checked = @import("checked.zig");
 const datatype = @import("datatype.zig");
+const schema_mod = @import("schema.zig");
 
 const ArrayData = array.ArrayData;
 const Buffer = buffer.Buffer;
 const ExternalOwnerHandle = buffer.ExternalOwnerHandle;
+const Schema = schema_mod.Schema;
 
 pub const schema_flag_dictionary_ordered = cdi_types.schema_flag_dictionary_ordered;
 pub const schema_flag_nullable = cdi_types.schema_flag_nullable;
 
-pub const SchemaExportError = Allocator.Error || datatype.ValidationError || error{
-    InvalidTimeUnit,
-    ValueOutOfRange,
-};
+pub const SchemaExportError = cdi_metadata.ExportError || datatype.ValidationError;
 pub const SchemaImportError = schema_import.Error;
 
 pub const ArrayExportError = SchemaExportError || array.ValidateError || checked.Error;
@@ -78,7 +79,7 @@ pub const ArrayImportError =
         ValueOutOfRange,
     };
 pub const SchemaArrayImportError = SchemaImportError || ArrayImportError;
-pub const ArrayStreamExportError = ArrayExportError || error{BatchTypeMismatch};
+pub const ArrayStreamExportError = ArrayExportError || error{ArrayTypeMismatch};
 pub const ArrayStreamImportError = SchemaImportError || ArrayImportError || error{
     ReleasedArrayStream,
     MissingCallback,
@@ -98,6 +99,7 @@ const SchemaPrivate = struct {
     allocator: Allocator,
     format: [:0]u8,
     name: ?[:0]u8,
+    metadata: ?[]u8,
     children_storage: []ArrowSchema,
     child_ptrs: []*ArrowSchema,
     dictionary: ?*ArrowSchema,
@@ -115,7 +117,7 @@ const ArrayPrivate = struct {
 const ArrayStreamPrivate = struct {
     allocator: Allocator,
     type: datatype.DataType,
-    batches: []*ArrayData,
+    arrays: []*ArrayData,
     index: usize,
     last_error: ?[*:0]const u8,
 };
@@ -133,7 +135,7 @@ pub const ImportedArrayStream = struct {
     type: datatype.DataType,
     stream: ArrowArrayStream,
 
-    /// Import the next batch. Returns null at end of stream.
+    /// Import the next array. Returns null at end of stream.
     /// The caller owns the returned `ArrayData` reference.
     pub fn next(self: *ImportedArrayStream) ArrayStreamImportError!?*ArrayData {
         if (arrayStreamIsReleased(&self.stream)) return error.ReleasedArrayStream;
@@ -159,13 +161,21 @@ pub const ImportedArrayStream = struct {
 /// Export a data type as an `ArrowSchema`.
 /// The caller must release `out` unless ownership is transferred.
 pub fn exportType(allocator: Allocator, ty: datatype.DataType, out: *ArrowSchema) SchemaExportError!void {
-    try exportSchemaNode(allocator, ty, null, true, out);
+    try exportSchemaNode(allocator, ty, null, true, &.{}, out);
 }
 
 /// Export a field as an `ArrowSchema`.
 /// The caller must release `out` unless ownership is transferred.
 pub fn exportField(allocator: Allocator, field: datatype.Field, out: *ArrowSchema) SchemaExportError!void {
-    try exportSchemaNode(allocator, field.type.*, field, field.nullable, out);
+    try exportSchemaNode(allocator, field.type.*, field, field.nullable, field.metadata, out);
+}
+
+/// Export a schema as a struct `ArrowSchema`.
+/// The caller must release `out` unless ownership is transferred.
+pub fn exportSchema(allocator: Allocator, input_schema: *const Schema, out: *ArrowSchema) SchemaExportError!void {
+    try input_schema.validate();
+    const ty = datatype.DataType{ .struct_ = .{ .fields = input_schema.fields() } };
+    try exportSchemaNode(allocator, ty, null, false, input_schema.metadata(), out);
 }
 
 /// Import a C Data Interface schema into an owned data type.
@@ -180,6 +190,12 @@ pub fn importType(allocator: Allocator, schema: *const ArrowSchema) SchemaImport
 /// `datatype.deinitOwnedField()` when done.
 pub fn importField(allocator: Allocator, schema: *const ArrowSchema) SchemaImportError!datatype.Field {
     return schema_import.importField(allocator, schema);
+}
+
+/// Import a C Data Interface schema into an owned schema.
+/// The schema is not consumed. Deinitialize the returned schema when done.
+pub fn importSchema(allocator: Allocator, schema: *const ArrowSchema) SchemaImportError!*Schema {
+    return schema_import.importSchema(allocator, schema);
 }
 
 /// Import a C Data Interface array by first importing its schema.
@@ -227,6 +243,7 @@ fn exportSchemaNode(
     ty: datatype.DataType,
     field: ?datatype.Field,
     nullable: bool,
+    metadata: []const datatype.MetadataEntry,
     out: *ArrowSchema,
 ) SchemaExportError!void {
     try ty.validate();
@@ -235,6 +252,9 @@ fn exportSchemaNode(
 
     const owned_name = if (field) |f| try allocator.dupeZ(u8, f.name) else null;
     errdefer if (owned_name) |name| allocator.free(name);
+
+    const owned_metadata = try cdi_metadata.exportOwned(allocator, metadata);
+    errdefer if (owned_metadata) |data| allocator.free(data);
 
     const child_count = ty.childCount();
     const n_children = try usizeToI64(child_count);
@@ -278,6 +298,7 @@ fn exportSchemaNode(
         .allocator = allocator,
         .format = format,
         .name = owned_name,
+        .metadata = owned_metadata,
         .children_storage = children_storage,
         .child_ptrs = child_ptrs,
         .dictionary = dictionary,
@@ -286,7 +307,7 @@ fn exportSchemaNode(
     out.* = .{
         .format = format.ptr,
         .name = if (owned_name) |name| name.ptr else null,
-        .metadata = null,
+        .metadata = if (owned_metadata) |data| data.ptr else null,
         .flags = flags,
         .n_children = n_children,
         .children = if (child_ptrs.len == 0) null else child_ptrs.ptr,
@@ -368,13 +389,13 @@ pub fn exportArray(allocator: Allocator, data: *ArrayData, out: *ArrowArray) Arr
 }
 
 /// Export a one pass C Data Interface array stream.
-/// The stream retains each batch until `release` is called.
-/// Each `get_next` call exports the next retained batch, then a released
+/// The stream retains each array until `release` is called.
+/// Each `get_next` call exports the next retained array, then a released
 /// `ArrowArray` marks end of stream.
 pub fn exportArrayStream(
     allocator: Allocator,
     ty: datatype.DataType,
-    batches: []const *ArrayData,
+    arrays: []const *ArrayData,
     out: *ArrowArrayStream,
 ) ArrayStreamExportError!void {
     try ty.validate();
@@ -382,18 +403,18 @@ pub fn exportArrayStream(
     var owned_type = try datatype.cloneOwned(allocator, ty);
     errdefer datatype.deinitOwned(allocator, &owned_type);
 
-    const retained_batches = try allocator.alloc(*ArrayData, batches.len);
-    errdefer allocator.free(retained_batches);
+    const retained_arrays = try allocator.alloc(*ArrayData, arrays.len);
+    errdefer allocator.free(retained_arrays);
 
     var retained_count: usize = 0;
     errdefer {
-        for (retained_batches[0..retained_count]) |batch| batch.deinit();
+        for (retained_arrays[0..retained_count]) |array_data| array_data.deinit();
     }
 
-    for (batches, 0..) |batch, i| {
-        try batch.validate();
-        if (!datatype.DataType.equals(ty, batch.type)) return error.BatchTypeMismatch;
-        retained_batches[i] = batch.retain();
+    for (arrays, 0..) |array_data, i| {
+        try array_data.validate();
+        if (!datatype.DataType.equals(ty, array_data.type)) return error.ArrayTypeMismatch;
+        retained_arrays[i] = array_data.retain();
         retained_count += 1;
     }
 
@@ -402,7 +423,7 @@ pub fn exportArrayStream(
     private.* = .{
         .allocator = allocator,
         .type = owned_type,
-        .batches = retained_batches,
+        .arrays = retained_arrays,
         .index = 0,
         .last_error = null,
     };
@@ -691,6 +712,7 @@ fn releaseSchema(schema: *ArrowSchema) callconv(.c) void {
     }
     allocator.free(private.format);
     if (private.name) |name| allocator.free(name);
+    if (private.metadata) |metadata| allocator.free(metadata);
     allocator.free(private.child_ptrs);
     allocator.free(private.children_storage);
     allocator.destroy(private);
@@ -732,9 +754,9 @@ fn streamGetNext(stream: *ArrowArrayStream, out: *ArrowArray) callconv(.c) c_int
     const private = streamPrivate(stream) orelse return stream_error_invalid;
     private.last_error = null;
 
-    if (private.index >= private.batches.len) return stream_success;
-    const batch = private.batches[private.index];
-    exportArray(private.allocator, batch, out) catch |err| {
+    if (private.index >= private.arrays.len) return stream_success;
+    const array_data = private.arrays[private.index];
+    exportArray(private.allocator, array_data, out) catch |err| {
         private.last_error = stream_last_error_callback_failed;
         return streamErrorCode(err);
     };
@@ -751,8 +773,8 @@ fn releaseArrayStream(stream: *ArrowArrayStream) callconv(.c) void {
     if (stream.release == null) return;
     const private: *ArrayStreamPrivate = @ptrCast(@alignCast(stream.private_data.?));
     const allocator = private.allocator;
-    for (private.batches) |batch| batch.deinit();
-    allocator.free(private.batches);
+    for (private.arrays) |array_data| array_data.deinit();
+    allocator.free(private.arrays);
     datatype.deinitOwned(allocator, &private.type);
     allocator.destroy(private);
     stream.release = null;
@@ -908,6 +930,7 @@ fn timeUnitCode(unit: datatype.TimeUnit) []const u8 {
 }
 
 test {
+    std.testing.refAllDecls(@import("cdi/metadata.zig"));
     std.testing.refAllDecls(@import("cdi/alloc_test.zig"));
     std.testing.refAllDecls(@import("cdi/array_test.zig"));
     std.testing.refAllDecls(@import("cdi/schema_test.zig"));

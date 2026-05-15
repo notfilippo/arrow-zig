@@ -12,7 +12,7 @@ const ArrowArray = cdi.ArrowArray;
 const ArrowArrayStream = cdi.ArrowArrayStream;
 const ArrowSchema = cdi.ArrowSchema;
 
-test "exportArrayStream yields schema batches and end" {
+test "exportArrayStream yields schema arrays and end" {
     const allocator = std.testing.allocator;
     const first = try int32Array(allocator, &.{ 1, 2 });
     defer first.deinit();
@@ -46,7 +46,7 @@ test "exportArrayStream yields schema batches and end" {
     try std.testing.expectEqual(@as(usize, 1), second.refCount());
 }
 
-test "importArrayStream consumes stream and imports batches" {
+test "importArrayStream consumes stream and imports arrays" {
     const allocator = std.testing.allocator;
     const first = try int32Array(allocator, &.{ 10, 20 });
     defer first.deinit();
@@ -78,7 +78,7 @@ test "importArrayStream consumes stream and imports batches" {
     try std.testing.expectEqual(@as(usize, 1), second.refCount());
 }
 
-test "exportArrayStream rejects mismatched batch type" {
+test "exportArrayStream rejects mismatched array type" {
     const allocator = std.testing.allocator;
     const first = try int32Array(allocator, &.{1});
     defer first.deinit();
@@ -87,7 +87,7 @@ test "exportArrayStream rejects mismatched batch type" {
 
     var stream: ArrowArrayStream = undefined;
     try std.testing.expectError(
-        error.BatchTypeMismatch,
+        error.ArrayTypeMismatch,
         cdi.exportArrayStream(allocator, .int32, &.{ first, second }, &stream),
     );
     try std.testing.expectEqual(@as(usize, 1), first.refCount());

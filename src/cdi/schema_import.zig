@@ -6,14 +6,16 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const cdi_types = @import("types.zig");
+const cdi_metadata = @import("metadata.zig");
 const datatype = @import("../datatype.zig");
+const schema_mod = @import("../schema.zig");
 
 const ArrowSchema = cdi_types.ArrowSchema;
 const schema_flag_dictionary_ordered = cdi_types.schema_flag_dictionary_ordered;
 const schema_flag_nullable = cdi_types.schema_flag_nullable;
 
 pub const Error =
-    Allocator.Error ||
+    cdi_metadata.ImportError ||
     datatype.ValidationError ||
     error{
         ReleasedSchema,
@@ -21,7 +23,6 @@ pub const Error =
         InvalidFormat,
         InvalidChildCount,
         InvalidDictionaryIndexType,
-        ValueOutOfRange,
     };
 
 pub fn importType(allocator: Allocator, schema: *const ArrowSchema) Error!datatype.DataType {
@@ -36,6 +37,26 @@ pub fn importField(allocator: Allocator, schema: *const ArrowSchema) Error!datat
     errdefer deinitImportedField(allocator, field);
     try field.type.validate();
     return field;
+}
+
+pub fn importSchema(allocator: Allocator, schema: *const ArrowSchema) Error!*schema_mod.Schema {
+    if (schema.release == null) return error.ReleasedSchema;
+    const format_ptr = schema.format orelse return error.MissingFormat;
+    if (!std.mem.eql(u8, std.mem.span(format_ptr), "+s")) return error.InvalidFormat;
+    if (schema.dictionary != null) return error.InvalidFormat;
+
+    const fields = try importSchemaFields(allocator, schema);
+    var fields_owned = true;
+    errdefer if (fields_owned) datatype.deinitOwnedFields(allocator, fields);
+
+    const schema_meta = try cdi_metadata.importOwned(allocator, schema.metadata);
+    var metadata_owned = true;
+    errdefer if (metadata_owned) datatype.deinitOwnedMetadata(allocator, schema_meta);
+
+    const out = try schema_mod.Schema.initOwned(allocator, fields, schema_meta);
+    fields_owned = false;
+    metadata_owned = false;
+    return out;
 }
 
 fn importTypeNode(allocator: Allocator, schema: *const ArrowSchema) Error!datatype.DataType {
@@ -199,21 +220,28 @@ fn importFieldNode(allocator: Allocator, schema: *const ArrowSchema) Error!datat
     errdefer allocator.free(name);
 
     const type_ptr = try allocator.create(datatype.DataType);
-    errdefer allocator.destroy(type_ptr);
+    var type_ptr_owned = false;
+    errdefer {
+        if (type_ptr_owned) datatype.deinitOwned(allocator, type_ptr);
+        allocator.destroy(type_ptr);
+    }
     type_ptr.* = ty;
     ty_owned = false;
+    type_ptr_owned = true;
+
+    const metadata = try cdi_metadata.importOwned(allocator, schema.metadata);
+    errdefer datatype.deinitOwnedMetadata(allocator, metadata);
 
     return .{
         .name = name,
         .type = type_ptr,
         .nullable = schema.flags & schema_flag_nullable != 0,
+        .metadata = metadata,
     };
 }
 
 fn deinitImportedField(allocator: Allocator, field: datatype.Field) void {
-    allocator.free(field.name);
-    datatype.deinitOwned(allocator, @constCast(field.type));
-    allocator.destroy(@constCast(field.type));
+    datatype.deinitOwnedField(allocator, field);
 }
 
 fn importUnionType(

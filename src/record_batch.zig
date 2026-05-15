@@ -3,72 +3,85 @@
 
 //! Record batch schema and column storage.
 //!
-//! A record batch owns a cloned struct schema and retained column references.
+//! A record batch is reference counted storage over a retained schema and
+//! retained column references.
 //! It can be converted to and from struct `ArrayData` for APIs that use Arrow
 //! arrays as the batch container.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const array_data = @import("array_data.zig");
+const bitmap = @import("bitmap.zig");
 const checked = @import("checked.zig");
 const datatype = @import("datatype.zig");
+const schema_mod = @import("schema.zig");
 const ArrayData = array_data.ArrayData;
+const Schema = schema_mod.Schema;
+const RefCount = @import("refcount.zig").RefCount;
 
-pub const Error = Allocator.Error || checked.Error || datatype.ValidationError || array_data.ValidateError || error{
+pub const Error = schema_mod.Error || checked.Error || array_data.ValidateError || error{
     FieldColumnCountMismatch,
     ColumnTypeMismatch,
     ColumnLengthMismatch,
     NotStructArray,
+    StructNullsUnsupported,
     OffsetOutOfBounds,
 };
 
 pub const RecordBatch = struct {
     allocator: Allocator,
-    schema: datatype.DataType,
+    schema: *Schema,
     columns: []*ArrayData,
     len: usize,
+    ref_count: RefCount,
 
-    /// Create a batch by cloning fields and retaining columns.
-    /// Caller keeps ownership of the supplied columns. Each column must have
+    /// Create a batch by retaining schema and columns.
+    /// Caller keeps ownership of the supplied inputs. Each column must have
     /// length `len`.
     pub fn initRetained(
+        allocator: Allocator,
+        batch_schema: *Schema,
+        len: usize,
+        columns: []const *ArrayData,
+    ) Error!*RecordBatch {
+        try validateColumns(batch_schema, columns, len);
+
+        const retained_schema = batch_schema.retain();
+        errdefer retained_schema.deinit();
+
+        const owned_columns = try retainColumns(allocator, columns);
+        errdefer releaseColumns(allocator, owned_columns);
+
+        const self = try allocator.create(RecordBatch);
+        self.* = .{
+            .allocator = allocator,
+            .schema = retained_schema,
+            .columns = owned_columns,
+            .len = len,
+            .ref_count = RefCount.init(1),
+        };
+        return self;
+    }
+
+    /// Create a batch from fields by constructing an empty metadata schema.
+    pub fn initFieldsRetained(
         allocator: Allocator,
         field_meta: []const datatype.Field,
         len: usize,
         columns: []const *ArrayData,
     ) Error!*RecordBatch {
-        try validateColumns(field_meta, columns, len);
-
-        var schema = try cloneSchema(allocator, field_meta);
-        errdefer datatype.deinitOwned(allocator, &schema);
-
-        const owned_columns = try allocator.alloc(*ArrayData, columns.len);
-        errdefer allocator.free(owned_columns);
-
-        var retained: usize = 0;
-        errdefer {
-            for (owned_columns[0..retained]) |column_data| column_data.deinit();
-        }
-        for (columns, 0..) |column_data, i| {
-            owned_columns[i] = column_data.retain();
-            retained += 1;
-        }
-
-        const self = try allocator.create(RecordBatch);
-        self.* = .{
-            .allocator = allocator,
-            .schema = schema,
-            .columns = owned_columns,
-            .len = len,
-        };
-        return self;
+        const batch_schema = try Schema.init(allocator, field_meta, &.{});
+        defer batch_schema.deinit();
+        return initRetained(allocator, batch_schema, len, columns);
     }
 
     /// Create a batch from struct storage.
     /// Sliced struct arrays become sliced columns in the batch.
+    /// Struct row nulls are rejected because batches have no row validity.
     pub fn fromStructData(allocator: Allocator, data: *const ArrayData) Error!*RecordBatch {
         if (data.type.id() != .struct_) return error.NotStructArray;
         try data.validate();
+        if (data.nullCount() != 0) return error.StructNullsUnsupported;
 
         const fields_meta = data.type.struct_.fields;
         const sliced_columns = try allocator.alloc(*ArrayData, data.children.len);
@@ -83,7 +96,7 @@ pub const RecordBatch = struct {
             sliced += 1;
         }
 
-        const batch = try initRetained(allocator, fields_meta, data.len, sliced_columns);
+        const batch = try initFieldsRetained(allocator, fields_meta, data.len, sliced_columns);
         for (sliced_columns) |column_data| column_data.deinit();
         return batch;
     }
@@ -91,9 +104,10 @@ pub const RecordBatch = struct {
     /// Convert the batch to struct storage.
     /// The returned array has no validity bitmap, so every row is valid.
     pub fn toStructData(self: *const RecordBatch) Error!*ArrayData {
+        const ty = datatype.DataType{ .struct_ = .{ .fields = self.schema.fields() } };
         return ArrayData.initRetained(
             self.allocator,
-            self.schema,
+            ty,
             self.len,
             0,
             0,
@@ -104,16 +118,15 @@ pub const RecordBatch = struct {
     }
 
     pub fn fieldCount(self: *const RecordBatch) usize {
-        return self.columns.len;
+        return self.schema.fieldCount();
     }
 
     pub fn fields(self: *const RecordBatch) []const datatype.Field {
-        return self.schema.struct_.fields;
+        return self.schema.fields();
     }
 
     pub fn field(self: *const RecordBatch, index: usize) ?datatype.Field {
-        if (index >= self.fields().len) return null;
-        return self.fields()[index];
+        return self.schema.field(index);
     }
 
     pub fn column(self: *const RecordBatch, index: usize) ?*const ArrayData {
@@ -128,30 +141,53 @@ pub const RecordBatch = struct {
         return null;
     }
 
+    pub fn retain(self: *RecordBatch) *RecordBatch {
+        _ = self.ref_count.fetchAdd(1, .monotonic);
+        return self;
+    }
+
+    pub fn refCount(self: *const RecordBatch) usize {
+        return self.ref_count.load(.monotonic);
+    }
+
     pub fn deinit(self: *RecordBatch) void {
+        if (self.ref_count.fetchSub(1, .acq_rel) != 1) return;
         const allocator = self.allocator;
-        for (self.columns) |column_data| column_data.deinit();
-        allocator.free(self.columns);
-        datatype.deinitOwned(allocator, &self.schema);
+        releaseColumns(allocator, self.columns);
+        self.schema.deinit();
         allocator.destroy(self);
     }
 };
 
-fn cloneSchema(allocator: Allocator, fields: []const datatype.Field) Allocator.Error!datatype.DataType {
-    return datatype.cloneOwned(allocator, .{ .struct_ = .{ .fields = fields } });
-}
-
-fn validateColumns(fields: []const datatype.Field, columns: []const *ArrayData, len: usize) Error!void {
-    if (fields.len != columns.len) return error.FieldColumnCountMismatch;
-
-    const schema = datatype.DataType{ .struct_ = .{ .fields = fields } };
-    try schema.validate();
+fn validateColumns(batch_schema: *const Schema, columns: []const *ArrayData, len: usize) Error!void {
+    try batch_schema.validate();
+    if (batch_schema.fieldCount() != columns.len) return error.FieldColumnCountMismatch;
 
     for (columns, 0..) |column_data, i| {
         try column_data.validate();
-        if (!datatype.DataType.equals(fields[i].type.*, column_data.type)) return error.ColumnTypeMismatch;
+        if (!datatype.DataType.equals(batch_schema.field(i).?.type.*, column_data.type)) return error.ColumnTypeMismatch;
         if (column_data.len != len) return error.ColumnLengthMismatch;
     }
+}
+
+fn retainColumns(allocator: Allocator, columns: []const *ArrayData) Allocator.Error![]*ArrayData {
+    const owned_columns = try allocator.alloc(*ArrayData, columns.len);
+    errdefer allocator.free(owned_columns);
+
+    var retained: usize = 0;
+    errdefer {
+        for (owned_columns[0..retained]) |column_data| column_data.deinit();
+    }
+    for (columns, 0..) |column_data, i| {
+        owned_columns[i] = column_data.retain();
+        retained += 1;
+    }
+    return owned_columns;
+}
+
+fn releaseColumns(allocator: Allocator, columns: []*ArrayData) void {
+    for (columns) |column_data| column_data.deinit();
+    allocator.free(columns);
 }
 
 fn numberArray(allocator: Allocator, values: []const i32) !*ArrayData {
@@ -170,7 +206,7 @@ fn boolArray(allocator: Allocator, values: []const bool) !*ArrayData {
     return b.finish();
 }
 
-test "RecordBatch retains columns and clones schema" {
+test "RecordBatch retains schema and columns" {
     const allocator = std.testing.allocator;
     const numbers = try numberArray(allocator, &.{ 10, 20, 30 });
     defer numbers.deinit();
@@ -184,19 +220,32 @@ test "RecordBatch retains columns and clones schema" {
         .{ .name = "flag", .type = &flag_ty, .nullable = false },
     };
 
-    const batch = try RecordBatch.initRetained(allocator, &fields_meta, 3, &.{ numbers, flags });
-    defer batch.deinit();
+    const batch_schema = try Schema.init(allocator, &fields_meta, &.{});
+    defer batch_schema.deinit();
 
-    try std.testing.expectEqual(@as(usize, 3), batch.len);
-    try std.testing.expectEqual(@as(usize, 2), batch.fieldCount());
-    try std.testing.expectEqual(@as(usize, 2), numbers.refCount());
-    try std.testing.expectEqual(@as(usize, 2), flags.refCount());
-    try std.testing.expect(batch.fields()[0].type != &number_ty);
-    try std.testing.expectEqualStrings("number", batch.field(0).?.name);
-    try std.testing.expect(!batch.field(1).?.nullable);
-    try std.testing.expect(batch.column(3) == null);
-    try std.testing.expect(batch.columnNamed("flag") != null);
-    try std.testing.expect(batch.columnNamed("missing") == null);
+    {
+        const batch = try RecordBatch.initRetained(allocator, batch_schema, 3, &.{ numbers, flags });
+        defer batch.deinit();
+
+        try std.testing.expectEqual(@as(usize, 3), batch.len);
+        try std.testing.expectEqual(@as(usize, 2), batch.fieldCount());
+        try std.testing.expectEqual(@as(usize, 1), batch.refCount());
+        try std.testing.expectEqual(@as(usize, 2), batch_schema.refCount());
+        try std.testing.expectEqual(@as(usize, 2), numbers.refCount());
+        try std.testing.expectEqual(@as(usize, 2), flags.refCount());
+        try std.testing.expect(batch.fields()[0].type != &number_ty);
+        try std.testing.expectEqualStrings("number", batch.field(0).?.name);
+        try std.testing.expect(!batch.field(1).?.nullable);
+        try std.testing.expect(batch.column(3) == null);
+        try std.testing.expect(batch.columnNamed("flag") != null);
+        try std.testing.expect(batch.columnNamed("missing") == null);
+
+        _ = batch.retain();
+        try std.testing.expectEqual(@as(usize, 2), batch.refCount());
+        batch.deinit();
+        try std.testing.expectEqual(@as(usize, 1), batch.refCount());
+    }
+    try std.testing.expectEqual(@as(usize, 1), batch_schema.refCount());
 }
 
 test "RecordBatch converts to struct data" {
@@ -212,7 +261,7 @@ test "RecordBatch converts to struct data" {
         .{ .name = "number", .type = &number_ty },
         .{ .name = "flag", .type = &flag_ty },
     };
-    const batch = try RecordBatch.initRetained(allocator, &fields_meta, 3, &.{ numbers, flags });
+    const batch = try RecordBatch.initFieldsRetained(allocator, &fields_meta, 3, &.{ numbers, flags });
     defer batch.deinit();
 
     const struct_data = try batch.toStructData();
@@ -229,7 +278,7 @@ test "RecordBatch converts to struct data" {
 
 test "RecordBatch supports zero column batches" {
     const allocator = std.testing.allocator;
-    const batch = try RecordBatch.initRetained(allocator, &.{}, 4, &.{});
+    const batch = try RecordBatch.initFieldsRetained(allocator, &.{}, 4, &.{});
     defer batch.deinit();
 
     try std.testing.expectEqual(@as(usize, 4), batch.len);
@@ -294,17 +343,38 @@ test "RecordBatch rejects inconsistent inputs" {
 
     try std.testing.expectError(
         error.FieldColumnCountMismatch,
-        RecordBatch.initRetained(allocator, &number_fields, 2, &.{ numbers, flags }),
+        RecordBatch.initFieldsRetained(allocator, &number_fields, 2, &.{ numbers, flags }),
     );
     try std.testing.expectError(
         error.ColumnTypeMismatch,
-        RecordBatch.initRetained(allocator, &flag_fields, 2, &.{numbers}),
+        RecordBatch.initFieldsRetained(allocator, &flag_fields, 2, &.{numbers}),
     );
     try std.testing.expectError(
         error.ColumnLengthMismatch,
-        RecordBatch.initRetained(allocator, &.{ number_fields[0], number_fields[0] }, 2, &.{ numbers, short }),
+        RecordBatch.initFieldsRetained(allocator, &.{ number_fields[0], number_fields[0] }, 2, &.{ numbers, short }),
     );
     try std.testing.expectError(error.NotStructArray, RecordBatch.fromStructData(allocator, numbers));
+
+    var validity_builder = bitmap.BitmapBuilder.init();
+    defer validity_builder.deinit();
+    try validity_builder.append(allocator, true);
+    try validity_builder.append(allocator, false);
+    const validity = try validity_builder.finish(allocator);
+    defer validity.deinit();
+
+    const nullable_struct_ty = datatype.DataType{ .struct_ = .{ .fields = &number_fields } };
+    const nullable_struct = try ArrayData.initRetained(
+        allocator,
+        nullable_struct_ty,
+        2,
+        0,
+        1,
+        &.{validity},
+        &.{numbers},
+        null,
+    );
+    defer nullable_struct.deinit();
+    try std.testing.expectError(error.StructNullsUnsupported, RecordBatch.fromStructData(allocator, nullable_struct));
 }
 
 test "RecordBatch allocation failures" {
@@ -325,7 +395,7 @@ fn checkRecordBatchAllocationFailure(allocator: Allocator) !void {
         .{ .name = "flag", .type = &flag_ty },
     };
 
-    const batch = try RecordBatch.initRetained(allocator, &fields_meta, 3, &.{ numbers, flags });
+    const batch = try RecordBatch.initFieldsRetained(allocator, &fields_meta, 3, &.{ numbers, flags });
     defer batch.deinit();
 
     const struct_data = try batch.toStructData();

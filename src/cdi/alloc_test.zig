@@ -6,6 +6,7 @@ const array = @import("../array.zig");
 const buffer = @import("../buffer.zig");
 const cdi = @import("../cdi.zig");
 const datatype = @import("../datatype.zig");
+const schema_mod = @import("../schema.zig");
 
 const ArrayData = array.ArrayData;
 const ArrowArray = cdi.ArrowArray;
@@ -19,6 +20,14 @@ test "importType handles allocation failures" {
 
 test "importField handles allocation failures" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkImportFieldAllocationFailure, .{});
+}
+
+test "importSchema handles allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkImportSchemaAllocationFailure, .{});
+}
+
+test "exportSchema handles allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkExportSchemaAllocationFailure, .{});
 }
 
 test "importArrayFromSchema handles allocation failures" {
@@ -65,6 +74,31 @@ fn checkImportFieldAllocationFailure(allocator: std.mem.Allocator) !void {
     defer datatype.deinitOwnedField(allocator, imported);
 
     try imported.type.validate();
+}
+
+fn checkImportSchemaAllocationFailure(allocator: std.mem.Allocator) !void {
+    const setup = std.testing.allocator;
+    const source = try testArrowSchema(setup);
+    defer source.deinit();
+
+    var exported: ArrowSchema = undefined;
+    try cdi.exportSchema(setup, source, &exported);
+    defer if (exported.release) |release| release(&exported);
+
+    const imported = try cdi.importSchema(allocator, &exported);
+    defer imported.deinit();
+
+    try imported.validate();
+}
+
+fn checkExportSchemaAllocationFailure(allocator: std.mem.Allocator) !void {
+    const setup = std.testing.allocator;
+    const source = try testArrowSchema(setup);
+    defer source.deinit();
+
+    var exported: ArrowSchema = undefined;
+    try cdi.exportSchema(allocator, source, &exported);
+    defer if (exported.release) |release| release(&exported);
 }
 
 fn checkImportArrayFromSchemaAllocationFailure(allocator: std.mem.Allocator) !void {
@@ -151,6 +185,20 @@ fn binaryArray(allocator: std.mem.Allocator) !*ArrayData {
     values.freeze();
 
     return try ArrayData.initOwned(allocator, .binary, 2, 0, 0, &.{ null, offsets, values }, &.{}, null);
+}
+
+fn testArrowSchema(allocator: std.mem.Allocator) !*schema_mod.Schema {
+    const value_ty: datatype.DataType = .int32;
+    const field_metadata = [_]schema_mod.MetadataEntry{
+        .{ .key = "unit", .value = "ms" },
+    };
+    const fields = [_]datatype.Field{
+        .{ .name = "number", .type = &value_ty, .metadata = &field_metadata },
+    };
+    const metadata = [_]schema_mod.MetadataEntry{
+        .{ .key = "source", .value = "alloc" },
+    };
+    return schema_mod.Schema.init(allocator, &fields, &metadata);
 }
 
 fn dictionaryListArray(allocator: std.mem.Allocator) !*ArrayData {

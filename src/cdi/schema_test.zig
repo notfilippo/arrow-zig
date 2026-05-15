@@ -4,12 +4,16 @@
 const std = @import("std");
 const cdi = @import("../cdi.zig");
 const datatype = @import("../datatype.zig");
+const schema_mod = @import("../schema.zig");
 
 const ArrowSchema = cdi.ArrowSchema;
+const MetadataEntry = schema_mod.MetadataEntry;
 
 const exportField = cdi.exportField;
+const exportSchema = cdi.exportSchema;
 const exportType = cdi.exportType;
 const importField = cdi.importField;
+const importSchema = cdi.importSchema;
 const importType = cdi.importType;
 const schemaIsReleased = cdi.schemaIsReleased;
 const schema_flag_dictionary_ordered = cdi.schema_flag_dictionary_ordered;
@@ -106,6 +110,7 @@ test "importField round trips field schema" {
         .name = "values",
         .type = &list_ty,
         .nullable = false,
+        .metadata = &.{.{ .key = "field_key", .value = "field_value" }},
     };
 
     var schema: ArrowSchema = undefined;
@@ -116,7 +121,60 @@ test "importField round trips field schema" {
     defer datatype.deinitOwnedField(allocator, imported);
 
     try std.testing.expect(datatype.Field.equals(field, imported));
+    try std.testing.expectEqualStrings("field_value", imported.metadata[0].value);
     try std.testing.expect(!schemaIsReleased(&schema));
+}
+
+test "importSchema round trips schema metadata" {
+    const allocator = std.testing.allocator;
+    const number_ty: datatype.DataType = .int32;
+    const text_ty: datatype.DataType = .utf8;
+    const field_metadata = [_]MetadataEntry{
+        .{ .key = "unit", .value = "ms" },
+    };
+    const fields = [_]datatype.Field{
+        .{ .name = "number", .type = &number_ty, .nullable = false, .metadata = &field_metadata },
+        .{ .name = "text", .type = &text_ty },
+    };
+    const metadata = [_]MetadataEntry{
+        .{ .key = "source", .value = "test" },
+        .{ .key = "source", .value = "duplicate" },
+    };
+    const original = try schema_mod.Schema.init(allocator, &fields, &metadata);
+    defer original.deinit();
+
+    var exported: ArrowSchema = undefined;
+    try exportSchema(allocator, original, &exported);
+    defer exported.release.?(&exported);
+
+    try std.testing.expectEqualStrings("+s", std.mem.span(exported.format.?));
+    try std.testing.expectEqual(@as(i64, 0), exported.flags);
+    try std.testing.expect(exported.metadata != null);
+    try std.testing.expect(exported.children.?[0].metadata != null);
+
+    const imported = try importSchema(allocator, &exported);
+    defer imported.deinit();
+
+    try std.testing.expect(schema_mod.Schema.equals(original, imported));
+    try std.testing.expectEqualStrings("test", imported.metadataValue("source").?);
+    try std.testing.expectEqualStrings("ms", imported.fieldNamed("number").?.metadata[0].value);
+}
+
+test "importSchema accepts absent and empty metadata" {
+    const allocator = std.testing.allocator;
+
+    var null_metadata = minimalSchema("+s");
+    const imported_null = try importSchema(allocator, &null_metadata);
+    defer imported_null.deinit();
+    try std.testing.expectEqual(@as(usize, 0), imported_null.metadata().len);
+
+    var empty_metadata_bytes: [4]u8 = undefined;
+    std.mem.writeInt(i32, empty_metadata_bytes[0..4], 0, .native);
+    var empty_metadata = minimalSchema("+s");
+    empty_metadata.metadata = empty_metadata_bytes[0..].ptr;
+    const imported_empty = try importSchema(allocator, &empty_metadata);
+    defer imported_empty.deinit();
+    try std.testing.expectEqual(@as(usize, 0), imported_empty.metadata().len);
 }
 
 test "importType round trips nested and dictionary schemas" {
@@ -198,6 +256,35 @@ test "importType rejects invalid schemas" {
     duplicate_union.n_children = 2;
     duplicate_union.children = &children;
     try std.testing.expectError(error.InvalidUnionTypeIds, importType(allocator, &duplicate_union));
+}
+
+test "importSchema rejects malformed metadata" {
+    const allocator = std.testing.allocator;
+
+    var negative_count_bytes: [4]u8 = undefined;
+    std.mem.writeInt(i32, negative_count_bytes[0..4], -1, .native);
+    var negative_count = minimalSchema("+s");
+    negative_count.metadata = negative_count_bytes[0..].ptr;
+    try std.testing.expectError(error.InvalidMetadata, importSchema(allocator, &negative_count));
+
+    var negative_len_bytes: [8]u8 = undefined;
+    std.mem.writeInt(i32, negative_len_bytes[0..4], 1, .native);
+    std.mem.writeInt(i32, negative_len_bytes[4..8], -1, .native);
+    var negative_len = minimalSchema("+s");
+    negative_len.metadata = negative_len_bytes[0..].ptr;
+    try std.testing.expectError(error.InvalidMetadata, importSchema(allocator, &negative_len));
+}
+
+test "importSchema rejects non schema layouts" {
+    const allocator = std.testing.allocator;
+
+    var scalar = minimalSchema("i");
+    try std.testing.expectError(error.InvalidFormat, importSchema(allocator, &scalar));
+
+    var dictionary_schema = minimalSchema("u");
+    var schema_with_dictionary = minimalSchema("+s");
+    schema_with_dictionary.dictionary = &dictionary_schema;
+    try std.testing.expectError(error.InvalidFormat, importSchema(allocator, &schema_with_dictionary));
 }
 
 fn noopSchemaRelease(schema: *ArrowSchema) callconv(.c) void {

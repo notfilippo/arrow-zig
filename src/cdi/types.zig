@@ -9,7 +9,7 @@ pub const schema_flag_nullable: i64 = 2;
 pub const ArrowSchema = extern struct {
     format: ?[*:0]const u8,
     name: ?[*:0]const u8,
-    metadata: ?[*:0]const u8,
+    metadata: ?[*]const u8,
     flags: i64,
     n_children: i64,
     children: ?[*]*ArrowSchema,
