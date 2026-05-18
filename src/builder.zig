@@ -36,6 +36,7 @@ const boolean = @import("builder_boolean.zig");
 const binary = @import("builder_binary.zig");
 const list = @import("builder_list.zig");
 const dictionary = @import("builder_dictionary.zig");
+const structs = @import("builder_struct.zig");
 const base = @import("builder_base.zig");
 
 pub const kMinBuilderCapacity = base.kMinBuilderCapacity;
@@ -58,7 +59,13 @@ pub const LargeListBuilder = list.LargeListBuilder;
 pub const FixedSizeListBuilder = list.FixedSizeListBuilder;
 pub const DictionaryOptions = dictionary.DictionaryOptions;
 pub const DictionaryBuilderError = dictionary.DictionaryBuilderError;
+pub const StructFieldOptions = structs.FieldOptions;
+pub const StructBuilderError = structs.StructBuilderError;
 
 pub fn DictionaryBuilder(comptime Index: type) type {
     return dictionary.DictionaryBuilder(Index);
+}
+
+pub fn StructBuilder(comptime ChildBuilders: type) type {
+    return structs.StructBuilder(ChildBuilders);
 }
