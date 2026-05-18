@@ -1,21 +1,21 @@
 // Copyright 2026 Filippo Rossi
 // SPDX-License-Identifier: Apache-2.0
 
-//! Fixed width typed array views.
+//! Fixed width primitive array types.
 //!
-//! Includes booleans, numeric physical types, and logical temporal views backed
+//! Includes booleans, numeric physical types, and logical temporal arrays backed
 //! by int32 or int64 storage.
 
 const std = @import("std");
 const datatype = @import("datatype.zig");
 const bitmap = @import("bitmap.zig");
 const array_data = @import("array_data.zig");
-const common = @import("array_view_common.zig");
+const common = @import("array_base.zig");
 const ArrayData = array_data.ArrayData;
 
-pub const ArrayKind = common.ArrayKind;
+pub const FixedWidthKind = common.FixedWidthKind;
 
-fn valueTypeFor(comptime kind: ArrayKind) type {
+fn valueTypeFor(comptime kind: FixedWidthKind) type {
     return switch (kind) {
         .bool => bool,
         .numeric => |T| T,
@@ -24,7 +24,7 @@ fn valueTypeFor(comptime kind: ArrayKind) type {
     };
 }
 
-fn dataTypeMatchesKind(comptime kind: ArrayKind, ty: datatype.DataType) bool {
+fn dataTypeMatchesKind(comptime kind: FixedWidthKind, ty: datatype.DataType) bool {
     return switch (kind) {
         .bool => ty == .bool,
         .numeric => |T| ty.id() == common.typeIdFor(T),
@@ -43,7 +43,7 @@ fn dataTypeMatchesKind(comptime kind: ArrayKind, ty: datatype.DataType) bool {
     };
 }
 
-pub fn FixedWidthView(comptime kind: ArrayKind) type {
+pub fn FixedWidthArray(comptime kind: FixedWidthKind) type {
     const VT = valueTypeFor(kind);
 
     return struct {
@@ -154,16 +154,16 @@ fn readValue(comptime T: type, bytes: *const [@sizeOf(T)]u8) T {
 
 pub fn NumericArray(comptime T: type) type {
     _ = common.typeIdFor(T);
-    return FixedWidthView(.{ .numeric = T });
+    return FixedWidthArray(.{ .numeric = T });
 }
 
-pub const BooleanArray = FixedWidthView(.bool);
-pub const Date32Array = FixedWidthView(.date32);
-pub const Date64Array = FixedWidthView(.date64);
-pub const Time32Array = FixedWidthView(.time32);
-pub const Time64Array = FixedWidthView(.time64);
-pub const TimestampArray = FixedWidthView(.timestamp);
-pub const DurationArray = FixedWidthView(.duration);
+pub const BooleanArray = FixedWidthArray(.bool);
+pub const Date32Array = FixedWidthArray(.date32);
+pub const Date64Array = FixedWidthArray(.date64);
+pub const Time32Array = FixedWidthArray(.time32);
+pub const Time64Array = FixedWidthArray(.time64);
+pub const TimestampArray = FixedWidthArray(.timestamp);
+pub const DurationArray = FixedWidthArray(.duration);
 
 test "NumericArray basic slices and ownership" {
     const bld = @import("builder.zig");

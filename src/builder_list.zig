@@ -33,7 +33,7 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
 
     return struct {
         const Self = @This();
-        pub const Array = array.ListView(kind);
+        pub const Array = array.VarListArray(kind);
         pub const Child = ChildBuilder;
         pub const Error = ListBuilderError(ChildBuilder);
 

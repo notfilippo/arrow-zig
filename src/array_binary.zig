@@ -10,7 +10,7 @@ const std = @import("std");
 const datatype = @import("datatype.zig");
 const offset_data = @import("offsets.zig");
 const array_data = @import("array_data.zig");
-const common = @import("array_view_common.zig");
+const common = @import("array_base.zig");
 const Buffer = @import("buffer.zig").Buffer;
 const ArrayData = array_data.ArrayData;
 
@@ -37,7 +37,7 @@ fn dataTypeMatches(comptime kind: VarBinaryKind, ty: datatype.DataType) bool {
     };
 }
 
-pub fn VarBinaryView(comptime kind: VarBinaryKind) type {
+pub fn VarBinaryArray(comptime kind: VarBinaryKind) type {
     const Offset = offsetTypeFor(kind);
 
     return struct {
@@ -117,10 +117,10 @@ pub fn VarBinaryView(comptime kind: VarBinaryKind) type {
     };
 }
 
-pub const BinaryArray = VarBinaryView(.binary);
-pub const Utf8Array = VarBinaryView(.utf8);
-pub const LargeBinaryArray = VarBinaryView(.large_binary);
-pub const LargeUtf8Array = VarBinaryView(.large_utf8);
+pub const BinaryArray = VarBinaryArray(.binary);
+pub const Utf8Array = VarBinaryArray(.utf8);
+pub const LargeBinaryArray = VarBinaryArray(.large_binary);
+pub const LargeUtf8Array = VarBinaryArray(.large_utf8);
 
 test "BinaryArray reads ranges and slices" {
     const allocator = std.testing.allocator;

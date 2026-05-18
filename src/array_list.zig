@@ -1,7 +1,7 @@
 // Copyright 2026 Filippo Rossi
 // SPDX-License-Identifier: Apache-2.0
 
-//! List and large list array views.
+//! List and large list array types.
 //!
 //! List values are represented by ranges into a single child array. Owned value
 //! access returns retained child slices.
@@ -10,8 +10,8 @@ const std = @import("std");
 const datatype = @import("datatype.zig");
 const offset_data = @import("offsets.zig");
 const array_data = @import("array_data.zig");
-const fixed_view = @import("array_fixed_view.zig");
-const common = @import("array_view_common.zig");
+const primitive = @import("array_primitive.zig");
+const common = @import("array_base.zig");
 const Buffer = @import("buffer.zig").Buffer;
 const ArrayData = array_data.ArrayData;
 
@@ -36,7 +36,7 @@ fn dataTypeMatches(comptime kind: ListKind, ty: datatype.DataType) bool {
 
 pub const ValueRange = offset_data.ValueRange;
 
-pub fn ListView(comptime kind: ListKind) type {
+pub fn VarListArray(comptime kind: ListKind) type {
     const Offset = offsetTypeFor(kind);
 
     return struct {
@@ -119,8 +119,8 @@ pub fn ListView(comptime kind: ListKind) type {
     };
 }
 
-pub const ListArray = ListView(.list);
-pub const LargeListArray = ListView(.large_list);
+pub const ListArray = VarListArray(.list);
+pub const LargeListArray = VarListArray(.large_list);
 
 test "ListArray value ranges and owned values" {
     const allocator = std.testing.allocator;
@@ -154,7 +154,7 @@ test "ListArray value ranges and owned values" {
 
     const values = try arr.valueOwned(2);
     defer values.deinit();
-    const values_arr = try fixed_view.NumericArray(i32).fromData(values);
+    const values_arr = try primitive.NumericArray(i32).fromData(values);
     try std.testing.expectEqual(@as(usize, 3), values_arr.len);
 
     const sliced_owned = try arr.slice(1, 2).sliceOwned(0, 2);

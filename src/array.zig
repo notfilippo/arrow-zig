@@ -1,13 +1,17 @@
 // Copyright 2026 Filippo Rossi
 // SPDX-License-Identifier: Apache-2.0
 
-//! Array storage and typed array view facade.
+//! Array storage and typed array facade.
 //!
 //! `ArrayData` owns the Arrow layout pieces. Typed arrays such as `Int32Array`,
-//! `BinaryArray`, and `ListArray` are small views over retained storage.
+//! `BinaryArray`, and `ListArray` are small structs over retained storage.
 
 const array_data = @import("array_data.zig");
-const array_view = @import("array_view.zig");
+const base = @import("array_base.zig");
+const prim = @import("array_primitive.zig");
+const binary = @import("array_binary.zig");
+const list = @import("array_list.zig");
+const nested = @import("array_nested.zig");
 
 /// Reference counted array storage.
 pub const ArrayData = array_data.ArrayData;
@@ -21,48 +25,48 @@ pub const InitError = array_data.InitError;
 /// Error set for storage validation.
 pub const ValidateError = array_data.ValidateError;
 
-/// Compile time kind for fixed width array views.
-pub const ArrayKind = array_view.ArrayKind;
+/// Compile time kind for fixed width arrays.
+pub const FixedWidthKind = base.FixedWidthKind;
 
-/// Compile time kind for list array views.
-pub const ListKind = array_view.ListKind;
+/// Compile time kind for list arrays.
+pub const ListKind = list.ListKind;
 
-/// Error set for non owning view slices.
-pub const SliceError = array_view.SliceError;
+/// Error set for non owning array slices.
+pub const SliceError = base.SliceError;
 
 /// Offset and length pair for list values.
-pub const ValueRange = array_view.ValueRange;
+pub const ValueRange = list.ValueRange;
 
-/// Compile time kind for variable width binary views.
-pub const VarBinaryKind = array_view.VarBinaryKind;
+/// Compile time kind for variable width binary arrays.
+pub const VarBinaryKind = binary.VarBinaryKind;
 
-/// Error set for creating typed views from storage.
-pub const ViewError = array_view.ViewError;
+/// Error set for creating typed arrays from storage.
+pub const ViewError = base.ViewError;
 
-pub const BooleanArray = array_view.BooleanArray;
-pub const Date32Array = array_view.Date32Array;
-pub const Date64Array = array_view.Date64Array;
-pub const Time32Array = array_view.Time32Array;
-pub const Time64Array = array_view.Time64Array;
-pub const TimestampArray = array_view.TimestampArray;
-pub const DurationArray = array_view.DurationArray;
-pub const BinaryArray = array_view.BinaryArray;
-pub const Utf8Array = array_view.Utf8Array;
-pub const LargeBinaryArray = array_view.LargeBinaryArray;
-pub const LargeUtf8Array = array_view.LargeUtf8Array;
-pub const ListArray = array_view.ListArray;
-pub const LargeListArray = array_view.LargeListArray;
-pub const StructArray = array_view.StructArray;
+pub const BooleanArray = prim.BooleanArray;
+pub const Date32Array = prim.Date32Array;
+pub const Date64Array = prim.Date64Array;
+pub const Time32Array = prim.Time32Array;
+pub const Time64Array = prim.Time64Array;
+pub const TimestampArray = prim.TimestampArray;
+pub const DurationArray = prim.DurationArray;
+pub const BinaryArray = binary.BinaryArray;
+pub const Utf8Array = binary.Utf8Array;
+pub const LargeBinaryArray = binary.LargeBinaryArray;
+pub const LargeUtf8Array = binary.LargeUtf8Array;
+pub const ListArray = list.ListArray;
+pub const LargeListArray = list.LargeListArray;
+pub const StructArray = nested.StructArray;
 
-pub const dataTypeAcceptsZigType = array_view.dataTypeAcceptsZigType;
-pub const FixedWidthView = array_view.FixedWidthView;
-pub const ListView = array_view.ListView;
-pub const VarBinaryView = array_view.VarBinaryView;
+pub const dataTypeAcceptsZigType = base.dataTypeAcceptsZigType;
+pub const FixedWidthArray = prim.FixedWidthArray;
+pub const VarListArray = list.VarListArray;
+pub const VarBinaryArray = binary.VarBinaryArray;
 
 pub fn NumericArray(comptime T: type) type {
-    return array_view.NumericArray(T);
+    return prim.NumericArray(T);
 }
 
 pub fn typeIdFor(comptime T: type) @import("datatype.zig").TypeId {
-    return array_view.typeIdFor(T);
+    return base.typeIdFor(T);
 }

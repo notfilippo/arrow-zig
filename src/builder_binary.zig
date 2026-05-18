@@ -26,7 +26,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
 
     return struct {
         const Self = @This();
-        pub const Array = array.VarBinaryView(kind);
+        pub const Array = array.VarBinaryArray(kind);
         pub const Error = BinaryBuilderError;
 
         allocator: Allocator,

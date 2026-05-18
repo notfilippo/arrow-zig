@@ -1,10 +1,10 @@
 // Copyright 2026 Filippo Rossi
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shared helpers for typed array views.
+//! Base helpers for typed Arrow arrays.
 //!
-//! This module contains type matching, null count lookup, and slice bound
-//! helpers used by fixed width, binary, list, and struct views.
+//! Type matching, null count lookup, and slice bound helpers shared by
+//! primitive, binary, list, and struct arrays.
 
 const datatype = @import("datatype.zig");
 const bitmap = @import("bitmap.zig");
@@ -53,7 +53,7 @@ pub fn dataTypeAcceptsZigType(comptime T: type, ty: datatype.DataType) bool {
     };
 }
 
-pub const ArrayKind = union(enum) {
+pub const FixedWidthKind = union(enum) {
     bool,
     numeric: type,
     date32,
