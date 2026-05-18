@@ -56,6 +56,7 @@ pub const LargeBinaryArray = binary.LargeBinaryArray;
 pub const LargeUtf8Array = binary.LargeUtf8Array;
 pub const ListArray = list.ListArray;
 pub const LargeListArray = list.LargeListArray;
+pub const FixedSizeListArray = list.FixedSizeListArray;
 pub const StructArray = nested.StructArray;
 
 pub const dataTypeAcceptsZigType = base.dataTypeAcceptsZigType;

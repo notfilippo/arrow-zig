@@ -54,3 +54,4 @@ pub const VarListBuilder = list.VarListBuilder;
 pub const ListBuilderError = list.ListBuilderError;
 pub const ListBuilder = list.ListBuilder;
 pub const LargeListBuilder = list.LargeListBuilder;
+pub const FixedSizeListBuilder = list.FixedSizeListBuilder;

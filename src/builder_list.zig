@@ -210,6 +210,184 @@ pub fn LargeListBuilder(comptime ChildBuilder: type) type {
     return VarListBuilder(.large_list, ChildBuilder);
 }
 
+pub fn FixedSizeListBuilder(comptime ChildBuilder: type) type {
+    return struct {
+        const Self = @This();
+        pub const Array = array.FixedSizeListArray;
+        pub const Child = ChildBuilder;
+        pub const Error = ListBuilderError(ChildBuilder);
+
+        allocator: Allocator,
+        child: ChildBuilder,
+        validity: bitmap.BitmapBuilder,
+        len: usize,
+        last_child_len: usize,
+        list_size: usize,
+        child_name: []const u8,
+        owned_child_name: ?[]u8,
+        child_nullable: bool,
+
+        pub fn init(allocator: Allocator, list_size: usize) Self {
+            return .{
+                .allocator = allocator,
+                .child = ChildBuilder.init(allocator),
+                .validity = bitmap.BitmapBuilder.init(),
+                .len = 0,
+                .last_child_len = 0,
+                .list_size = list_size,
+                .child_name = "item",
+                .owned_child_name = null,
+                .child_nullable = true,
+            };
+        }
+
+        pub fn initField(allocator: Allocator, list_size: usize, options: FieldOptions) Error!Self {
+            var self = init(allocator, list_size);
+            errdefer self.deinit();
+            const name = try allocator.dupe(u8, options.name);
+            self.child_name = name;
+            self.owned_child_name = name;
+            self.child_nullable = options.nullable;
+            return self;
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.child.deinit();
+            self.clearListState(true);
+        }
+
+        pub fn reset(self: *Self) void {
+            if (comptime !@hasDecl(ChildBuilder, "reset")) {
+                @compileError("FixedSizeListBuilder.reset requires ChildBuilder.reset");
+            }
+            self.resetChild();
+            self.clearListState(false);
+        }
+
+        pub fn values(self: *Self) *ChildBuilder {
+            return &self.child;
+        }
+
+        pub fn reserve(self: *Self, additional: usize) Error!void {
+            if (additional == 0) return;
+            try self.validity.ensureCapacityForBits(self.allocator, @max(additional, builder_base.kMinBuilderCapacity));
+        }
+
+        pub fn append(self: *Self) Error!void {
+            const child_len = self.child.length();
+            if (child_len < self.last_child_len) return error.UnclosedListValues;
+            if (child_len - self.last_child_len != self.list_size) return error.UnclosedListValues;
+            try self.appendSlot(child_len, true);
+        }
+
+        pub fn appendNull(self: *Self) Error!void {
+            try self.ensureNoPending();
+            try self.reserve(1);
+            try self.appendChildEmptyValues(self.list_size);
+            self.validity.unsafeAppend(false);
+            self.len = try checked.add(self.len, 1);
+            self.last_child_len = self.child.length();
+        }
+
+        pub fn appendNulls(self: *Self, n: usize) Error!void {
+            if (n == 0) return;
+            try self.ensureNoPending();
+            try self.reserve(n);
+            try self.appendChildEmptyValues(try checked.mul(n, self.list_size));
+            self.validity.unsafeAppendN(false, n);
+            self.len = try checked.add(self.len, n);
+            self.last_child_len = self.child.length();
+        }
+
+        pub fn appendEmptyValue(self: *Self) Error!void {
+            try self.ensureNoPending();
+            try self.reserve(1);
+            try self.appendChildEmptyValues(self.list_size);
+            self.validity.unsafeAppend(true);
+            self.len = try checked.add(self.len, 1);
+            self.last_child_len = self.child.length();
+        }
+
+        pub fn appendEmptyValues(self: *Self, n: usize) Error!void {
+            if (n == 0) return;
+            try self.ensureNoPending();
+            try self.reserve(n);
+            try self.appendChildEmptyValues(try checked.mul(n, self.list_size));
+            self.validity.unsafeAppendN(true, n);
+            self.len = try checked.add(self.len, n);
+            self.last_child_len = self.child.length();
+        }
+
+        pub fn length(self: Self) usize {
+            return self.len;
+        }
+
+        pub fn finish(self: *Self) Error!*ArrayData {
+            const expected_child_len = try checked.mul(self.len, self.list_size);
+            if (self.child.length() != expected_child_len) return error.UnclosedListValues;
+
+            const n = self.len;
+            const null_count = self.validity.false_count;
+            var consumed = false;
+            errdefer if (consumed) {
+                self.len = 0;
+                self.last_child_len = 0;
+            };
+
+            const child_data = try self.child.finish();
+            consumed = true;
+            errdefer child_data.deinit();
+
+            const validity_buf: ?*Buffer = try self.validity.finishNullable(self.allocator);
+            errdefer if (validity_buf) |buf| buf.deinit();
+
+            const child_field = try datatype.Field.create(self.allocator, self.child_name, &child_data.type, self.child_nullable, &.{});
+            errdefer child_field.deinit();
+            const ty = datatype.DataType{ .fixed_size_list = .{ .child = child_field, .len = self.list_size } };
+            const data = try ArrayData.initOwned(self.allocator, ty, n, 0, null_count, &.{validity_buf}, &.{child_data}, null);
+            child_field.deinit();
+            self.len = 0;
+            self.last_child_len = 0;
+            return data;
+        }
+
+        fn appendSlot(self: *Self, child_len: usize, valid: bool) Error!void {
+            try self.reserve(1);
+            self.validity.unsafeAppend(valid);
+            self.len = try checked.add(self.len, 1);
+            self.last_child_len = child_len;
+        }
+
+        fn ensureNoPending(self: *Self) Error!void {
+            if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
+        }
+
+        fn appendChildEmptyValues(self: *Self, n: usize) Error!void {
+            if (n == 0) return;
+            if (comptime !@hasDecl(ChildBuilder, "appendEmptyValues")) {
+                @compileError("FixedSizeListBuilder null and empty appends require ChildBuilder.appendEmptyValues");
+            }
+            try self.child.appendEmptyValues(n);
+        }
+
+        fn resetChild(self: *Self) void {
+            self.child.reset();
+        }
+
+        fn clearListState(self: *Self, comptime clear_field_options: bool) void {
+            self.validity.deinit();
+            if (clear_field_options) {
+                if (self.owned_child_name) |name| self.allocator.free(name);
+                self.child_name = "item";
+                self.owned_child_name = null;
+                self.child_nullable = true;
+            }
+            self.len = 0;
+            self.last_child_len = 0;
+        }
+    };
+}
+
 fn dataTypeForKind(comptime kind: array.ListKind, child: *const datatype.Field) datatype.DataType {
     return switch (kind) {
         .list => .{ .list = .{ .child = child } },
@@ -341,4 +519,78 @@ test "ListBuilder reset preserves field options" {
 
     try std.testing.expectEqualStrings("words", data.type.large_list.child.name);
     try std.testing.expect(!data.type.large_list.child.nullable);
+}
+
+test "FixedSizeListBuilder builds numeric child lists" {
+    const allocator = std.testing.allocator;
+    const builder = @import("builder.zig");
+    var b = FixedSizeListBuilder(builder.NumericBuilder(i32)).init(allocator, 2);
+    defer b.deinit();
+
+    try b.values().appendSlice(&.{ 1, 2 });
+    try b.append();
+    try b.appendNull();
+    try b.values().appendSlice(&.{ 3, 4 });
+    try b.append();
+
+    const data = try b.finish();
+    defer data.deinit();
+    try data.validate();
+
+    const arr = try array.FixedSizeListArray.fromData(data);
+    try std.testing.expectEqual(@as(usize, 3), arr.len);
+    try std.testing.expectEqual(@as(usize, 2), arr.listSize());
+    try std.testing.expectEqual(@as(usize, 1), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, 0), arr.valueRange(0).offset);
+    try std.testing.expectEqual(@as(usize, 2), arr.valueRange(1).offset);
+    try std.testing.expectEqual(@as(usize, 4), arr.valueRange(2).offset);
+    try std.testing.expect(arr.isNull(1));
+
+    const child = try array.NumericArray(i32).fromData(arr.childBaseData());
+    try std.testing.expectEqual(@as(usize, 6), child.len);
+    try std.testing.expectEqual(@as(i32, 1), child.value(0));
+    try std.testing.expectEqual(@as(i32, 2), child.value(1));
+    try std.testing.expectEqual(@as(i32, 0), child.value(2));
+    try std.testing.expectEqual(@as(i32, 0), child.value(3));
+    try std.testing.expectEqual(@as(i32, 3), child.value(4));
+    try std.testing.expectEqual(@as(i32, 4), child.value(5));
+}
+
+test "FixedSizeListBuilder rejects partial child values" {
+    const allocator = std.testing.allocator;
+    const builder = @import("builder.zig");
+    var b = FixedSizeListBuilder(builder.NumericBuilder(i32)).init(allocator, 2);
+    defer b.deinit();
+
+    try b.values().append(1);
+    try std.testing.expectError(error.UnclosedListValues, b.append());
+    try std.testing.expectError(error.UnclosedListValues, b.appendNull());
+
+    try b.values().append(2);
+    try b.append();
+    const data = try b.finish();
+    defer data.deinit();
+    try data.validate();
+}
+
+test "FixedSizeListBuilder reset and field options" {
+    const allocator = std.testing.allocator;
+    const builder = @import("builder.zig");
+    var b = try FixedSizeListBuilder(builder.NumericBuilder(i32)).initField(allocator, 3, .{ .name = "coords", .nullable = false });
+    defer b.deinit();
+
+    try b.appendEmptyValue();
+    b.reset();
+    try std.testing.expectEqual(@as(usize, 0), b.length());
+
+    try b.appendNull();
+    const data = try b.finish();
+    defer data.deinit();
+    try data.validate();
+
+    try std.testing.expectEqualStrings("coords", data.type.fixed_size_list.child.name);
+    try std.testing.expect(!data.type.fixed_size_list.child.nullable);
+    const child = try array.NumericArray(i32).fromData(data.children[0]);
+    try std.testing.expectEqual(@as(usize, 3), child.len);
+    try std.testing.expectEqual(@as(usize, 0), child.nullCount());
 }
