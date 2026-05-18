@@ -79,6 +79,7 @@ const RecordBatch = record_batch_mod.RecordBatch;
 const Schema = schema_mod.Schema;
 
 pub const schema_flag_dictionary_ordered = cdi_types.schema_flag_dictionary_ordered;
+pub const schema_flag_map_keys_sorted = cdi_types.schema_flag_map_keys_sorted;
 pub const schema_flag_nullable = cdi_types.schema_flag_nullable;
 
 pub const ArrowSchema = cdi_types.ArrowSchema;

@@ -5,6 +5,7 @@
 
 pub const schema_flag_dictionary_ordered: i64 = 1;
 pub const schema_flag_nullable: i64 = 2;
+pub const schema_flag_map_keys_sorted: i64 = 4;
 
 pub const ArrowSchema = extern struct {
     format: ?[*:0]const u8,

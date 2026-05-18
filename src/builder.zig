@@ -36,6 +36,7 @@ const null_builder = @import("builder_null.zig");
 const boolean = @import("builder_boolean.zig");
 const binary = @import("builder_binary.zig");
 const list = @import("builder_list.zig");
+const map_builder = @import("builder_map.zig");
 const dictionary = @import("builder_dictionary.zig");
 const structs = @import("builder_struct.zig");
 const unions = @import("builder_union.zig");
@@ -61,6 +62,8 @@ pub const ListBuilderError = list.ListBuilderError;
 pub const ListBuilder = list.ListBuilder;
 pub const LargeListBuilder = list.LargeListBuilder;
 pub const FixedSizeListBuilder = list.FixedSizeListBuilder;
+pub const MapOptions = map_builder.MapOptions;
+pub const MapBuilderError = map_builder.MapBuilderError;
 pub const DictionaryOptions = dictionary.DictionaryOptions;
 pub const DictionaryBuilderError = dictionary.DictionaryBuilderError;
 pub const StructFieldOptions = structs.FieldOptions;
@@ -70,6 +73,10 @@ pub const UnionBuilderError = unions.UnionBuilderError;
 
 pub fn DictionaryBuilder(comptime Index: type) type {
     return dictionary.DictionaryBuilder(Index);
+}
+
+pub fn MapBuilder(comptime KeyBuilder: type, comptime ValueBuilder: type) type {
+    return map_builder.MapBuilder(KeyBuilder, ValueBuilder);
 }
 
 pub fn StructBuilder(comptime ChildBuilders: type) type {

@@ -17,6 +17,7 @@ const importSchema = cdi.importSchema;
 const importType = cdi.importType;
 const schemaIsReleased = cdi.schemaIsReleased;
 const schema_flag_dictionary_ordered = cdi.schema_flag_dictionary_ordered;
+const schema_flag_map_keys_sorted = cdi.schema_flag_map_keys_sorted;
 
 test "exportType primitive schema" {
     const allocator = std.testing.allocator;
@@ -45,6 +46,31 @@ test "exportType nested list schema" {
     try std.testing.expect(schema.children != null);
     try std.testing.expectEqualStrings("item", std.mem.span(schema.children.?[0].name.?));
     try std.testing.expectEqualStrings("i", std.mem.span(schema.children.?[0].format.?));
+}
+
+test "exportType map schema" {
+    const allocator = std.testing.allocator;
+    const key_ty: datatype.DataType = .int32;
+    const value_ty: datatype.DataType = .utf8;
+    const key_field = try datatype.Field.create(allocator, "key", &key_ty, false, &.{});
+    defer key_field.deinit();
+    const value_field = try datatype.Field.create(allocator, "value", &value_ty, true, &.{});
+    defer value_field.deinit();
+    const entry_fields = [_]*const datatype.Field{ key_field, value_field };
+    const entry_ty = datatype.DataType{ .struct_ = .{ .fields = &entry_fields } };
+    const entries_field = try datatype.Field.create(allocator, "entries", &entry_ty, false, &.{});
+    defer entries_field.deinit();
+    const map_ty = datatype.DataType{ .map = .{ .entries = entries_field, .keys_sorted = true } };
+
+    var schema: ArrowSchema = undefined;
+    try exportType(allocator, map_ty, &schema);
+    defer schema.release.?(&schema);
+
+    try std.testing.expectEqualStrings("+m", std.mem.span(schema.format.?));
+    try std.testing.expect(schema.flags & schema_flag_map_keys_sorted != 0);
+    try std.testing.expectEqual(@as(i64, 1), schema.n_children);
+    try std.testing.expectEqualStrings("entries", std.mem.span(schema.children.?[0].name.?));
+    try std.testing.expectEqualStrings("+s", std.mem.span(schema.children.?[0].format.?));
 }
 
 test "exportType dictionary schema" {
@@ -200,6 +226,17 @@ test "importType round trips nested and dictionary schemas" {
     const struct_fields = [_]*const datatype.Field{ number_field, flag_field };
     const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &struct_fields } };
     try expectImportTypeRoundTrip(allocator, struct_ty);
+
+    const key_field = try datatype.Field.create(allocator, "key", &value_ty, false, &.{});
+    defer key_field.deinit();
+    const value_field = try datatype.Field.create(allocator, "value", &bool_ty, true, &.{});
+    defer value_field.deinit();
+    const entry_fields = [_]*const datatype.Field{ key_field, value_field };
+    const entry_ty = datatype.DataType{ .struct_ = .{ .fields = &entry_fields } };
+    const entries_field = try datatype.Field.create(allocator, "entries", &entry_ty, false, &.{});
+    defer entries_field.deinit();
+    const map_ty = datatype.DataType{ .map = .{ .entries = entries_field, .keys_sorted = true } };
+    try expectImportTypeRoundTrip(allocator, map_ty);
 
     const union_ids = [_]i8{ 7, 8 };
     const union_ty = datatype.DataType{ .dense_union = .{

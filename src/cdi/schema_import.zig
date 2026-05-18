@@ -12,6 +12,7 @@ const schema_mod = @import("../schema.zig");
 
 const ArrowSchema = cdi_types.ArrowSchema;
 const schema_flag_dictionary_ordered = cdi_types.schema_flag_dictionary_ordered;
+const schema_flag_map_keys_sorted = cdi_types.schema_flag_map_keys_sorted;
 const schema_flag_nullable = cdi_types.schema_flag_nullable;
 
 pub const Error =
@@ -171,6 +172,10 @@ fn importNestedType(
 ) Error!datatype.DataType {
     if (std.mem.eql(u8, format, "+l")) return .{ .list = .{ .child = try importSingleChildField(allocator, schema) } };
     if (std.mem.eql(u8, format, "+L")) return .{ .large_list = .{ .child = try importSingleChildField(allocator, schema) } };
+    if (std.mem.eql(u8, format, "+m")) return .{ .map = .{
+        .entries = try importSingleChildField(allocator, schema),
+        .keys_sorted = schema.flags & schema_flag_map_keys_sorted != 0,
+    } };
     if (std.mem.startsWith(u8, format, "+w:")) return try importFixedSizeListType(allocator, schema, format[3..]);
     if (std.mem.eql(u8, format, "+s")) return .{ .struct_ = .{ .fields = try importSchemaFields(allocator, schema) } };
     if (std.mem.startsWith(u8, format, "+us:")) return try importUnionType(allocator, schema, format[4..], false);

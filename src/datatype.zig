@@ -38,6 +38,7 @@ pub const TypeId = enum(u8) {
     list,
     large_list,
     fixed_size_list,
+    map,
     struct_,
     sparse_union,
     dense_union,
@@ -154,6 +155,11 @@ pub const FixedSizeListMeta = struct {
     len: usize,
 };
 
+pub const MapMeta = struct {
+    entries: *const Field,
+    keys_sorted: bool = false,
+};
+
 pub const StructMeta = struct {
     fields: []const *const Field,
 };
@@ -178,6 +184,9 @@ pub const ValidationError = error{
     InvalidTimeUnit,
     InvalidUnionTypeIds,
     InvalidDictionaryIndexType,
+    InvalidMapEntries,
+    NullableMapEntries,
+    NullableMapKey,
 };
 
 pub fn cloneOwned(allocator: Allocator, ty: DataType) Allocator.Error!DataType {
@@ -191,6 +200,10 @@ pub fn cloneOwned(allocator: Allocator, ty: DataType) Allocator.Error!DataType {
         .fixed_size_list => |meta| .{ .fixed_size_list = .{
             .child = meta.child.retain(),
             .len = meta.len,
+        } },
+        .map => |meta| .{ .map = .{
+            .entries = meta.entries.retain(),
+            .keys_sorted = meta.keys_sorted,
         } },
         .struct_ => |meta| .{ .struct_ = .{ .fields = try retainFieldSlice(allocator, meta.fields) } },
         .sparse_union => |meta| .{ .sparse_union = try cloneUnionMeta(allocator, meta) },
@@ -206,6 +219,7 @@ pub fn deinitOwned(allocator: Allocator, ty: *DataType) void {
         .list => |meta| meta.child.deinit(),
         .large_list => |meta| meta.child.deinit(),
         .fixed_size_list => |meta| meta.child.deinit(),
+        .map => |meta| meta.entries.deinit(),
         .struct_ => |meta| {
             for (meta.fields) |f| f.deinit();
             allocator.free(meta.fields);
@@ -269,6 +283,7 @@ pub const DataType = union(TypeId) {
     list: ListMeta,
     large_list: ListMeta,
     fixed_size_list: FixedSizeListMeta,
+    map: MapMeta,
     struct_: StructMeta,
     sparse_union: UnionMeta,
     dense_union: UnionMeta,
@@ -288,7 +303,7 @@ pub const DataType = union(TypeId) {
             .int16, .uint16, .float16 => 16,
             .int32, .uint32, .float32, .date32, .time32 => 32,
             .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration => 64,
-            .binary, .utf8, .large_binary, .large_utf8, .list, .large_list, .fixed_size_list, .struct_, .sparse_union, .dense_union => 0,
+            .binary, .utf8, .large_binary, .large_utf8, .list, .large_list, .fixed_size_list, .map, .struct_, .sparse_union, .dense_union => 0,
             .dictionary => |meta| meta.index_type.bitWidth(),
         };
     }
@@ -322,6 +337,7 @@ pub const DataType = union(TypeId) {
             .list => "list",
             .large_list => "large_list",
             .fixed_size_list => "fixed_size_list",
+            .map => "map",
             .struct_ => "struct",
             .sparse_union => "sparse_union",
             .dense_union => "dense_union",
@@ -342,6 +358,7 @@ pub const DataType = union(TypeId) {
             .list => |meta| try meta.child.type.validate(),
             .large_list => |meta| try meta.child.type.validate(),
             .fixed_size_list => |meta| try meta.child.type.validate(),
+            .map => |meta| try validateMapMeta(meta),
             .struct_ => |meta| {
                 for (meta.fields) |field| try field.type.validate();
             },
@@ -367,6 +384,7 @@ pub const DataType = union(TypeId) {
         return switch (self) {
             .list, .large_list => 1,
             .fixed_size_list => 1,
+            .map => 1,
             .struct_ => |meta| meta.fields.len,
             .sparse_union, .dense_union => |meta| meta.fields.len,
             else => 0,
@@ -378,6 +396,7 @@ pub const DataType = union(TypeId) {
             .list => |meta| if (index == 0) meta.child else null,
             .large_list => |meta| if (index == 0) meta.child else null,
             .fixed_size_list => |meta| if (index == 0) meta.child else null,
+            .map => |meta| if (index == 0) meta.entries else null,
             .struct_ => |meta| if (index < meta.fields.len) meta.fields[index] else null,
             .sparse_union => |meta| if (index < meta.fields.len) meta.fields[index] else null,
             .dense_union => |meta| if (index < meta.fields.len) meta.fields[index] else null,
@@ -401,6 +420,8 @@ pub const DataType = union(TypeId) {
             .large_list => Field.equals(a.large_list.child, b.large_list.child),
             .fixed_size_list => a.fixed_size_list.len == b.fixed_size_list.len and
                 Field.equals(a.fixed_size_list.child, b.fixed_size_list.child),
+            .map => Field.equals(a.map.entries, b.map.entries) and
+                a.map.keys_sorted == b.map.keys_sorted,
             .struct_ => fieldsEqual(a.struct_.fields, b.struct_.fields),
             .sparse_union => unionEqual(a.sparse_union, b.sparse_union),
             .dense_union => unionEqual(a.dense_union, b.dense_union),
@@ -486,6 +507,15 @@ fn validateUnionMeta(meta: UnionMeta) ValidationError!void {
     for (meta.fields) |field| try field.type.validate();
 }
 
+fn validateMapMeta(meta: MapMeta) ValidationError!void {
+    if (meta.entries.nullable) return error.NullableMapEntries;
+    if (meta.entries.type.id() != .struct_) return error.InvalidMapEntries;
+    const fields = meta.entries.type.struct_.fields;
+    if (fields.len != 2) return error.InvalidMapEntries;
+    if (fields[0].nullable) return error.NullableMapKey;
+    for (fields) |field| try field.type.validate();
+}
+
 fn fieldsEqual(a: []const *const Field, b: []const *const Field) bool {
     if (a.len != b.len) return false;
     for (a, b) |left, right| {
@@ -522,6 +552,20 @@ test "DataType.equals" {
     const list_a = DataType{ .list = .{ .child = item_field } };
     const list_b = DataType{ .list = .{ .child = item_field } };
     try std.testing.expect(DataType.equals(list_a, list_b));
+
+    const key_field = try Field.create(allocator, "key", &value_ty, false, &.{});
+    defer key_field.deinit();
+    const value_field = try Field.create(allocator, "value", &value_ty, true, &.{});
+    defer value_field.deinit();
+    const entry_fields = [_]*const Field{ key_field, value_field };
+    const entry_ty = DataType{ .struct_ = .{ .fields = &entry_fields } };
+    const entries = try Field.create(allocator, "entries", &entry_ty, false, &.{});
+    defer entries.deinit();
+    const map_a = DataType{ .map = .{ .entries = entries, .keys_sorted = true } };
+    const map_b = DataType{ .map = .{ .entries = entries, .keys_sorted = true } };
+    const map_c = DataType{ .map = .{ .entries = entries, .keys_sorted = false } };
+    try std.testing.expect(DataType.equals(map_a, map_b));
+    try std.testing.expect(!DataType.equals(map_a, map_c));
 }
 
 test "DataType.bitWidth" {
@@ -552,6 +596,24 @@ test "DataType.validate" {
     const duplicate_ids = [_]i8{ 1, 1 };
     const duplicate_union = DataType{ .dense_union = .{ .fields = &fields_ptrs, .type_ids = &duplicate_ids } };
     try std.testing.expectError(error.InvalidUnionTypeIds, duplicate_union.validate());
+
+    const key_field = try Field.create(allocator, "key", &value_ty, false, &.{});
+    defer key_field.deinit();
+    const value_field = try Field.create(allocator, "value", &value_ty, true, &.{});
+    defer value_field.deinit();
+    const entry_fields = [_]*const Field{ key_field, value_field };
+    const entry_ty = DataType{ .struct_ = .{ .fields = &entry_fields } };
+    const entries = try Field.create(allocator, "entries", &entry_ty, false, &.{});
+    defer entries.deinit();
+    try DataType.validate(.{ .map = .{ .entries = entries, .keys_sorted = true } });
+
+    const nullable_key = try Field.create(allocator, "key", &value_ty, true, &.{});
+    defer nullable_key.deinit();
+    const bad_entry_fields = [_]*const Field{ nullable_key, value_field };
+    const bad_entry_ty = DataType{ .struct_ = .{ .fields = &bad_entry_fields } };
+    const bad_entries = try Field.create(allocator, "entries", &bad_entry_ty, false, &.{});
+    defer bad_entries.deinit();
+    try std.testing.expectError(error.NullableMapKey, DataType.validate(.{ .map = .{ .entries = bad_entries } }));
 }
 
 test "DataType cloneOwned retains child fields" {

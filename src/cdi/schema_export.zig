@@ -112,6 +112,9 @@ fn exportSchemaNode(
             try exportType(allocator, meta.value_type.*, dictionary.?);
             dictionary_exported = true;
         },
+        .map => |meta| {
+            if (meta.keys_sorted) flags |= cdi_types.schema_flag_map_keys_sorted;
+        },
         else => {},
     }
 
@@ -203,6 +206,7 @@ fn formatForType(allocator: Allocator, ty: datatype.DataType) Error![:0]u8 {
         .large_utf8 => allocator.dupeZ(u8, "U"),
         .list => allocator.dupeZ(u8, "+l"),
         .large_list => allocator.dupeZ(u8, "+L"),
+        .map => allocator.dupeZ(u8, "+m"),
         .fixed_size_list => |meta| std.fmt.allocPrintSentinel(allocator, "+w:{d}", .{meta.len}, 0),
         .struct_ => allocator.dupeZ(u8, "+s"),
         .sparse_union => |meta| unionFormat(allocator, "s", meta.type_ids),

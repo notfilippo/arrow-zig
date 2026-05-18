@@ -72,6 +72,7 @@ fn validateData(data: anytype, ty: datatype.DataType, total: usize) (Error || ch
         .list => |meta| try validateListLike(data, total, meta.child, i32),
         .large_list => |meta| try validateListLike(data, total, meta.child, i64),
         .fixed_size_list => |meta| try validateFixedSizeList(data, total, meta),
+        .map => |meta| try validateListLike(data, total, meta.entries, i32),
         .struct_ => |meta| try validateStruct(data, total, meta),
         .sparse_union => |meta| try validateUnion(data, total, meta, false),
         .dense_union => |meta| try validateUnion(data, total, meta, true),
@@ -432,6 +433,21 @@ test "validate list and struct storage" {
     defer list.deinit();
     try list.validate();
 
+    const key_field = try datatype.Field.create(allocator, "key", &value_ty, false, &.{});
+    defer key_field.deinit();
+    const value_field = try datatype.Field.create(allocator, "value", &value_ty, true, &.{});
+    defer value_field.deinit();
+    const entry_fields = [_]*const datatype.Field{ key_field, value_field };
+    const entry_ty = datatype.DataType{ .struct_ = .{ .fields = &entry_fields } };
+    const entries = try ArrayData.initRetained(allocator, entry_ty, 5, 0, 0, &.{null}, &.{ child, child }, null);
+    defer entries.deinit();
+    const entries_field = try datatype.Field.create(allocator, "entries", &entry_ty, false, &.{});
+    defer entries_field.deinit();
+    const map_ty = datatype.DataType{ .map = .{ .entries = entries_field } };
+    const map = try ArrayData.initRetained(allocator, map_ty, 2, 0, 0, &.{ null, offsets }, &.{entries}, null);
+    defer map.deinit();
+    try map.validate();
+
     const child_validity = try Buffer.allocate(allocator, 1);
     errdefer child_validity.deinit();
     child_validity.data[0] = 0b00000001;
@@ -446,6 +462,12 @@ test "validate list and struct storage" {
     const required_list = try ArrayData.initRetained(allocator, required_list_ty, 1, 0, 0, &.{ null, offsets }, &.{child_with_null}, null);
     defer required_list.deinit();
     try std.testing.expectError(error.NonNullableNulls, required_list.validate());
+
+    const bad_entries = try ArrayData.initRetained(allocator, entry_ty, 2, 0, 0, &.{null}, &.{ child_with_null, child }, null);
+    defer bad_entries.deinit();
+    const bad_map = try ArrayData.initRetained(allocator, map_ty, 1, 0, 0, &.{ null, offsets }, &.{bad_entries}, null);
+    defer bad_map.deinit();
+    try std.testing.expectError(error.NonNullableNulls, bad_map.validate());
 
     const a_field = try datatype.Field.create(allocator, "a", &value_ty, true, &.{});
     defer a_field.deinit();

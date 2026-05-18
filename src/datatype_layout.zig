@@ -88,7 +88,7 @@ pub fn layout(ty: anytype) Layout {
         .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration => .{ .buffers = &fixed_8_buffers },
         .binary, .utf8 => .{ .buffers = &binary_buffers },
         .large_binary, .large_utf8 => .{ .buffers = &large_binary_buffers },
-        .list => .{ .buffers = &list_buffers },
+        .list, .map => .{ .buffers = &list_buffers },
         .large_list => .{ .buffers = &large_list_buffers },
         .fixed_size_list, .struct_ => .{ .buffers = &nested_validity_buffers },
         .sparse_union => .{ .buffers = &sparse_union_buffers, .null_layout = .none },
