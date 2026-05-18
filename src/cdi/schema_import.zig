@@ -127,6 +127,7 @@ fn importFormatType(
     if (std.mem.eql(u8, format, "Z")) return noChildType(schema, .large_binary);
     if (std.mem.eql(u8, format, "U")) return noChildType(schema, .large_utf8);
     if (std.mem.startsWith(u8, format, "w:")) return try importFixedSizeBinaryType(schema, format[2..]);
+    if (std.mem.startsWith(u8, format, "d:")) return try importDecimalType(schema, format[2..]);
     if (format.len == 0) return error.InvalidFormat;
     return switch (format[0]) {
         't' => importTemporalType(allocator, schema, format),
@@ -202,6 +203,25 @@ fn importFixedSizeBinaryType(
 ) Error!datatype.DataType {
     try expectSchemaChildCount(schema, 0);
     return .{ .fixed_size_binary = .{ .byte_width = try parseUsize(width_text) } };
+}
+
+fn importDecimalType(
+    schema: *const ArrowSchema,
+    format: []const u8,
+) Error!datatype.DataType {
+    try expectSchemaChildCount(schema, 0);
+    var parts = std.mem.splitScalar(u8, format, ',');
+    const precision_text = parts.next() orelse return error.InvalidFormat;
+    const scale_text = parts.next() orelse return error.InvalidFormat;
+    const precision = try parseU8(precision_text);
+    const scale = try parseI32(scale_text);
+    const width = if (parts.next()) |width_text| try parseUsize(width_text) else 128;
+    if (parts.next() != null) return error.InvalidFormat;
+    return switch (width) {
+        128 => .{ .decimal128 = .{ .precision = precision, .scale = scale } },
+        256 => .{ .decimal256 = .{ .precision = precision, .scale = scale } },
+        else => error.InvalidFormat,
+    };
 }
 
 fn importSingleChildField(allocator: Allocator, schema: *const ArrowSchema) Error!*const datatype.Field {
@@ -301,6 +321,20 @@ fn parseUsize(text: []const u8) Error!usize {
     };
     if (@as(u128, parsed) > @as(u128, std.math.maxInt(usize))) return error.ValueOutOfRange;
     return @intCast(parsed);
+}
+
+fn parseU8(text: []const u8) Error!u8 {
+    const parsed = try parseUsize(text);
+    if (parsed > std.math.maxInt(u8)) return error.ValueOutOfRange;
+    return @intCast(parsed);
+}
+
+fn parseI32(text: []const u8) Error!i32 {
+    if (text.len == 0) return error.InvalidFormat;
+    return std.fmt.parseInt(i32, text, 10) catch |err| switch (err) {
+        error.Overflow => return error.ValueOutOfRange,
+        error.InvalidCharacter => return error.InvalidFormat,
+    };
 }
 
 fn parseUnionTypeIds(allocator: Allocator, text: []const u8) Error![]const i8 {

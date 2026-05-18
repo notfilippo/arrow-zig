@@ -122,9 +122,46 @@ test "importType round trips scalar schemas" {
         .large_binary,
         .large_utf8,
         .{ .fixed_size_binary = .{ .byte_width = 16 } },
+        .{ .decimal128 = .{ .precision = 12, .scale = 5 } },
+        .{ .decimal128 = .{ .precision = 5, .scale = -3 } },
+        .{ .decimal256 = .{ .precision = 40, .scale = 2 } },
     };
 
     for (cases) |ty| try expectImportTypeRoundTrip(allocator, ty);
+}
+
+test "importType parses decimal formats" {
+    const allocator = std.testing.allocator;
+
+    var decimal128_default = minimalSchema("d:12,5");
+    var imported128_default = try importType(allocator, &decimal128_default);
+    defer datatype.deinitOwned(allocator, &imported128_default);
+    try std.testing.expect(datatype.DataType.equals(
+        .{ .decimal128 = .{ .precision = 12, .scale = 5 } },
+        imported128_default,
+    ));
+
+    var decimal128_explicit = minimalSchema("d:12,5,128");
+    var imported128_explicit = try importType(allocator, &decimal128_explicit);
+    defer datatype.deinitOwned(allocator, &imported128_explicit);
+    try std.testing.expect(datatype.DataType.equals(
+        .{ .decimal128 = .{ .precision = 12, .scale = 5 } },
+        imported128_explicit,
+    ));
+
+    var decimal256 = minimalSchema("d:40,-2,256");
+    var imported256 = try importType(allocator, &decimal256);
+    defer datatype.deinitOwned(allocator, &imported256);
+    try std.testing.expect(datatype.DataType.equals(
+        .{ .decimal256 = .{ .precision = 40, .scale = -2 } },
+        imported256,
+    ));
+
+    var bad_width = minimalSchema("d:12,5,64");
+    try std.testing.expectError(error.InvalidFormat, importType(allocator, &bad_width));
+
+    var bad_precision = minimalSchema("d:39,5");
+    try std.testing.expectError(error.InvalidDecimalPrecision, importType(allocator, &bad_precision));
 }
 
 test "importField round trips field schema" {

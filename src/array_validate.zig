@@ -64,7 +64,7 @@ fn validateData(data: anytype, ty: datatype.DataType, total: usize) (Error || ch
     }
 
     switch (ty) {
-        .bool, .int8, .int16, .int32, .int64, .uint8, .uint16, .uint32, .uint64, .float16, .float32, .float64, .date32, .date64, .time32, .time64, .timestamp, .duration, .fixed_size_binary => {
+        .bool, .int8, .int16, .int32, .int64, .uint8, .uint16, .uint32, .uint64, .float16, .float32, .float64, .date32, .date64, .time32, .time64, .timestamp, .duration, .decimal128, .decimal256, .fixed_size_binary => {
             try validateFixedWidth(data, total, ty);
         },
         .binary, .utf8 => try validateBinaryLike(data, total, i32),
@@ -407,6 +407,14 @@ test "validate null and binary storage" {
     const fixed = try ArrayData.initOwned(allocator, fixed_ty, 2, 0, 0, &.{ null, fixed_values }, &.{}, null);
     defer fixed.deinit();
     try fixed.validate();
+
+    const decimal_values = try Buffer.allocate(allocator, 2 * 16);
+    errdefer decimal_values.deinit();
+    decimal_values.freeze();
+    const decimal_ty = datatype.DataType{ .decimal128 = .{ .precision = 12, .scale = 2 } };
+    const decimal = try ArrayData.initOwned(allocator, decimal_ty, 2, 0, 0, &.{ null, decimal_values }, &.{}, null);
+    defer decimal.deinit();
+    try decimal.validate();
 
     const short_fixed_values = try Buffer.allocate(allocator, 5);
     errdefer short_fixed_values.deinit();

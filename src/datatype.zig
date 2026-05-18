@@ -36,6 +36,8 @@ pub const TypeId = enum(u8) {
     large_binary,
     large_utf8,
     fixed_size_binary,
+    decimal128,
+    decimal256,
     list,
     large_list,
     fixed_size_list,
@@ -160,6 +162,11 @@ pub const FixedSizeBinaryMeta = struct {
     byte_width: usize,
 };
 
+pub const DecimalMeta = struct {
+    precision: u8,
+    scale: i32,
+};
+
 pub const MapMeta = struct {
     entries: *const Field,
     keys_sorted: bool = false,
@@ -192,6 +199,7 @@ pub const ValidationError = error{
     InvalidMapEntries,
     NullableMapEntries,
     NullableMapKey,
+    InvalidDecimalPrecision,
 };
 
 pub fn cloneOwned(allocator: Allocator, ty: DataType) Allocator.Error!DataType {
@@ -286,6 +294,8 @@ pub const DataType = union(TypeId) {
     large_binary,
     large_utf8,
     fixed_size_binary: FixedSizeBinaryMeta,
+    decimal128: DecimalMeta,
+    decimal256: DecimalMeta,
     list: ListMeta,
     large_list: ListMeta,
     fixed_size_list: FixedSizeListMeta,
@@ -309,6 +319,8 @@ pub const DataType = union(TypeId) {
             .int16, .uint16, .float16 => 16,
             .int32, .uint32, .float32, .date32, .time32 => 32,
             .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration => 64,
+            .decimal128 => 128,
+            .decimal256 => 256,
             .fixed_size_binary => |meta| if (meta.byte_width > std.math.maxInt(u16) / 8) 0 else @intCast(meta.byte_width * 8),
             .binary, .utf8, .large_binary, .large_utf8, .list, .large_list, .fixed_size_list, .map, .struct_, .sparse_union, .dense_union => 0,
             .dictionary => |meta| meta.index_type.bitWidth(),
@@ -342,6 +354,8 @@ pub const DataType = union(TypeId) {
             .large_binary => "large_binary",
             .large_utf8 => "large_utf8",
             .fixed_size_binary => "fixed_size_binary",
+            .decimal128 => "decimal128",
+            .decimal256 => "decimal256",
             .list => "list",
             .large_list => "large_list",
             .fixed_size_list => "fixed_size_list",
@@ -367,6 +381,8 @@ pub const DataType = union(TypeId) {
             .large_list => |meta| try meta.child.type.validate(),
             .fixed_size_list => |meta| try meta.child.type.validate(),
             .map => |meta| try validateMapMeta(meta),
+            .decimal128 => |meta| try validateDecimalMeta(meta, 38),
+            .decimal256 => |meta| try validateDecimalMeta(meta, 76),
             .struct_ => |meta| {
                 for (meta.fields) |field| try field.type.validate();
             },
@@ -425,6 +441,8 @@ pub const DataType = union(TypeId) {
             .timestamp => a.timestamp.unit == b.timestamp.unit and
                 std.mem.eql(u8, a.timestamp.tz orelse "", b.timestamp.tz orelse ""),
             .fixed_size_binary => a.fixed_size_binary.byte_width == b.fixed_size_binary.byte_width,
+            .decimal128 => decimalEqual(a.decimal128, b.decimal128),
+            .decimal256 => decimalEqual(a.decimal256, b.decimal256),
             .list => Field.equals(a.list.child, b.list.child),
             .large_list => Field.equals(a.large_list.child, b.large_list.child),
             .fixed_size_list => a.fixed_size_list.len == b.fixed_size_list.len and
@@ -525,6 +543,10 @@ fn validateMapMeta(meta: MapMeta) ValidationError!void {
     for (fields) |field| try field.type.validate();
 }
 
+fn validateDecimalMeta(meta: DecimalMeta, max_precision: u8) ValidationError!void {
+    if (meta.precision == 0 or meta.precision > max_precision) return error.InvalidDecimalPrecision;
+}
+
 fn fieldsEqual(a: []const *const Field, b: []const *const Field) bool {
     if (a.len != b.len) return false;
     for (a, b) |left, right| {
@@ -543,6 +565,10 @@ fn metadataEqual(a: []const MetadataEntry, b: []const MetadataEntry) bool {
 
 fn unionEqual(a: UnionMeta, b: UnionMeta) bool {
     return fieldsEqual(a.fields, b.fields) and std.mem.eql(i8, a.type_ids, b.type_ids);
+}
+
+fn decimalEqual(a: DecimalMeta, b: DecimalMeta) bool {
+    return a.precision == b.precision and a.scale == b.scale;
 }
 
 test "DataType.equals" {
@@ -569,6 +595,14 @@ test "DataType.equals" {
         .{ .fixed_size_binary = .{ .byte_width = 16 } },
         .{ .fixed_size_binary = .{ .byte_width = 32 } },
     ));
+    try std.testing.expect(DataType.equals(
+        .{ .decimal128 = .{ .precision = 12, .scale = 2 } },
+        .{ .decimal128 = .{ .precision = 12, .scale = 2 } },
+    ));
+    try std.testing.expect(!DataType.equals(
+        .{ .decimal256 = .{ .precision = 40, .scale = 2 } },
+        .{ .decimal256 = .{ .precision = 40, .scale = -2 } },
+    ));
 
     const key_field = try Field.create(allocator, "key", &value_ty, false, &.{});
     defer key_field.deinit();
@@ -589,6 +623,8 @@ test "DataType.bitWidth" {
     try std.testing.expectEqual(@as(u16, 1), DataType.bitWidth(.bool));
     try std.testing.expectEqual(@as(u16, 32), DataType.bitWidth(.int32));
     try std.testing.expectEqual(@as(u16, 128), DataType.bitWidth(.{ .fixed_size_binary = .{ .byte_width = 16 } }));
+    try std.testing.expectEqual(@as(u16, 128), DataType.bitWidth(.{ .decimal128 = .{ .precision = 38, .scale = 0 } }));
+    try std.testing.expectEqual(@as(u16, 256), DataType.bitWidth(.{ .decimal256 = .{ .precision = 76, .scale = 0 } }));
     try std.testing.expectEqual(@as(u16, 64), DataType.bitWidth(.float64));
     try std.testing.expectEqual(@as(u16, 0), DataType.bitWidth(.binary));
 }
@@ -614,6 +650,9 @@ test "DataType.validate" {
     const duplicate_ids = [_]i8{ 1, 1 };
     const duplicate_union = DataType{ .dense_union = .{ .fields = &fields_ptrs, .type_ids = &duplicate_ids } };
     try std.testing.expectError(error.InvalidUnionTypeIds, duplicate_union.validate());
+    try DataType.validate(.{ .decimal128 = .{ .precision = 38, .scale = -3 } });
+    try std.testing.expectError(error.InvalidDecimalPrecision, DataType.validate(.{ .decimal128 = .{ .precision = 39, .scale = 0 } }));
+    try std.testing.expectError(error.InvalidDecimalPrecision, DataType.validate(.{ .decimal256 = .{ .precision = 0, .scale = 0 } }));
 
     const key_field = try Field.create(allocator, "key", &value_ty, false, &.{});
     defer key_field.deinit();

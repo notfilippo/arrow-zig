@@ -11,6 +11,7 @@ const base = @import("array_base.zig");
 const prim = @import("array_primitive.zig");
 const null_array = @import("array_null.zig");
 const binary = @import("array_binary.zig");
+const decimal = @import("array_decimal.zig");
 const list = @import("array_list.zig");
 const map_array = @import("array_map.zig");
 const dictionary = @import("array_dictionary.zig");
@@ -44,6 +45,9 @@ pub const ValueRange = list.ValueRange;
 /// Compile time kind for variable width binary arrays.
 pub const VarBinaryKind = binary.VarBinaryKind;
 
+/// Compile time kind for decimal arrays.
+pub const DecimalKind = decimal.DecimalKind;
+
 /// Error set for creating typed arrays from storage.
 pub const ViewError = base.ViewError;
 
@@ -60,6 +64,8 @@ pub const Utf8Array = binary.Utf8Array;
 pub const LargeBinaryArray = binary.LargeBinaryArray;
 pub const LargeUtf8Array = binary.LargeUtf8Array;
 pub const FixedSizeBinaryArray = binary.FixedSizeBinaryArray;
+pub const Decimal128Array = decimal.Decimal128Array;
+pub const Decimal256Array = decimal.Decimal256Array;
 pub const ListArray = list.ListArray;
 pub const LargeListArray = list.LargeListArray;
 pub const FixedSizeListArray = list.FixedSizeListArray;
@@ -70,6 +76,7 @@ pub const DenseUnionArray = union_array.DenseUnionArray;
 
 pub const dataTypeAcceptsZigType = base.dataTypeAcceptsZigType;
 pub const FixedWidthArray = prim.FixedWidthArray;
+pub const DecimalArray = decimal.DecimalArray;
 pub const VarListArray = list.VarListArray;
 pub const VarBinaryArray = binary.VarBinaryArray;
 

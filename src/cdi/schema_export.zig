@@ -205,6 +205,8 @@ fn formatForType(allocator: Allocator, ty: datatype.DataType) Error![:0]u8 {
         .large_binary => allocator.dupeZ(u8, "Z"),
         .large_utf8 => allocator.dupeZ(u8, "U"),
         .fixed_size_binary => |meta| std.fmt.allocPrintSentinel(allocator, "w:{d}", .{meta.byte_width}, 0),
+        .decimal128 => |meta| std.fmt.allocPrintSentinel(allocator, "d:{d},{d}", .{ meta.precision, meta.scale }, 0),
+        .decimal256 => |meta| std.fmt.allocPrintSentinel(allocator, "d:{d},{d},256", .{ meta.precision, meta.scale }, 0),
         .list => allocator.dupeZ(u8, "+l"),
         .large_list => allocator.dupeZ(u8, "+L"),
         .map => allocator.dupeZ(u8, "+m"),
