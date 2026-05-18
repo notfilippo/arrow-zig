@@ -35,6 +35,7 @@ const numeric = @import("builder_numeric.zig");
 const boolean = @import("builder_boolean.zig");
 const binary = @import("builder_binary.zig");
 const list = @import("builder_list.zig");
+const dictionary = @import("builder_dictionary.zig");
 const base = @import("builder_base.zig");
 
 pub const kMinBuilderCapacity = base.kMinBuilderCapacity;
@@ -55,3 +56,9 @@ pub const ListBuilderError = list.ListBuilderError;
 pub const ListBuilder = list.ListBuilder;
 pub const LargeListBuilder = list.LargeListBuilder;
 pub const FixedSizeListBuilder = list.FixedSizeListBuilder;
+pub const DictionaryOptions = dictionary.DictionaryOptions;
+pub const DictionaryBuilderError = dictionary.DictionaryBuilderError;
+
+pub fn DictionaryBuilder(comptime Index: type) type {
+    return dictionary.DictionaryBuilder(Index);
+}

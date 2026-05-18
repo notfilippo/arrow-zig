@@ -11,6 +11,7 @@ const base = @import("array_base.zig");
 const prim = @import("array_primitive.zig");
 const binary = @import("array_binary.zig");
 const list = @import("array_list.zig");
+const dictionary = @import("array_dictionary.zig");
 const nested = @import("array_nested.zig");
 
 /// Reference counted array storage.
@@ -63,6 +64,10 @@ pub const dataTypeAcceptsZigType = base.dataTypeAcceptsZigType;
 pub const FixedWidthArray = prim.FixedWidthArray;
 pub const VarListArray = list.VarListArray;
 pub const VarBinaryArray = binary.VarBinaryArray;
+
+pub fn DictionaryArray(comptime Index: type) type {
+    return dictionary.DictionaryArray(Index);
+}
 
 pub fn NumericArray(comptime T: type) type {
     return prim.NumericArray(T);
