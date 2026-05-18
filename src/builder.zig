@@ -37,6 +37,7 @@ const binary = @import("builder_binary.zig");
 const list = @import("builder_list.zig");
 const dictionary = @import("builder_dictionary.zig");
 const structs = @import("builder_struct.zig");
+const unions = @import("builder_union.zig");
 const base = @import("builder_base.zig");
 
 pub const kMinBuilderCapacity = base.kMinBuilderCapacity;
@@ -61,6 +62,8 @@ pub const DictionaryOptions = dictionary.DictionaryOptions;
 pub const DictionaryBuilderError = dictionary.DictionaryBuilderError;
 pub const StructFieldOptions = structs.FieldOptions;
 pub const StructBuilderError = structs.StructBuilderError;
+pub const UnionFieldOptions = unions.FieldOptions;
+pub const UnionBuilderError = unions.UnionBuilderError;
 
 pub fn DictionaryBuilder(comptime Index: type) type {
     return dictionary.DictionaryBuilder(Index);
@@ -68,4 +71,12 @@ pub fn DictionaryBuilder(comptime Index: type) type {
 
 pub fn StructBuilder(comptime ChildBuilders: type) type {
     return structs.StructBuilder(ChildBuilders);
+}
+
+pub fn SparseUnionBuilder(comptime ChildBuilders: type) type {
+    return unions.SparseUnionBuilder(ChildBuilders);
+}
+
+pub fn DenseUnionBuilder(comptime ChildBuilders: type) type {
+    return unions.DenseUnionBuilder(ChildBuilders);
 }
