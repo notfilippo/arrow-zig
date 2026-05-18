@@ -21,9 +21,6 @@ pub const InitError = array_data.InitError;
 /// Error set for storage validation.
 pub const ValidateError = array_data.ValidateError;
 
-/// Sentinel for deferred null count calculation.
-pub const unknown_null_count = array_data.unknown_null_count;
-
 /// Compile time kind for fixed width array views.
 pub const ArrayKind = array_view.ArrayKind;
 

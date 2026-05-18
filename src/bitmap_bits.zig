@@ -14,8 +14,6 @@ const flipped_bitmask = [8]u8{ 254, 253, 251, 247, 239, 223, 191, 127 };
 const preceding_bitmask = [8]u8{ 0, 1, 3, 7, 15, 31, 63, 127 };
 const trailing_bitmask = [8]u8{ 255, 254, 252, 248, 240, 224, 192, 128 };
 
-pub const unknown_null_count: usize = std.math.maxInt(usize);
-
 pub inline fn byteLen(n: usize) usize {
     return byteLenChecked(n) catch unreachable;
 }
@@ -158,8 +156,8 @@ pub fn invertBits(bits: []u8, bit_offset: usize, bit_len: usize) void {
     for (0..bit_len - done) |i| toggleBit(bits, bit_offset + done + i);
 }
 
-pub fn nullCountFor(validity_bytes: ?[]const u8, offset: usize, len: usize, hint: usize) usize {
-    if (hint != unknown_null_count) return hint;
+pub fn nullCountFor(validity_bytes: ?[]const u8, offset: usize, len: usize, hint: ?usize) usize {
+    if (hint) |h| return h;
     const bytes = validity_bytes orelse return 0;
     return len - countSetBits(bytes, offset, len);
 }

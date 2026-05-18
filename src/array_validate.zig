@@ -93,25 +93,23 @@ fn expectBufferCount(data: anytype, expected: usize) Error!void {
 fn validateNulls(data: anytype, total: usize, layout: datatype.NullLayout) (Error || checked.Error)!void {
     switch (layout) {
         .always_null => {
-            if (data.null_count != data.len) return error.NullCountMismatch;
+            if (data.null_count) |nc| if (nc != data.len) return error.NullCountMismatch;
         },
         .none => {
-            if (data.null_count != 0 and data.null_count != bitmap.unknown_null_count)
-                return error.NullCountWithoutValidity;
+            if (data.null_count) |nc| if (nc != 0) return error.NullCountWithoutValidity;
         },
         .bitmap => {
-            if (data.null_count != bitmap.unknown_null_count and data.null_count > data.len)
-                return error.NullCountOutOfBounds;
+            if (data.null_count) |nc| if (nc > data.len) return error.NullCountOutOfBounds;
 
             if (data.buffers[0]) |validity_buf| {
                 const needed = if (data.len == 0) 0 else try bitmap.byteLenChecked(total);
                 if (validity_buf.size < needed) return error.ValidityBufferTooSmall;
-                if (data.null_count != bitmap.unknown_null_count) {
+                if (data.null_count) |nc| {
                     const actual = data.len - bitmap.countSetBits(validity_buf.dataSlice(), data.offset, data.len);
-                    if (actual != data.null_count) return error.NullCountMismatch;
+                    if (actual != nc) return error.NullCountMismatch;
                 }
-            } else if (data.null_count != 0 and data.null_count != bitmap.unknown_null_count) {
-                return error.NullCountWithoutValidity;
+            } else {
+                if (data.null_count) |nc| if (nc != 0) return error.NullCountWithoutValidity;
             }
         },
     }

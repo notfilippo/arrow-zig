@@ -270,8 +270,8 @@ fn importOffset(value: i64) Error!usize {
     return i64ToUsize(value);
 }
 
-fn importNullCount(ty: datatype.DataType, value: i64, len: usize) Error!usize {
-    if (value == -1) return if (ty.id() == .null_) len else array.unknown_null_count;
+fn importNullCount(ty: datatype.DataType, value: i64, len: usize) Error!?usize {
+    if (value == -1) return if (ty.id() == .null_) len else null;
     if (value < -1) return error.InvalidNullCount;
     const null_count = try i64ToUsize(value);
     if (null_count > len) return error.NullCountOutOfBounds;

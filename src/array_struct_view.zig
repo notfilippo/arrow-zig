@@ -17,7 +17,7 @@ pub const StructArray = struct {
     data: *const ArrayData,
     offset: usize,
     len: usize,
-    null_count: usize,
+    null_count: ?usize,
 
     pub fn fromData(data: *const ArrayData) common.ViewError!StructArray {
         if (data.type.id() != .struct_) return error.TypeMismatch;

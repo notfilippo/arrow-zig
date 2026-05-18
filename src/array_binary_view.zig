@@ -46,7 +46,7 @@ pub fn VarBinaryView(comptime kind: VarBinaryKind) type {
         data: *const ArrayData,
         offset: usize,
         len: usize,
-        null_count: usize,
+        null_count: ?usize,
 
         pub fn fromData(data: *const ArrayData) common.ViewError!Self {
             if (!dataTypeMatches(kind, data.type)) return error.TypeMismatch;

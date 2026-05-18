@@ -69,7 +69,7 @@ pub fn slotIsValid(data: anytype, offset: usize, i: usize) bool {
     return bitmap.getBit(validity.dataSlice(), offset + i);
 }
 
-pub fn viewNullCount(data: anytype, offset: usize, len: usize, hint: usize) usize {
+pub fn viewNullCount(data: anytype, offset: usize, len: usize, hint: ?usize) usize {
     if (data.type.id() == .null_) return len;
     const validity = data.buffers[0];
     return bitmap.nullCountFor(

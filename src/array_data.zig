@@ -20,7 +20,6 @@ const Buffer = buffer_mod.Buffer;
 const ExternalOwnerHandle = buffer_mod.ExternalOwnerHandle;
 const RefCount = @import("refcount.zig").RefCount;
 
-pub const unknown_null_count = bitmap.unknown_null_count;
 pub const ValidateError = array_validate.Error;
 pub const InitError = Allocator.Error || checked.Error;
 pub const DataSliceError = InitError || error{OffsetOutOfBounds};
@@ -30,7 +29,7 @@ pub const ArrayData = struct {
     type: datatype.DataType,
     len: usize,
     offset: usize,
-    null_count: usize,
+    null_count: ?usize,
     buffers: []?*Buffer,
     children: []*ArrayData,
     dictionary: ?*ArrayData,
@@ -50,7 +49,7 @@ pub const ArrayData = struct {
         ty: datatype.DataType,
         len: usize,
         offset: usize,
-        null_count: usize,
+        null_count: ?usize,
         buffers: []const ?*Buffer,
         children: []const *ArrayData,
         dictionary: ?*ArrayData,
@@ -65,7 +64,7 @@ pub const ArrayData = struct {
         ty: datatype.DataType,
         len: usize,
         offset: usize,
-        null_count: usize,
+        null_count: ?usize,
         buffers: []const ?*Buffer,
         children: []const *ArrayData,
         dictionary: ?*ArrayData,
@@ -82,7 +81,7 @@ pub const ArrayData = struct {
         ty: datatype.DataType,
         len: usize,
         offset: usize,
-        null_count: usize,
+        null_count: ?usize,
         buffers: []const ?*Buffer,
         children: []const *ArrayData,
         dictionary: ?*ArrayData,
@@ -95,7 +94,7 @@ pub const ArrayData = struct {
         ty: datatype.DataType,
         len: usize,
         offset: usize,
-        null_count: usize,
+        null_count: ?usize,
         buffers: []const ?*Buffer,
         children: []const *ArrayData,
         dictionary: ?*ArrayData,
@@ -214,11 +213,12 @@ pub const ArrayData = struct {
     }
 };
 
-pub fn slicedNullCount(nc: usize, len: usize, off: usize, clamped: usize) usize {
-    if (nc == 0) return 0;
-    if (nc == len) return clamped;
-    if (off == 0 and clamped == len) return nc;
-    return unknown_null_count;
+pub fn slicedNullCount(nc: ?usize, len: usize, off: usize, clamped: usize) ?usize {
+    const known = nc orelse return null;
+    if (known == 0) return 0;
+    if (known == len) return clamped;
+    if (off == 0 and clamped == len) return known;
+    return null;
 }
 
 fn writeTestInt(comptime T: type, buffer: *Buffer, index: usize, value: T) void {
@@ -320,7 +320,7 @@ test "ArrayData slice retains buffers and adjusts metadata" {
 
     try std.testing.expectEqual(@as(usize, 3), sliced.len);
     try std.testing.expectEqual(@as(usize, 1), sliced.offset);
-    try std.testing.expectEqual(unknown_null_count, sliced.null_count);
+    try std.testing.expectEqual(@as(?usize, null), sliced.null_count);
     try std.testing.expectEqual(@as(usize, 1), sliced.nullCount());
     try std.testing.expectEqual(@as(usize, 2), validity.refCount());
     try std.testing.expectEqual(@as(usize, 2), values.refCount());

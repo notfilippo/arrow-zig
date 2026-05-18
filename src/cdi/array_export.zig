@@ -21,7 +21,7 @@ pub fn exportArray(allocator: Allocator, data: *ArrayData, out: *ArrowArray) Err
     try data.validate();
 
     const length = try usizeToI64(data.len);
-    const null_count: i64 = if (data.null_count == array.unknown_null_count) -1 else try usizeToI64(data.null_count);
+    const null_count: i64 = if (data.null_count) |nc| try usizeToI64(nc) else -1;
     const offset = try usizeToI64(data.offset);
     const n_buffers = try usizeToI64(data.buffers.len);
     const n_children = try usizeToI64(data.children.len);

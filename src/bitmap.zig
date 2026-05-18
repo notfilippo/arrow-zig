@@ -11,7 +11,6 @@ const bits = @import("bitmap_bits.zig");
 const ops = @import("bitmap_ops.zig");
 const builder = @import("bitmap_builder.zig");
 
-pub const unknown_null_count = bits.unknown_null_count;
 pub const BitmapBuilder = builder.BitmapBuilder;
 
 pub const byteLen = bits.byteLen;

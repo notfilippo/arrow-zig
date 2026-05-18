@@ -53,7 +53,7 @@ pub fn FixedWidthView(comptime kind: ArrayKind) type {
         data: *const ArrayData,
         offset: usize,
         len: usize,
-        null_count: usize,
+        null_count: ?usize,
 
         pub fn fromData(data: *const ArrayData) common.ViewError!Self {
             if (!dataTypeMatchesKind(kind, data.type)) return error.TypeMismatch;
@@ -184,7 +184,7 @@ test "NumericArray basic slices and ownership" {
     try std.testing.expect(arr.isNull(1));
 
     const sliced = arr.slice(1, 3);
-    try std.testing.expectEqual(array_data.unknown_null_count, sliced.null_count);
+    try std.testing.expectEqual(@as(?usize, null), sliced.null_count);
     try std.testing.expectEqual(@as(usize, 2), sliced.nullCount());
     try std.testing.expectEqual(@as(i32, 30), sliced.value(1));
 
