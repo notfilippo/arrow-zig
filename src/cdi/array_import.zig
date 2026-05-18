@@ -213,6 +213,10 @@ fn valuesBufferSize(
     if (len == 0) return 0;
     if (spec.bit_width == 1) return try bitmap.byteLenChecked(total);
     if (spec.byte_width != 0) return try checked.mul(total, spec.byte_width);
+    switch (ty) {
+        .fixed_size_binary => |meta| return try checked.mul(total, meta.byte_width),
+        else => {},
+    }
     const offset_width: usize = switch (ty) {
         .binary, .utf8 => @sizeOf(i32),
         .large_binary, .large_utf8 => @sizeOf(i64),

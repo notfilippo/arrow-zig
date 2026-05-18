@@ -64,7 +64,7 @@ fn validateData(data: anytype, ty: datatype.DataType, total: usize) (Error || ch
     }
 
     switch (ty) {
-        .bool, .int8, .int16, .int32, .int64, .uint8, .uint16, .uint32, .uint64, .float16, .float32, .float64, .date32, .date64, .time32, .time64, .timestamp, .duration => {
+        .bool, .int8, .int16, .int32, .int64, .uint8, .uint16, .uint32, .uint64, .float16, .float32, .float64, .date32, .date64, .time32, .time64, .timestamp, .duration, .fixed_size_binary => {
             try validateFixedWidth(data, total, ty);
         },
         .binary, .utf8 => try validateBinaryLike(data, total, i32),
@@ -119,10 +119,11 @@ fn validateNulls(data: anytype, total: usize, layout: datatype.NullLayout) (Erro
 fn validateFixedWidth(data: anytype, total: usize, ty: datatype.DataType) (Error || checked.Error)!void {
     const value_needed: usize = if (data.len == 0)
         0
-    else if (ty.id() == .bool)
-        try bitmap.byteLenChecked(total)
-    else
-        try checked.mul(total, @as(usize, ty.bitWidth()) / 8);
+    else switch (ty) {
+        .bool => try bitmap.byteLenChecked(total),
+        .fixed_size_binary => |meta| try checked.mul(total, meta.byte_width),
+        else => try checked.mul(total, @as(usize, ty.bitWidth()) / 8),
+    };
 
     if (data.buffers[1]) |values_buf| {
         if (values_buf.size < value_needed) return error.ValuesBufferTooSmall;
@@ -398,6 +399,21 @@ test "validate null and binary storage" {
     const binary = try ArrayData.initOwned(allocator, .binary, 2, 0, 0, &.{ null, offsets, values }, &.{}, null);
     defer binary.deinit();
     try binary.validate();
+
+    const fixed_values = try Buffer.allocate(allocator, 2 * 3);
+    errdefer fixed_values.deinit();
+    fixed_values.freeze();
+    const fixed_ty = datatype.DataType{ .fixed_size_binary = .{ .byte_width = 3 } };
+    const fixed = try ArrayData.initOwned(allocator, fixed_ty, 2, 0, 0, &.{ null, fixed_values }, &.{}, null);
+    defer fixed.deinit();
+    try fixed.validate();
+
+    const short_fixed_values = try Buffer.allocate(allocator, 5);
+    errdefer short_fixed_values.deinit();
+    short_fixed_values.freeze();
+    const short_fixed = try ArrayData.initOwned(allocator, fixed_ty, 2, 0, 0, &.{ null, short_fixed_values }, &.{}, null);
+    defer short_fixed.deinit();
+    try std.testing.expectError(error.ValuesBufferTooSmall, short_fixed.validate());
 
     const short_offsets = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
     errdefer short_offsets.deinit();

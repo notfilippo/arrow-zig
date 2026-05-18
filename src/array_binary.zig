@@ -122,6 +122,82 @@ pub const Utf8Array = VarBinaryArray(.utf8);
 pub const LargeBinaryArray = VarBinaryArray(.large_binary);
 pub const LargeUtf8Array = VarBinaryArray(.large_utf8);
 
+pub const FixedSizeBinaryArray = struct {
+    data: *const ArrayData,
+    offset: usize,
+    len: usize,
+    null_count: ?usize,
+
+    pub fn fromData(data: *const ArrayData) common.ViewError!FixedSizeBinaryArray {
+        if (data.type.id() != .fixed_size_binary) return error.TypeMismatch;
+        if (data.buffers.len < 2 or data.buffers[1] == null) return error.InvalidBufferLayout;
+        return .{
+            .data = data,
+            .offset = data.offset,
+            .len = data.len,
+            .null_count = data.null_count,
+        };
+    }
+
+    pub fn dataType(self: FixedSizeBinaryArray) datatype.DataType {
+        return self.data.type;
+    }
+
+    pub fn baseData(self: FixedSizeBinaryArray) *const ArrayData {
+        return self.data;
+    }
+
+    pub fn byteWidth(self: FixedSizeBinaryArray) usize {
+        return self.data.type.fixed_size_binary.byte_width;
+    }
+
+    pub fn valueBytes(self: FixedSizeBinaryArray, i: usize) []const u8 {
+        const width = self.byteWidth();
+        const start = (self.offset + i) * width;
+        return self.data.buffers[1].?.dataSlice()[start..][0..width];
+    }
+
+    pub fn value(self: FixedSizeBinaryArray, i: usize) []const u8 {
+        return self.valueBytes(i);
+    }
+
+    pub fn isValid(self: FixedSizeBinaryArray, i: usize) bool {
+        return common.slotIsValid(self.data, self.offset, i);
+    }
+
+    pub fn isNull(self: FixedSizeBinaryArray, i: usize) bool {
+        return !self.isValid(i);
+    }
+
+    pub fn nullCount(self: FixedSizeBinaryArray) usize {
+        return common.viewNullCount(self.data, self.offset, self.len, self.null_count);
+    }
+
+    pub fn slice(self: FixedSizeBinaryArray, off: usize, length: usize) FixedSizeBinaryArray {
+        return self.sliceChecked(off, length) catch unreachable;
+    }
+
+    pub fn sliceChecked(self: FixedSizeBinaryArray, off: usize, length: usize) common.SliceError!FixedSizeBinaryArray {
+        const clamped = try common.clampedLen(self.len, off, length);
+        return .{
+            .data = self.data,
+            .offset = self.offset + off,
+            .len = clamped,
+            .null_count = array_data.slicedNullCount(self.null_count, self.len, off, clamped),
+        };
+    }
+
+    pub fn sliceOwned(self: FixedSizeBinaryArray, off: usize, length: usize) array_data.DataSliceError!*ArrayData {
+        const clamped = try common.clampedLen(self.len, off, length);
+        const data_off = try common.dataRelativeOffset(self.data.offset, self.offset, off);
+        return self.data.slice(data_off, clamped);
+    }
+
+    pub fn cloneRetained(self: FixedSizeBinaryArray) array_data.DataSliceError!*ArrayData {
+        return self.sliceOwned(0, self.len);
+    }
+};
+
 test "BinaryArray reads ranges and slices" {
     const allocator = std.testing.allocator;
     const offsets = try Buffer.allocate(allocator, 4 * @sizeOf(i32));
@@ -157,4 +233,35 @@ test "BinaryArray reads ranges and slices" {
     try std.testing.expectEqualStrings("", sliced_clone_arr.valueBytes(0));
 
     try std.testing.expectError(error.OffsetOutOfBounds, arr.sliceChecked(4, 1));
+}
+
+test "FixedSizeBinaryArray reads slots and slices" {
+    const allocator = std.testing.allocator;
+    const values = try Buffer.allocate(allocator, 4 * 3);
+    errdefer values.deinit();
+    @memcpy(values.data[0..12], "abcdefghijkl");
+    values.freeze();
+
+    const ty = datatype.DataType{ .fixed_size_binary = .{ .byte_width = 3 } };
+    const data = try ArrayData.initOwned(allocator, ty, 4, 0, 0, &.{ null, values }, &.{}, null);
+    defer data.deinit();
+    try data.validate();
+
+    const arr = try FixedSizeBinaryArray.fromData(data);
+    try std.testing.expectEqual(@as(usize, 3), arr.byteWidth());
+    try std.testing.expectEqualStrings("abc", arr.valueBytes(0));
+    try std.testing.expectEqualStrings("jkl", arr.value(3));
+    try std.testing.expectEqualStrings("def", arr.slice(1, 2).valueBytes(0));
+
+    const sliced_owned = try arr.slice(1, 2).sliceOwned(0, 1);
+    defer sliced_owned.deinit();
+    const sliced_owned_arr = try FixedSizeBinaryArray.fromData(sliced_owned);
+    try std.testing.expectEqualStrings("def", sliced_owned_arr.valueBytes(0));
+
+    const sliced_clone = try arr.slice(1, 2).cloneRetained();
+    defer sliced_clone.deinit();
+    const sliced_clone_arr = try FixedSizeBinaryArray.fromData(sliced_clone);
+    try std.testing.expectEqualStrings("ghi", sliced_clone_arr.valueBytes(1));
+
+    try std.testing.expectError(error.OffsetOutOfBounds, arr.sliceChecked(5, 1));
 }

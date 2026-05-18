@@ -126,6 +126,7 @@ fn importFormatType(
     if (std.mem.eql(u8, format, "u")) return noChildType(schema, .utf8);
     if (std.mem.eql(u8, format, "Z")) return noChildType(schema, .large_binary);
     if (std.mem.eql(u8, format, "U")) return noChildType(schema, .large_utf8);
+    if (std.mem.startsWith(u8, format, "w:")) return try importFixedSizeBinaryType(schema, format[2..]);
     if (format.len == 0) return error.InvalidFormat;
     return switch (format[0]) {
         't' => importTemporalType(allocator, schema, format),
@@ -193,6 +194,14 @@ fn importFixedSizeListType(
         .child = try importSingleChildField(allocator, schema),
         .len = len,
     } };
+}
+
+fn importFixedSizeBinaryType(
+    schema: *const ArrowSchema,
+    width_text: []const u8,
+) Error!datatype.DataType {
+    try expectSchemaChildCount(schema, 0);
+    return .{ .fixed_size_binary = .{ .byte_width = try parseUsize(width_text) } };
 }
 
 fn importSingleChildField(allocator: Allocator, schema: *const ArrowSchema) Error!*const datatype.Field {

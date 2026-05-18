@@ -57,6 +57,7 @@ pub const BinaryBuilder = binary.BinaryBuilder;
 pub const Utf8Builder = binary.Utf8Builder;
 pub const LargeBinaryBuilder = binary.LargeBinaryBuilder;
 pub const LargeUtf8Builder = binary.LargeUtf8Builder;
+pub const FixedSizeBinaryBuilder = binary.FixedSizeBinaryBuilder;
 pub const VarListBuilder = list.VarListBuilder;
 pub const ListBuilderError = list.ListBuilderError;
 pub const ListBuilder = list.ListBuilder;

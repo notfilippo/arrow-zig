@@ -121,6 +121,7 @@ test "importType round trips scalar schemas" {
         .utf8,
         .large_binary,
         .large_utf8,
+        .{ .fixed_size_binary = .{ .byte_width = 16 } },
     };
 
     for (cases) |ty| try expectImportTypeRoundTrip(allocator, ty);

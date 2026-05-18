@@ -35,6 +35,7 @@ pub const TypeId = enum(u8) {
     utf8,
     large_binary,
     large_utf8,
+    fixed_size_binary,
     list,
     large_list,
     fixed_size_list,
@@ -153,6 +154,10 @@ pub const ListMeta = struct {
 pub const FixedSizeListMeta = struct {
     child: *const Field,
     len: usize,
+};
+
+pub const FixedSizeBinaryMeta = struct {
+    byte_width: usize,
 };
 
 pub const MapMeta = struct {
@@ -280,6 +285,7 @@ pub const DataType = union(TypeId) {
     utf8,
     large_binary,
     large_utf8,
+    fixed_size_binary: FixedSizeBinaryMeta,
     list: ListMeta,
     large_list: ListMeta,
     fixed_size_list: FixedSizeListMeta,
@@ -303,6 +309,7 @@ pub const DataType = union(TypeId) {
             .int16, .uint16, .float16 => 16,
             .int32, .uint32, .float32, .date32, .time32 => 32,
             .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration => 64,
+            .fixed_size_binary => |meta| if (meta.byte_width > std.math.maxInt(u16) / 8) 0 else @intCast(meta.byte_width * 8),
             .binary, .utf8, .large_binary, .large_utf8, .list, .large_list, .fixed_size_list, .map, .struct_, .sparse_union, .dense_union => 0,
             .dictionary => |meta| meta.index_type.bitWidth(),
         };
@@ -334,6 +341,7 @@ pub const DataType = union(TypeId) {
             .utf8 => "utf8",
             .large_binary => "large_binary",
             .large_utf8 => "large_utf8",
+            .fixed_size_binary => "fixed_size_binary",
             .list => "list",
             .large_list => "large_list",
             .fixed_size_list => "fixed_size_list",
@@ -416,6 +424,7 @@ pub const DataType = union(TypeId) {
             .duration => a.duration == b.duration,
             .timestamp => a.timestamp.unit == b.timestamp.unit and
                 std.mem.eql(u8, a.timestamp.tz orelse "", b.timestamp.tz orelse ""),
+            .fixed_size_binary => a.fixed_size_binary.byte_width == b.fixed_size_binary.byte_width,
             .list => Field.equals(a.list.child, b.list.child),
             .large_list => Field.equals(a.large_list.child, b.large_list.child),
             .fixed_size_list => a.fixed_size_list.len == b.fixed_size_list.len and
@@ -552,6 +561,14 @@ test "DataType.equals" {
     const list_a = DataType{ .list = .{ .child = item_field } };
     const list_b = DataType{ .list = .{ .child = item_field } };
     try std.testing.expect(DataType.equals(list_a, list_b));
+    try std.testing.expect(DataType.equals(
+        .{ .fixed_size_binary = .{ .byte_width = 16 } },
+        .{ .fixed_size_binary = .{ .byte_width = 16 } },
+    ));
+    try std.testing.expect(!DataType.equals(
+        .{ .fixed_size_binary = .{ .byte_width = 16 } },
+        .{ .fixed_size_binary = .{ .byte_width = 32 } },
+    ));
 
     const key_field = try Field.create(allocator, "key", &value_ty, false, &.{});
     defer key_field.deinit();
@@ -571,6 +588,7 @@ test "DataType.equals" {
 test "DataType.bitWidth" {
     try std.testing.expectEqual(@as(u16, 1), DataType.bitWidth(.bool));
     try std.testing.expectEqual(@as(u16, 32), DataType.bitWidth(.int32));
+    try std.testing.expectEqual(@as(u16, 128), DataType.bitWidth(.{ .fixed_size_binary = .{ .byte_width = 16 } }));
     try std.testing.expectEqual(@as(u16, 64), DataType.bitWidth(.float64));
     try std.testing.expectEqual(@as(u16, 0), DataType.bitWidth(.binary));
 }

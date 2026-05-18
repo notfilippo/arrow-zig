@@ -59,6 +59,7 @@ pub const BinaryArray = binary.BinaryArray;
 pub const Utf8Array = binary.Utf8Array;
 pub const LargeBinaryArray = binary.LargeBinaryArray;
 pub const LargeUtf8Array = binary.LargeUtf8Array;
+pub const FixedSizeBinaryArray = binary.FixedSizeBinaryArray;
 pub const ListArray = list.ListArray;
 pub const LargeListArray = list.LargeListArray;
 pub const FixedSizeListArray = list.FixedSizeListArray;

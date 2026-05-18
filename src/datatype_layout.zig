@@ -51,6 +51,10 @@ const fixed_8_buffers = [_]BufferSpec{
     .{ .kind = .validity },
     .{ .kind = .values, .byte_width = 8 },
 };
+const fixed_size_binary_buffers = [_]BufferSpec{
+    .{ .kind = .validity },
+    .{ .kind = .values },
+};
 const binary_buffers = [_]BufferSpec{
     .{ .kind = .validity },
     .{ .kind = .offsets, .byte_width = 4 },
@@ -86,6 +90,7 @@ pub fn layout(ty: anytype) Layout {
         .int16, .uint16, .float16 => .{ .buffers = &fixed_2_buffers },
         .int32, .uint32, .float32, .date32, .time32 => .{ .buffers = &fixed_4_buffers },
         .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration => .{ .buffers = &fixed_8_buffers },
+        .fixed_size_binary => .{ .buffers = &fixed_size_binary_buffers },
         .binary, .utf8 => .{ .buffers = &binary_buffers },
         .large_binary, .large_utf8 => .{ .buffers = &large_binary_buffers },
         .list, .map => .{ .buffers = &list_buffers },
@@ -110,6 +115,7 @@ test "layout describes buffers" {
     try std.testing.expectEqual(@as(usize, 2), int32_ty.layout().buffers.len);
     try std.testing.expectEqual(BufferKind.values, int32_ty.layout().buffers[1].kind);
     try std.testing.expectEqual(@as(usize, 4), int32_ty.layout().buffers[1].byte_width);
+    try std.testing.expectEqual(@as(usize, 2), (datatype.DataType{ .fixed_size_binary = .{ .byte_width = 16 } }).layout().buffers.len);
     try std.testing.expectEqual(@as(usize, 3), binary_ty.layout().buffers.len);
     try std.testing.expectEqual(BufferKind.offsets, binary_ty.layout().buffers[1].kind);
     try std.testing.expectEqual(BufferKind.type_ids, (datatype.DataType{ .sparse_union = .{ .fields = &.{}, .type_ids = &.{} } }).layout().buffers[0].kind);

@@ -17,7 +17,7 @@ const ArrayData = array.ArrayData;
 const Buffer = @import("buffer.zig").Buffer;
 const builder_base = @import("builder_base.zig");
 
-pub const BinaryBuilderError = Allocator.Error || checked.Error || error{InvalidUtf8};
+pub const BinaryBuilderError = Allocator.Error || checked.Error || error{ InvalidByteWidth, InvalidUtf8 };
 
 pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
     const Offset = switch (kind) {
@@ -168,6 +168,129 @@ pub const Utf8Builder = VarBinaryBuilder(.utf8);
 pub const LargeBinaryBuilder = VarBinaryBuilder(.large_binary);
 pub const LargeUtf8Builder = VarBinaryBuilder(.large_utf8);
 
+pub const FixedSizeBinaryBuilder = struct {
+    pub const Array = array.FixedSizeBinaryArray;
+    pub const Error = BinaryBuilderError;
+
+    allocator: Allocator,
+    byte_width: usize,
+    values: ?*Buffer,
+    validity: bitmap.BitmapBuilder,
+    len: usize,
+
+    pub fn init(allocator: Allocator, byte_width: usize) FixedSizeBinaryBuilder {
+        return .{
+            .allocator = allocator,
+            .byte_width = byte_width,
+            .values = null,
+            .validity = bitmap.BitmapBuilder.init(),
+            .len = 0,
+        };
+    }
+
+    pub fn deinit(self: *FixedSizeBinaryBuilder) void {
+        self.reset();
+    }
+
+    pub fn reset(self: *FixedSizeBinaryBuilder) void {
+        if (self.values) |buf| buf.deinit();
+        self.values = null;
+        self.validity.deinit();
+        self.len = 0;
+    }
+
+    pub fn reserve(self: *FixedSizeBinaryBuilder, additional: usize) Error!void {
+        if (additional == 0) return;
+        const values = try self.ensureValues();
+        const byte_len = try checked.mul(additional, self.byte_width);
+        try values.reserve(try checked.add(values.size, byte_len));
+        try self.validity.ensureCapacityForBits(self.allocator, additional);
+    }
+
+    pub fn append(self: *FixedSizeBinaryBuilder, bytes: []const u8) Error!void {
+        if (bytes.len != self.byte_width) return error.InvalidByteWidth;
+        try self.appendUnchecked(bytes);
+    }
+
+    pub fn appendBytes(self: *FixedSizeBinaryBuilder, bytes: []const u8) Error!void {
+        try self.append(bytes);
+    }
+
+    pub fn appendNull(self: *FixedSizeBinaryBuilder) Error!void {
+        try self.appendNulls(1);
+    }
+
+    pub fn appendNulls(self: *FixedSizeBinaryBuilder, n: usize) Error!void {
+        if (n == 0) return;
+        try self.reserve(n);
+        const values = self.values.?;
+        const byte_len = try checked.mul(n, self.byte_width);
+        const end = try checked.add(values.size, byte_len);
+        if (byte_len != 0) @memset(values.data[values.size..end], 0);
+        values.size = end;
+        self.validity.unsafeAppendN(false, n);
+        self.len = try checked.add(self.len, n);
+    }
+
+    pub fn appendEmptyValue(self: *FixedSizeBinaryBuilder) Error!void {
+        try self.appendEmptyValues(1);
+    }
+
+    pub fn appendEmptyValues(self: *FixedSizeBinaryBuilder, n: usize) Error!void {
+        if (n == 0) return;
+        try self.reserve(n);
+        const values = self.values.?;
+        const byte_len = try checked.mul(n, self.byte_width);
+        const end = try checked.add(values.size, byte_len);
+        if (byte_len != 0) @memset(values.data[values.size..end], 0);
+        values.size = end;
+        self.validity.unsafeAppendN(true, n);
+        self.len = try checked.add(self.len, n);
+    }
+
+    pub fn length(self: FixedSizeBinaryBuilder) usize {
+        return self.len;
+    }
+
+    pub fn finish(self: *FixedSizeBinaryBuilder) Error!*ArrayData {
+        const n = self.len;
+        const null_count = self.validity.false_count;
+        self.len = 0;
+
+        const values_buf = try self.finishValues();
+        errdefer values_buf.deinit();
+        const validity_buf = try self.validity.finishNullable(self.allocator);
+        errdefer if (validity_buf) |buf| buf.deinit();
+
+        const ty = datatype.DataType{ .fixed_size_binary = .{ .byte_width = self.byte_width } };
+        return ArrayData.initOwned(self.allocator, ty, n, 0, null_count, &.{ validity_buf, values_buf }, &.{}, null);
+    }
+
+    fn appendUnchecked(self: *FixedSizeBinaryBuilder, bytes: []const u8) Error!void {
+        try self.reserve(1);
+        const values = self.values.?;
+        const end = try checked.add(values.size, bytes.len);
+        if (bytes.len != 0) @memcpy(values.data[values.size..end], bytes);
+        values.size = end;
+        self.validity.unsafeAppend(true);
+        self.len += 1;
+    }
+
+    fn ensureValues(self: *FixedSizeBinaryBuilder) Error!*Buffer {
+        if (self.values == null) self.values = try Buffer.allocate(self.allocator, 0);
+        return self.values.?;
+    }
+
+    fn finishValues(self: *FixedSizeBinaryBuilder) Error!*Buffer {
+        const values = if (self.values) |buf| blk: {
+            self.values = null;
+            break :blk buf;
+        } else try Buffer.allocate(self.allocator, 0);
+        values.freeze();
+        return values;
+    }
+};
+
 fn dataTypeForKind(comptime kind: array.VarBinaryKind) datatype.DataType {
     return switch (kind) {
         .binary => .binary,
@@ -253,4 +376,47 @@ test "LargeBinaryBuilder uses large offsets" {
     try std.testing.expectEqualStrings("alpha", arr.valueBytes(0));
     try std.testing.expectEqualStrings("beta", arr.valueBytes(1));
     try std.testing.expectEqual(@as(usize, 3 * @sizeOf(i64)), data.buffers[1].?.size);
+}
+
+test "FixedSizeBinaryBuilder builds fixed width bytes" {
+    const allocator = std.testing.allocator;
+    var b = FixedSizeBinaryBuilder.init(allocator, 3);
+    defer b.deinit();
+
+    try b.append("abc");
+    try b.appendNull();
+    try b.append("ghi");
+    try b.appendEmptyValue();
+    const data = try b.finish();
+    defer data.deinit();
+    try data.validate();
+
+    const arr = try array.FixedSizeBinaryArray.fromData(data);
+    try std.testing.expectEqual(@as(usize, 4), arr.len);
+    try std.testing.expectEqual(@as(usize, 1), arr.nullCount());
+    try std.testing.expectEqualStrings("abc", arr.valueBytes(0));
+    try std.testing.expect(arr.isNull(1));
+    try std.testing.expectEqualStrings("ghi", arr.value(2));
+    try std.testing.expectEqualStrings(&[_]u8{ 0, 0, 0 }, arr.valueBytes(3));
+}
+
+test "FixedSizeBinaryBuilder rejects wrong width and reuses state" {
+    const allocator = std.testing.allocator;
+    var b = FixedSizeBinaryBuilder.init(allocator, 2);
+    defer b.deinit();
+
+    try std.testing.expectError(error.InvalidByteWidth, b.append("a"));
+    try b.append("ab");
+    const data1 = try b.finish();
+    defer data1.deinit();
+    const arr1 = try array.FixedSizeBinaryArray.fromData(data1);
+    try std.testing.expectEqualStrings("ab", arr1.valueBytes(0));
+
+    try b.appendEmptyValues(2);
+    const data2 = try b.finish();
+    defer data2.deinit();
+    try data2.validate();
+    const arr2 = try array.FixedSizeBinaryArray.fromData(data2);
+    try std.testing.expect(data2.buffers[0] == null);
+    try std.testing.expectEqualStrings(&[_]u8{ 0, 0 }, arr2.valueBytes(1));
 }
