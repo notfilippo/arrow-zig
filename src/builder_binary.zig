@@ -15,6 +15,7 @@ const offset_data = @import("offsets.zig");
 const array = @import("array.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("buffer.zig").Buffer;
+const builder_base = @import("builder_base.zig");
 
 pub const BinaryBuilderError = Allocator.Error || checked.Error || error{InvalidUtf8};
 
@@ -46,6 +47,11 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
         }
 
         pub fn deinit(self: *Self) void {
+            self.reset();
+        }
+
+        /// Release all held memory and return to the post-`init` state.
+        pub fn reset(self: *Self) void {
             self.offsets.deinit();
             if (self.values) |buf| buf.deinit();
             self.values = null;
@@ -56,7 +62,8 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
         pub fn reserve(self: *Self, additional: usize, additional_bytes: usize) Error!void {
             if (additional == 0 and additional_bytes == 0) return;
             const new_len = try checked.add(self.len, additional);
-            try self.offsets.reserveSlots(self.allocator, try checked.add(new_len, 1));
+            const capped_len = @max(new_len, builder_base.kMinBuilderCapacity);
+            try self.offsets.reserveSlots(self.allocator, try checked.add(capped_len, 1));
 
             const values = try self.ensureValues();
             try values.reserve(try checked.add(values.size, additional_bytes));
@@ -88,6 +95,21 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             const values = self.values.?;
             try self.offsets.appendRepeat(self.allocator, n, values.size);
             self.validity.unsafeAppendN(false, n);
+            self.len = try checked.add(self.len, n);
+        }
+
+        /// Append a valid empty-bytes slot.
+        pub fn appendEmptyValue(self: *Self) Error!void {
+            return self.appendBytes("");
+        }
+
+        /// Append `n` valid empty-bytes slots.
+        pub fn appendEmptyValues(self: *Self, n: usize) Error!void {
+            if (n == 0) return;
+            try self.reserve(n, 0);
+            const values = self.values.?;
+            try self.offsets.appendRepeat(self.allocator, n, values.size);
+            self.validity.unsafeAppendN(true, n);
             self.len = try checked.add(self.len, n);
         }
 

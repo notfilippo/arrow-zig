@@ -15,6 +15,7 @@ const datatype = @import("datatype.zig");
 const array = @import("array.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("buffer.zig").Buffer;
+const builder_base = @import("builder_base.zig");
 
 pub const NumericBuilderInitError = datatype.ValidationError || error{TypeMismatch};
 pub const NumericBuilderError = Allocator.Error || checked.Error || error{ValidityBufferTooSmall};
@@ -54,6 +55,11 @@ pub fn NumericBuilder(comptime T: type) type {
         }
 
         pub fn deinit(self: *Self) void {
+            self.reset();
+        }
+
+        /// Release all held memory and return to the post-`init` state.
+        pub fn reset(self: *Self) void {
             if (self.values) |v| v.deinit();
             self.values = null;
             self.validity.deinit();
@@ -64,7 +70,8 @@ pub fn NumericBuilder(comptime T: type) type {
             if (additional == 0) return;
             const buf = try self.ensureValues();
             const new_len = try checked.add(self.len, additional);
-            try buf.reserve(try checked.mul(new_len, @sizeOf(T)));
+            const capped_len = @max(new_len, builder_base.kMinBuilderCapacity);
+            try buf.reserve(try checked.mul(capped_len, @sizeOf(T)));
             try self.validity.ensureCapacityForBits(self.allocator, additional);
         }
 
@@ -103,35 +110,23 @@ pub fn NumericBuilder(comptime T: type) type {
             self.len = try checked.add(self.len, vs.len);
         }
 
-        pub fn appendValues(self: *Self, vs: []const T, valid_bytes: ?[]const u8) Error!void {
-            if (vs.len == 0) return;
-            if (valid_bytes == null) return self.appendSlice(vs);
-            const vb = valid_bytes.?;
-            if (vb.len < vs.len) return error.ValidityBufferTooSmall;
-            try self.reserve(vs.len);
-            const buf = self.values.?;
-            const byte_len = try checked.mul(vs.len, @sizeOf(T));
-            const end = try checked.add(buf.size, byte_len);
-            const dst: [*]T = @ptrCast(@alignCast(buf.data + buf.size));
-            @memcpy(dst[0..vs.len], vs);
-            buf.size = end;
-            for (0..vs.len) |i| self.validity.unsafeAppend(vb[i] != 0);
-            self.len = try checked.add(self.len, vs.len);
+        /// Append a valid zero-valued slot without allocating a temporary slice.
+        pub fn appendEmptyValue(self: *Self) Error!void {
+            try self.reserve(1);
+            self.unsafeAppendEmptyValue();
         }
 
-        pub fn appendValuesBitmap(self: *Self, vs: []const T, validity: []const u8, validity_offset: usize) Error!void {
-            if (vs.len == 0) return;
-            const needed = try bitmap.byteLenChecked(try checked.add(validity_offset, vs.len));
-            if (validity.len < needed) return error.ValidityBufferTooSmall;
-            try self.reserve(vs.len);
+        /// Append `n` valid zero-valued slots.
+        pub fn appendEmptyValues(self: *Self, n: usize) Error!void {
+            if (n == 0) return;
+            try self.reserve(n);
             const buf = self.values.?;
-            const byte_len = try checked.mul(vs.len, @sizeOf(T));
+            const byte_len = try checked.mul(n, @sizeOf(T));
             const end = try checked.add(buf.size, byte_len);
-            const dst: [*]T = @ptrCast(@alignCast(buf.data + buf.size));
-            @memcpy(dst[0..vs.len], vs);
+            @memset(buf.data[buf.size..end], 0);
             buf.size = end;
-            self.validity.unsafeAppendBits(validity, validity_offset, vs.len);
-            self.len = try checked.add(self.len, vs.len);
+            self.validity.unsafeAppendN(true, n);
+            self.len = try checked.add(self.len, n);
         }
 
         pub fn length(self: Self) usize {
@@ -162,7 +157,7 @@ pub fn NumericBuilder(comptime T: type) type {
             return ArrayData.initOwned(self.allocator, self.ty, n, 0, null_count, &.{ validity_buf, values_buf }, &.{}, null);
         }
 
-        fn unsafeAppend(self: *Self, v: T) void {
+        pub fn unsafeAppend(self: *Self, v: T) void {
             const buf = self.values.?;
             const ptr: *T = @ptrCast(@alignCast(buf.data + buf.size));
             ptr.* = v;
@@ -171,13 +166,39 @@ pub fn NumericBuilder(comptime T: type) type {
             self.len += 1;
         }
 
-        fn unsafeAppendNull(self: *Self) void {
+        pub fn unsafeAppendNull(self: *Self) void {
             const buf = self.values.?;
             const ptr: *T = @ptrCast(@alignCast(buf.data + buf.size));
             ptr.* = std.mem.zeroes(T);
             buf.size += @sizeOf(T);
             self.validity.unsafeAppend(false);
             self.len += 1;
+        }
+
+        pub fn unsafeAppendEmptyValue(self: *Self) void {
+            const buf = self.values.?;
+            const ptr: *T = @ptrCast(@alignCast(buf.data + buf.size));
+            ptr.* = std.mem.zeroes(T);
+            buf.size += @sizeOf(T);
+            self.validity.unsafeAppend(true);
+            self.len += 1;
+        }
+
+        pub fn appendValues(self: *Self, vs: []const T, valid_bytes: ?[]const u8) Error!void {
+            const M = builder_base.AppendValuesMixin(Self, T, writeValues);
+            return M.appendValues(self, vs, valid_bytes);
+        }
+
+        pub fn appendValuesBitmap(self: *Self, vs: []const T, validity: []const u8, validity_offset: usize) Error!void {
+            const M = builder_base.AppendValuesMixin(Self, T, writeValues);
+            return M.appendValuesBitmap(self, vs, validity, validity_offset);
+        }
+
+        fn writeValues(self: *Self, vs: []const T) void {
+            const buf = self.values.?;
+            const dst: [*]T = @ptrCast(@alignCast(buf.data + buf.size));
+            @memcpy(dst[0..vs.len], vs);
+            buf.size += vs.len * @sizeOf(T);
         }
 
         fn ensureValues(self: *Self) Error!*Buffer {
@@ -320,4 +341,51 @@ test "NumericBuilder append values with multi byte bitmap" {
         try std.testing.expectEqual(expect_valid, arr.isValid(i));
         if (expect_valid) try std.testing.expectEqual(@as(i32, @intCast(i)), arr.value(i));
     }
+}
+
+test "NumericBuilder reset reuses builder" {
+    const allocator = std.testing.allocator;
+    var b = NumericBuilder(i32).init(allocator);
+    defer b.deinit();
+
+    try b.appendSlice(&.{ 1, 2, 3 });
+    b.reset();
+    try std.testing.expectEqual(@as(usize, 0), b.len);
+    try std.testing.expect(b.values == null);
+
+    try b.append(99);
+    const data = try b.finish();
+    defer data.deinit();
+    const arr = try array.NumericArray(i32).fromData(data);
+    try std.testing.expectEqual(@as(usize, 1), arr.len);
+    try std.testing.expectEqual(@as(i32, 99), arr.value(0));
+}
+
+test "NumericBuilder appendEmptyValue and appendEmptyValues" {
+    const allocator = std.testing.allocator;
+    var b = NumericBuilder(i32).init(allocator);
+    defer b.deinit();
+
+    try b.appendEmptyValue();
+    try b.append(7);
+    try b.appendEmptyValues(2);
+    const data = try b.finish();
+    defer data.deinit();
+    const arr = try array.NumericArray(i32).fromData(data);
+
+    try std.testing.expectEqual(@as(usize, 4), arr.len);
+    try std.testing.expectEqual(@as(usize, 0), arr.nullCount());
+    try std.testing.expectEqual(@as(i32, 0), arr.value(0));
+    try std.testing.expectEqual(@as(i32, 7), arr.value(1));
+    try std.testing.expectEqual(@as(i32, 0), arr.value(2));
+    try std.testing.expectEqual(@as(i32, 0), arr.value(3));
+}
+
+test "NumericBuilder kMinBuilderCapacity floor" {
+    const allocator = std.testing.allocator;
+    var b = NumericBuilder(i32).init(allocator);
+    defer b.deinit();
+
+    try b.reserve(1);
+    try std.testing.expect(b.values.?.capacity >= builder_base.kMinBuilderCapacity * @sizeOf(i32));
 }

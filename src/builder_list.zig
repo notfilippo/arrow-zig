@@ -15,6 +15,7 @@ const offset_data = @import("offsets.zig");
 const array = @import("array.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("buffer.zig").Buffer;
+const builder_base = @import("builder_base.zig");
 
 pub const FieldOptions = struct {
     name: []const u8 = "item",
@@ -73,14 +74,16 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
 
         pub fn deinit(self: *Self) void {
             self.child.deinit();
-            self.offsets.deinit();
-            self.validity.deinit();
-            if (self.owned_child_name) |name| self.allocator.free(name);
-            self.len = 0;
-            self.last_child_len = 0;
-            self.child_name = "item";
-            self.owned_child_name = null;
-            self.child_nullable = true;
+            self.clearListState(true);
+        }
+
+        /// Release all held memory and return to the post-`init` state.
+        pub fn reset(self: *Self) void {
+            if (comptime !@hasDecl(ChildBuilder, "reset")) {
+                @compileError("ListBuilder.reset requires ChildBuilder.reset");
+            }
+            self.resetChild();
+            self.clearListState(false);
         }
 
         pub fn values(self: *Self) *ChildBuilder {
@@ -90,7 +93,8 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
         pub fn reserve(self: *Self, additional: usize) Error!void {
             if (additional == 0) return;
             const new_len = try checked.add(self.len, additional);
-            try self.offsets.reserveSlots(self.allocator, try checked.add(new_len, 1));
+            const capped_len = @max(new_len, builder_base.kMinBuilderCapacity);
+            try self.offsets.reserveSlots(self.allocator, try checked.add(capped_len, 1));
             try self.validity.ensureCapacityForBits(self.allocator, additional);
         }
 
@@ -118,6 +122,23 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
             self.len = try checked.add(self.len, n);
         }
 
+        /// Append a valid empty list slot with no pending child values.
+        pub fn appendEmptyValue(self: *Self) Error!void {
+            if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
+            try self.reserve(1);
+            try self.appendOffset(self.last_child_len, true);
+        }
+
+        /// Append `n` valid empty list slots with no pending child values.
+        pub fn appendEmptyValues(self: *Self, n: usize) Error!void {
+            if (n == 0) return;
+            if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
+            try self.reserve(n);
+            try self.offsets.appendRepeat(self.allocator, n, self.last_child_len);
+            self.validity.unsafeAppendN(true, n);
+            self.len = try checked.add(self.len, n);
+        }
+
         pub fn length(self: Self) usize {
             return self.len;
         }
@@ -130,7 +151,10 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
             const n = self.len;
             const null_count = self.validity.false_count;
             var consumed = false;
-            errdefer if (consumed) self.resetSlots();
+            errdefer if (consumed) {
+                self.len = 0;
+                self.last_child_len = 0;
+            };
 
             const offsets_buf = try self.offsets.finish(self.allocator);
             consumed = true;
@@ -147,7 +171,8 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
             const ty = dataTypeForKind(kind, child_field);
             const data = try ArrayData.initOwned(self.allocator, ty, n, 0, null_count, &.{ validity_buf, offsets_buf }, &.{child_data}, null);
             child_field.deinit();
-            self.resetSlots();
+            self.len = 0;
+            self.last_child_len = 0;
             return data;
         }
 
@@ -158,7 +183,19 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
             self.last_child_len = child_len;
         }
 
-        fn resetSlots(self: *Self) void {
+        fn resetChild(self: *Self) void {
+            self.child.reset();
+        }
+
+        fn clearListState(self: *Self, comptime clear_field_options: bool) void {
+            self.offsets.deinit();
+            self.validity.deinit();
+            if (clear_field_options) {
+                if (self.owned_child_name) |name| self.allocator.free(name);
+                self.child_name = "item";
+                self.owned_child_name = null;
+                self.child_nullable = true;
+            }
             self.len = 0;
             self.last_child_len = 0;
         }
@@ -243,6 +280,65 @@ test "LargeListBuilder uses large offsets and field options" {
     const arr = try array.LargeListArray.fromData(data);
     try std.testing.expectEqual(@as(usize, 1), arr.valueRange(1).offset);
     try std.testing.expectEqual(@as(usize, 2), arr.valueRange(1).len);
+    try std.testing.expectEqualStrings("words", data.type.large_list.child.name);
+    try std.testing.expect(!data.type.large_list.child.nullable);
+}
+
+test "ListBuilder deinit supports child builders without reset" {
+    const allocator = std.testing.allocator;
+    const ChildWithoutReset = struct {
+        const Self = @This();
+        pub const Error = Allocator.Error || checked.Error;
+
+        allocator: Allocator,
+
+        pub fn init(child_allocator: Allocator) Self {
+            return .{ .allocator = child_allocator };
+        }
+
+        pub fn deinit(self: *Self) void {
+            _ = self;
+        }
+
+        pub fn length(self: Self) usize {
+            _ = self;
+            return 0;
+        }
+
+        pub fn finish(self: *Self) Error!*ArrayData {
+            const values = try Buffer.allocate(self.allocator, 0);
+            errdefer values.deinit();
+            values.freeze();
+            return ArrayData.initOwned(self.allocator, .int32, 0, 0, 0, &.{ null, values }, &.{}, null);
+        }
+    };
+
+    var b = ListBuilder(ChildWithoutReset).init(allocator);
+    defer b.deinit();
+
+    try b.appendEmptyValue();
+    const data = try b.finish();
+    defer data.deinit();
+
+    const arr = try array.ListArray.fromData(data);
+    try std.testing.expectEqual(@as(usize, 1), arr.len);
+    try std.testing.expectEqual(@as(usize, 0), arr.nullCount());
+}
+
+test "ListBuilder reset preserves field options" {
+    const allocator = std.testing.allocator;
+    const builder = @import("builder.zig");
+    var b = try LargeListBuilder(builder.Utf8Builder).initField(allocator, .{ .name = "words", .nullable = false });
+    defer b.deinit();
+
+    try b.appendEmptyValue();
+    b.reset();
+    try std.testing.expectEqual(@as(usize, 0), b.length());
+
+    try b.appendEmptyValue();
+    const data = try b.finish();
+    defer data.deinit();
+
     try std.testing.expectEqualStrings("words", data.type.large_list.child.name);
     try std.testing.expect(!data.type.large_list.child.nullable);
 }

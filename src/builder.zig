@@ -35,6 +35,9 @@ const numeric = @import("builder_numeric.zig");
 const boolean = @import("builder_boolean.zig");
 const binary = @import("builder_binary.zig");
 const list = @import("builder_list.zig");
+const base = @import("builder_base.zig");
+
+pub const kMinBuilderCapacity = base.kMinBuilderCapacity;
 
 pub const NumericBuilder = numeric.NumericBuilder;
 pub const NumericBuilderError = numeric.NumericBuilderError;
