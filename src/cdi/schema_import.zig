@@ -32,9 +32,9 @@ pub fn importType(allocator: Allocator, schema: *const ArrowSchema) Error!dataty
     return ty;
 }
 
-pub fn importField(allocator: Allocator, schema: *const ArrowSchema) Error!datatype.Field {
+pub fn importField(allocator: Allocator, schema: *const ArrowSchema) Error!*const datatype.Field {
     const field = try importFieldNode(allocator, schema);
-    errdefer deinitImportedField(allocator, field);
+    errdefer field.deinit();
     try field.type.validate();
     return field;
 }
@@ -47,7 +47,10 @@ pub fn importSchema(allocator: Allocator, schema: *const ArrowSchema) Error!*sch
 
     const fields = try importSchemaFields(allocator, schema);
     var fields_owned = true;
-    errdefer if (fields_owned) datatype.deinitOwnedFields(allocator, fields);
+    errdefer if (fields_owned) {
+        for (fields) |f| f.deinit();
+        allocator.free(fields);
+    };
 
     const schema_meta = try cdi_metadata.importOwned(allocator, schema.metadata);
     var metadata_owned = true;
@@ -187,21 +190,19 @@ fn importFixedSizeListType(
     } };
 }
 
-fn importSingleChildField(allocator: Allocator, schema: *const ArrowSchema) Error!datatype.Field {
+fn importSingleChildField(allocator: Allocator, schema: *const ArrowSchema) Error!*const datatype.Field {
     try expectSchemaChildCount(schema, 1);
     return try importFieldNode(allocator, schema.children.?[0]);
 }
 
-fn importSchemaFields(allocator: Allocator, schema: *const ArrowSchema) Error![]const datatype.Field {
+fn importSchemaFields(allocator: Allocator, schema: *const ArrowSchema) Error![]const *const datatype.Field {
     const count = try schemaChildCount(schema);
     if (count > 0 and schema.children == null) return error.InvalidChildCount;
-    const fields = try allocator.alloc(datatype.Field, count);
+    const fields = try allocator.alloc(*const datatype.Field, count);
     errdefer allocator.free(fields);
 
     var imported: usize = 0;
-    errdefer {
-        for (fields[0..imported]) |field| deinitImportedField(allocator, field);
-    }
+    errdefer for (fields[0..imported]) |f| f.deinit();
 
     for (0..count) |i| {
         fields[i] = try importFieldNode(allocator, schema.children.?[i]);
@@ -210,7 +211,7 @@ fn importSchemaFields(allocator: Allocator, schema: *const ArrowSchema) Error![]
     return fields;
 }
 
-fn importFieldNode(allocator: Allocator, schema: *const ArrowSchema) Error!datatype.Field {
+fn importFieldNode(allocator: Allocator, schema: *const ArrowSchema) Error!*const datatype.Field {
     var ty = try importTypeNode(allocator, schema);
     var ty_owned = true;
     errdefer if (ty_owned) datatype.deinitOwned(allocator, &ty);
@@ -220,28 +221,27 @@ fn importFieldNode(allocator: Allocator, schema: *const ArrowSchema) Error!datat
     errdefer allocator.free(name);
 
     const type_ptr = try allocator.create(datatype.DataType);
-    var type_ptr_owned = false;
+    var type_ptr_valid = false;
     errdefer {
-        if (type_ptr_owned) datatype.deinitOwned(allocator, type_ptr);
+        if (type_ptr_valid) datatype.deinitOwned(allocator, type_ptr);
         allocator.destroy(type_ptr);
     }
     type_ptr.* = ty;
     ty_owned = false;
-    type_ptr_owned = true;
+    type_ptr_valid = true;
 
     const metadata = try cdi_metadata.importOwned(allocator, schema.metadata);
     errdefer datatype.deinitOwnedMetadata(allocator, metadata);
 
-    return .{
-        .name = name,
-        .type = type_ptr,
-        .nullable = schema.flags & schema_flag_nullable != 0,
-        .metadata = metadata,
-    };
-}
-
-fn deinitImportedField(allocator: Allocator, field: datatype.Field) void {
-    datatype.deinitOwnedField(allocator, field);
+    const field = try datatype.Field.initOwned(
+        allocator,
+        name,
+        type_ptr,
+        schema.flags & schema_flag_nullable != 0,
+        metadata,
+    );
+    type_ptr_valid = false;
+    return field;
 }
 
 fn importUnionType(
@@ -252,7 +252,7 @@ fn importUnionType(
 ) Error!datatype.DataType {
     const fields = try importSchemaFields(allocator, schema);
     errdefer {
-        for (fields) |field| deinitImportedField(allocator, field);
+        for (fields) |f| f.deinit();
         allocator.free(fields);
     }
 

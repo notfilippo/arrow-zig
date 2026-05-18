@@ -140,7 +140,9 @@ test "ListArray value ranges and owned values" {
     defer offsets.deinit();
 
     const value_ty: datatype.DataType = .int32;
-    const list_ty = datatype.DataType{ .list = .{ .child = .{ .name = "item", .type = &value_ty } } };
+    const list_item_field = try datatype.Field.create(allocator, "item", &value_ty, true, &.{});
+    defer list_item_field.deinit();
+    const list_ty = datatype.DataType{ .list = .{ .child = list_item_field } };
     const data = try ArrayData.initRetained(allocator, list_ty, 3, 0, 0, &.{ null, offsets }, &.{child}, null);
     defer data.deinit();
     try data.validate();
@@ -188,7 +190,9 @@ test "LargeListArray uses large offsets" {
     defer offsets.deinit();
 
     const value_ty: datatype.DataType = .int32;
-    const list_ty = datatype.DataType{ .large_list = .{ .child = .{ .name = "item", .type = &value_ty } } };
+    const large_list_item_field = try datatype.Field.create(allocator, "item", &value_ty, true, &.{});
+    defer large_list_item_field.deinit();
+    const list_ty = datatype.DataType{ .large_list = .{ .child = large_list_item_field } };
     const data = try ArrayData.initRetained(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null);
     defer data.deinit();
     try data.validate();

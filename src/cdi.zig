@@ -104,7 +104,7 @@ pub fn exportType(allocator: Allocator, ty: datatype.DataType, out: *ArrowSchema
 
 /// Export a field as an `ArrowSchema`.
 /// The caller must release `out` unless ownership is transferred.
-pub fn exportField(allocator: Allocator, field: datatype.Field, out: *ArrowSchema) SchemaExportError!void {
+pub fn exportField(allocator: Allocator, field: *const datatype.Field, out: *ArrowSchema) SchemaExportError!void {
     try schema_export.exportField(allocator, field, out);
 }
 
@@ -142,9 +142,8 @@ pub fn importType(allocator: Allocator, schema: *const ArrowSchema) SchemaImport
 }
 
 /// Import a C Data Interface schema into an owned field.
-/// The schema is not consumed. Deinitialize the returned field with
-/// `datatype.deinitOwnedField()` when done.
-pub fn importField(allocator: Allocator, schema: *const ArrowSchema) SchemaImportError!datatype.Field {
+/// The schema is not consumed. Call `field.deinit()` when done.
+pub fn importField(allocator: Allocator, schema: *const ArrowSchema) SchemaImportError!*const datatype.Field {
     return schema_import.importField(allocator, schema);
 }
 

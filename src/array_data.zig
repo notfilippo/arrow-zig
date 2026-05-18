@@ -263,8 +263,9 @@ test "ArrayData init owns nested type metadata" {
     defer child.deinit();
 
     const child_ty: datatype.DataType = .int32;
-    const fields = [_]datatype.Field{.{ .name = "items", .type = &child_ty }};
-    const ty = datatype.DataType{ .list = .{ .child = fields[0] } };
+    const items_field = try datatype.Field.create(allocator, "items", &child_ty, true, &.{});
+    defer items_field.deinit();
+    const ty = datatype.DataType{ .list = .{ .child = items_field } };
 
     const offsets = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
     errdefer offsets.deinit();

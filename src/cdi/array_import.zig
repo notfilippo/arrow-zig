@@ -125,7 +125,7 @@ fn importArrayNode(
     };
 
     for (0..child_count) |i| {
-        const child_ty = childFieldAt(ty, i).?.type.*;
+        const child_ty = ty.childField(i).?.type.*;
         children[i] = try importArrayNode(allocator, child_ty, arr.children.?[i], owner);
         imported_children += 1;
     }
@@ -293,16 +293,4 @@ fn releaseImportedArrayOwner(ctx_ptr: *anyopaque) void {
 
 fn releaseIfNeeded(arr: *ArrowArray) void {
     if (arr.release) |release_fn| release_fn(arr);
-}
-
-fn childFieldAt(ty: datatype.DataType, index: usize) ?datatype.Field {
-    return switch (ty) {
-        .list => |meta| if (index == 0) meta.child else null,
-        .large_list => |meta| if (index == 0) meta.child else null,
-        .fixed_size_list => |meta| if (index == 0) meta.child else null,
-        .struct_ => |meta| if (index < meta.fields.len) meta.fields[index] else null,
-        .sparse_union => |meta| if (index < meta.fields.len) meta.fields[index] else null,
-        .dense_union => |meta| if (index < meta.fields.len) meta.fields[index] else null,
-        else => null,
-    };
 }

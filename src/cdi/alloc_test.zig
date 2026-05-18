@@ -81,7 +81,7 @@ fn checkImportFieldAllocationFailure(allocator: std.mem.Allocator) !void {
     schema.children = &children;
 
     const imported = try cdi.importField(allocator, &schema);
-    defer datatype.deinitOwnedField(allocator, imported);
+    defer imported.deinit();
 
     try imported.type.validate();
 }
@@ -231,13 +231,12 @@ fn testArrowSchema(allocator: std.mem.Allocator) !*schema_mod.Schema {
     const field_metadata = [_]schema_mod.MetadataEntry{
         .{ .key = "unit", .value = "ms" },
     };
-    const fields = [_]datatype.Field{
-        .{ .name = "number", .type = &value_ty, .metadata = &field_metadata },
-    };
+    const number_field = try datatype.Field.create(allocator, "number", &value_ty, true, &field_metadata);
+    defer number_field.deinit();
     const metadata = [_]schema_mod.MetadataEntry{
         .{ .key = "source", .value = "alloc" },
     };
-    return schema_mod.Schema.init(allocator, &fields, &metadata);
+    return schema_mod.Schema.init(allocator, &.{number_field}, &metadata);
 }
 
 fn testRecordBatch(allocator: std.mem.Allocator) !*RecordBatch {
@@ -245,10 +244,9 @@ fn testRecordBatch(allocator: std.mem.Allocator) !*RecordBatch {
     defer values.deinit();
 
     const value_ty: datatype.DataType = .binary;
-    const fields = [_]datatype.Field{
-        .{ .name = "data", .type = &value_ty },
-    };
-    const batch_schema = try schema_mod.Schema.init(allocator, &fields, &.{});
+    const data_field = try datatype.Field.create(allocator, "data", &value_ty, true, &.{});
+    defer data_field.deinit();
+    const batch_schema = try schema_mod.Schema.init(allocator, &.{data_field}, &.{});
     defer batch_schema.deinit();
 
     return RecordBatch.initRetained(allocator, batch_schema, 2, &.{values});
@@ -280,7 +278,9 @@ fn dictionaryListArray(allocator: std.mem.Allocator) !*ArrayData {
     defer offsets.deinit();
 
     const value_ty: datatype.DataType = .int32;
-    const list_ty = datatype.DataType{ .list = .{ .child = .{ .name = "item", .type = &value_ty } } };
+    const list_item_field = try datatype.Field.create(allocator, "item", &value_ty, true, &.{});
+    defer list_item_field.deinit();
+    const list_ty = datatype.DataType{ .list = .{ .child = list_item_field } };
     const dictionary = try ArrayData.initRetained(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null);
     defer dictionary.deinit();
 

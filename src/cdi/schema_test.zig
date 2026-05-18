@@ -32,7 +32,9 @@ test "exportType primitive schema" {
 test "exportType nested list schema" {
     const allocator = std.testing.allocator;
     const value_ty: datatype.DataType = .int32;
-    const list_ty = datatype.DataType{ .list = .{ .child = .{ .name = "item", .type = &value_ty } } };
+    const item_field = try datatype.Field.create(allocator, "item", &value_ty, true, &.{});
+    defer item_field.deinit();
+    const list_ty = datatype.DataType{ .list = .{ .child = item_field } };
 
     var schema: ArrowSchema = undefined;
     try exportType(allocator, list_ty, &schema);
@@ -101,24 +103,18 @@ test "importType round trips scalar schemas" {
 test "importField round trips field schema" {
     const allocator = std.testing.allocator;
     const value_ty: datatype.DataType = .int32;
-    const list_ty = datatype.DataType{ .list = .{ .child = .{
-        .name = "item",
-        .type = &value_ty,
-        .nullable = false,
-    } } };
-    const field = datatype.Field{
-        .name = "values",
-        .type = &list_ty,
-        .nullable = false,
-        .metadata = &.{.{ .key = "field_key", .value = "field_value" }},
-    };
+    const item_field = try datatype.Field.create(allocator, "item", &value_ty, false, &.{});
+    defer item_field.deinit();
+    const list_ty = datatype.DataType{ .list = .{ .child = item_field } };
+    const field = try datatype.Field.create(allocator, "values", &list_ty, false, &.{.{ .key = "field_key", .value = "field_value" }});
+    defer field.deinit();
 
     var schema: ArrowSchema = undefined;
     try exportField(allocator, field, &schema);
     defer schema.release.?(&schema);
 
     const imported = try importField(allocator, &schema);
-    defer datatype.deinitOwnedField(allocator, imported);
+    defer imported.deinit();
 
     try std.testing.expect(datatype.Field.equals(field, imported));
     try std.testing.expectEqualStrings("field_value", imported.metadata[0].value);
@@ -132,15 +128,15 @@ test "importSchema round trips schema metadata" {
     const field_metadata = [_]MetadataEntry{
         .{ .key = "unit", .value = "ms" },
     };
-    const fields = [_]datatype.Field{
-        .{ .name = "number", .type = &number_ty, .nullable = false, .metadata = &field_metadata },
-        .{ .name = "text", .type = &text_ty },
-    };
+    const number_field = try datatype.Field.create(allocator, "number", &number_ty, false, &field_metadata);
+    defer number_field.deinit();
+    const text_field = try datatype.Field.create(allocator, "text", &text_ty, true, &.{});
+    defer text_field.deinit();
     const metadata = [_]MetadataEntry{
         .{ .key = "source", .value = "test" },
         .{ .key = "source", .value = "duplicate" },
     };
-    const original = try schema_mod.Schema.init(allocator, &fields, &metadata);
+    const original = try schema_mod.Schema.init(allocator, &.{ number_field, text_field }, &metadata);
     defer original.deinit();
 
     var exported: ArrowSchema = undefined;
@@ -182,29 +178,26 @@ test "importType round trips nested and dictionary schemas" {
     const value_ty: datatype.DataType = .int32;
     const bool_ty: datatype.DataType = .bool;
 
-    const list_ty = datatype.DataType{ .list = .{ .child = .{
-        .name = "item",
-        .type = &value_ty,
-        .nullable = false,
-    } } };
+    const item_field = try datatype.Field.create(allocator, "item", &value_ty, false, &.{});
+    defer item_field.deinit();
+    const list_ty = datatype.DataType{ .list = .{ .child = item_field } };
     try expectImportTypeRoundTrip(allocator, list_ty);
 
-    const large_list_ty = datatype.DataType{ .large_list = .{ .child = .{
-        .name = "large_item",
-        .type = &value_ty,
-    } } };
+    const large_item_field = try datatype.Field.create(allocator, "large_item", &value_ty, true, &.{});
+    defer large_item_field.deinit();
+    const large_list_ty = datatype.DataType{ .large_list = .{ .child = large_item_field } };
     try expectImportTypeRoundTrip(allocator, large_list_ty);
 
-    const fixed_ty = datatype.DataType{ .fixed_size_list = .{
-        .child = .{ .name = "slot", .type = &value_ty },
-        .len = 3,
-    } };
+    const slot_field = try datatype.Field.create(allocator, "slot", &value_ty, true, &.{});
+    defer slot_field.deinit();
+    const fixed_ty = datatype.DataType{ .fixed_size_list = .{ .child = slot_field, .len = 3 } };
     try expectImportTypeRoundTrip(allocator, fixed_ty);
 
-    const struct_fields = [_]datatype.Field{
-        .{ .name = "number", .type = &value_ty, .nullable = false },
-        .{ .name = "flag", .type = &bool_ty },
-    };
+    const number_field = try datatype.Field.create(allocator, "number", &value_ty, false, &.{});
+    defer number_field.deinit();
+    const flag_field = try datatype.Field.create(allocator, "flag", &bool_ty, true, &.{});
+    defer flag_field.deinit();
+    const struct_fields = [_]*const datatype.Field{ number_field, flag_field };
     const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &struct_fields } };
     try expectImportTypeRoundTrip(allocator, struct_ty);
 

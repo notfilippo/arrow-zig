@@ -142,13 +142,11 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
             const validity_buf: ?*Buffer = try self.validity.finishNullable(self.allocator);
             errdefer if (validity_buf) |buf| buf.deinit();
 
-            const child_field = datatype.Field{
-                .name = self.child_name,
-                .type = &child_data.type,
-                .nullable = self.child_nullable,
-            };
+            const child_field = try datatype.Field.create(self.allocator, self.child_name, &child_data.type, self.child_nullable, &.{});
+            errdefer child_field.deinit();
             const ty = dataTypeForKind(kind, child_field);
             const data = try ArrayData.initOwned(self.allocator, ty, n, 0, null_count, &.{ validity_buf, offsets_buf }, &.{child_data}, null);
+            child_field.deinit();
             self.resetSlots();
             return data;
         }
@@ -175,7 +173,7 @@ pub fn LargeListBuilder(comptime ChildBuilder: type) type {
     return VarListBuilder(.large_list, ChildBuilder);
 }
 
-fn dataTypeForKind(comptime kind: array.ListKind, child: datatype.Field) datatype.DataType {
+fn dataTypeForKind(comptime kind: array.ListKind, child: *const datatype.Field) datatype.DataType {
     return switch (kind) {
         .list => .{ .list = .{ .child = child } },
         .large_list => .{ .large_list = .{ .child = child } },

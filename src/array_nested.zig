@@ -134,11 +134,12 @@ test "StructArray exposes child fields" {
 
     const number_ty: datatype.DataType = .int32;
     const flag_ty: datatype.DataType = .bool;
-    const fields = [_]datatype.Field{
-        .{ .name = "number", .type = &number_ty },
-        .{ .name = "flag", .type = &flag_ty },
-    };
-    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &fields } };
+    const number_field = try datatype.Field.create(allocator, "number", &number_ty, true, &.{});
+    defer number_field.deinit();
+    const flag_field = try datatype.Field.create(allocator, "flag", &flag_ty, true, &.{});
+    defer flag_field.deinit();
+    const struct_fields = [_]*const datatype.Field{ number_field, flag_field };
+    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &struct_fields } };
     const data = try ArrayData.initRetained(allocator, struct_ty, 3, 0, 1, &.{validity}, &.{ number_data, flag_data }, null);
     defer data.deinit();
     try data.validate();

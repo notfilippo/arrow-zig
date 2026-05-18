@@ -66,7 +66,7 @@ pub const RecordBatch = struct {
     /// Create a batch from fields by constructing an empty metadata schema.
     pub fn initFieldsRetained(
         allocator: Allocator,
-        field_meta: []const datatype.Field,
+        field_meta: []const *const datatype.Field,
         len: usize,
         columns: []const *ArrayData,
     ) Error!*RecordBatch {
@@ -134,11 +134,11 @@ pub const RecordBatch = struct {
         return self.schema.fieldCount();
     }
 
-    pub fn fields(self: *const RecordBatch) []const datatype.Field {
+    pub fn fields(self: *const RecordBatch) []const *const datatype.Field {
         return self.schema.fields();
     }
 
-    pub fn field(self: *const RecordBatch, index: usize) ?datatype.Field {
+    pub fn field(self: *const RecordBatch, index: usize) ?*const datatype.Field {
         return self.schema.field(index);
     }
 
@@ -239,12 +239,12 @@ test "RecordBatch retains schema and columns" {
 
     const number_ty: datatype.DataType = .int32;
     const flag_ty: datatype.DataType = .bool;
-    const fields_meta = [_]datatype.Field{
-        .{ .name = "number", .type = &number_ty },
-        .{ .name = "flag", .type = &flag_ty, .nullable = false },
-    };
+    const number_field = try datatype.Field.create(allocator, "number", &number_ty, true, &.{});
+    defer number_field.deinit();
+    const flag_field = try datatype.Field.create(allocator, "flag", &flag_ty, false, &.{});
+    defer flag_field.deinit();
 
-    const batch_schema = try Schema.init(allocator, &fields_meta, &.{});
+    const batch_schema = try Schema.init(allocator, &.{ number_field, flag_field }, &.{});
     defer batch_schema.deinit();
 
     {
@@ -281,11 +281,11 @@ test "RecordBatch converts to struct data" {
 
     const number_ty: datatype.DataType = .int32;
     const flag_ty: datatype.DataType = .bool;
-    const fields_meta = [_]datatype.Field{
-        .{ .name = "number", .type = &number_ty },
-        .{ .name = "flag", .type = &flag_ty },
-    };
-    const batch = try RecordBatch.initFieldsRetained(allocator, &fields_meta, 3, &.{ numbers, flags });
+    const number_field = try datatype.Field.create(allocator, "number", &number_ty, true, &.{});
+    defer number_field.deinit();
+    const flag_field = try datatype.Field.create(allocator, "flag", &flag_ty, true, &.{});
+    defer flag_field.deinit();
+    const batch = try RecordBatch.initFieldsRetained(allocator, &.{ number_field, flag_field }, 3, &.{ numbers, flags });
     defer batch.deinit();
 
     const struct_data = try batch.toStructData();
@@ -294,7 +294,7 @@ test "RecordBatch converts to struct data" {
 
     try std.testing.expectEqual(datatype.TypeId.struct_, struct_data.type.id());
     try std.testing.expectEqual(@as(usize, 3), struct_data.len);
-    try std.testing.expectEqual(@as(usize, 0), struct_data.null_count);
+    try std.testing.expectEqual(@as(?usize, 0), struct_data.null_count);
     try std.testing.expect(struct_data.buffers[0] == null);
     try std.testing.expectEqual(@as(usize, 2), struct_data.children.len);
     try std.testing.expectEqualStrings("flag", struct_data.type.struct_.fields[1].name);
@@ -324,11 +324,12 @@ test "RecordBatch creates sliced columns from struct data" {
 
     const number_ty: datatype.DataType = .int32;
     const flag_ty: datatype.DataType = .bool;
-    const fields_meta = [_]datatype.Field{
-        .{ .name = "number", .type = &number_ty },
-        .{ .name = "flag", .type = &flag_ty },
-    };
-    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &fields_meta } };
+    const number_field = try datatype.Field.create(allocator, "number", &number_ty, true, &.{});
+    defer number_field.deinit();
+    const flag_field = try datatype.Field.create(allocator, "flag", &flag_ty, true, &.{});
+    defer flag_field.deinit();
+    const struct_fields = [_]*const datatype.Field{ number_field, flag_field };
+    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &struct_fields } };
     const struct_data = try ArrayData.initRetained(allocator, struct_ty, 3, 0, 0, &.{null}, &.{ numbers, flags }, null);
     defer struct_data.deinit();
 
@@ -360,31 +361,28 @@ test "RecordBatch rejects inconsistent inputs" {
 
     const number_ty: datatype.DataType = .int32;
     const flag_ty: datatype.DataType = .bool;
-    const number_fields = [_]datatype.Field{
-        .{ .name = "number", .type = &number_ty },
-    };
-    const flag_fields = [_]datatype.Field{
-        .{ .name = "number", .type = &flag_ty },
-    };
-    const required_number_fields = [_]datatype.Field{
-        .{ .name = "number", .type = &number_ty, .nullable = false },
-    };
+    const number_field = try datatype.Field.create(allocator, "number", &number_ty, true, &.{});
+    defer number_field.deinit();
+    const flag_typed_field = try datatype.Field.create(allocator, "number", &flag_ty, true, &.{});
+    defer flag_typed_field.deinit();
+    const required_number_field = try datatype.Field.create(allocator, "number", &number_ty, false, &.{});
+    defer required_number_field.deinit();
 
     try std.testing.expectError(
         error.FieldColumnCountMismatch,
-        RecordBatch.initFieldsRetained(allocator, &number_fields, 2, &.{ numbers, flags }),
+        RecordBatch.initFieldsRetained(allocator, &.{ number_field, number_field }, 2, &.{numbers}),
     );
     try std.testing.expectError(
         error.ColumnTypeMismatch,
-        RecordBatch.initFieldsRetained(allocator, &flag_fields, 2, &.{numbers}),
+        RecordBatch.initFieldsRetained(allocator, &.{flag_typed_field}, 2, &.{numbers}),
     );
     try std.testing.expectError(
         error.ColumnLengthMismatch,
-        RecordBatch.initFieldsRetained(allocator, &.{ number_fields[0], number_fields[0] }, 2, &.{ numbers, short }),
+        RecordBatch.initFieldsRetained(allocator, &.{ number_field, number_field }, 2, &.{ numbers, short }),
     );
     try std.testing.expectError(
         error.NonNullableNulls,
-        RecordBatch.initFieldsRetained(allocator, &required_number_fields, 2, &.{numbers_with_null}),
+        RecordBatch.initFieldsRetained(allocator, &.{required_number_field}, 2, &.{numbers_with_null}),
     );
     try std.testing.expectError(error.NotStructArray, RecordBatch.fromStructData(allocator, numbers));
 
@@ -395,7 +393,10 @@ test "RecordBatch rejects inconsistent inputs" {
     const validity = try validity_builder.finish(allocator);
     defer validity.deinit();
 
-    const nullable_struct_ty = datatype.DataType{ .struct_ = .{ .fields = &number_fields } };
+    const number_field2 = try datatype.Field.create(allocator, "number", &number_ty, true, &.{});
+    defer number_field2.deinit();
+    const struct_fields2 = [_]*const datatype.Field{number_field2};
+    const nullable_struct_ty = datatype.DataType{ .struct_ = .{ .fields = &struct_fields2 } };
     const nullable_struct = try ArrayData.initRetained(
         allocator,
         nullable_struct_ty,
@@ -423,12 +424,12 @@ fn checkRecordBatchAllocationFailure(allocator: Allocator) !void {
 
     const number_ty: datatype.DataType = .int32;
     const flag_ty: datatype.DataType = .bool;
-    const fields_meta = [_]datatype.Field{
-        .{ .name = "number", .type = &number_ty },
-        .{ .name = "flag", .type = &flag_ty },
-    };
+    const number_field = try datatype.Field.create(setup, "number", &number_ty, true, &.{});
+    defer number_field.deinit();
+    const flag_field = try datatype.Field.create(setup, "flag", &flag_ty, true, &.{});
+    defer flag_field.deinit();
 
-    const batch = try RecordBatch.initFieldsRetained(allocator, &fields_meta, 3, &.{ numbers, flags });
+    const batch = try RecordBatch.initFieldsRetained(allocator, &.{ number_field, flag_field }, 3, &.{ numbers, flags });
     defer batch.deinit();
 
     const struct_data = try batch.toStructData();

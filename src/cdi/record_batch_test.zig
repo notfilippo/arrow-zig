@@ -31,14 +31,14 @@ test "exportRecordBatch and importRecordBatch round trip schema and columns" {
     const number_metadata = [_]MetadataEntry{
         .{ .key = "unit", .value = "ms" },
     };
-    const fields = [_]datatype.Field{
-        .{ .name = "number", .type = &number_ty, .metadata = &number_metadata },
-        .{ .name = "text", .type = &text_ty },
-    };
+    const number_field = try datatype.Field.create(allocator, "number", &number_ty, true, &number_metadata);
+    defer number_field.deinit();
+    const text_field = try datatype.Field.create(allocator, "text", &text_ty, true, &.{});
+    defer text_field.deinit();
     const schema_metadata = [_]MetadataEntry{
         .{ .key = "source", .value = "record_batch_test" },
     };
-    const batch_schema = try Schema.init(allocator, &fields, &schema_metadata);
+    const batch_schema = try Schema.init(allocator, &.{ number_field, text_field }, &schema_metadata);
     defer batch_schema.deinit();
 
     const batch = try RecordBatch.initRetained(allocator, batch_schema, 3, &.{ numbers, text });
@@ -102,10 +102,9 @@ test "importRecordBatch rejects nullable top level struct rows" {
     defer numbers.deinit();
 
     const number_ty: datatype.DataType = .int32;
-    const fields = [_]datatype.Field{
-        .{ .name = "number", .type = &number_ty },
-    };
-    const batch_schema = try Schema.init(allocator, &fields, &.{});
+    const number_field_t1 = try datatype.Field.create(allocator, "number", &number_ty, true, &.{});
+    defer number_field_t1.deinit();
+    const batch_schema = try Schema.init(allocator, &.{number_field_t1}, &.{});
     defer batch_schema.deinit();
 
     var validity_builder = @import("../bitmap.zig").BitmapBuilder.init();
@@ -115,7 +114,8 @@ test "importRecordBatch rejects nullable top level struct rows" {
     const validity = try validity_builder.finish(allocator);
     defer validity.deinit();
 
-    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &fields } };
+    const struct_fields_t1 = [_]*const datatype.Field{number_field_t1};
+    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &struct_fields_t1 } };
     const data = try ArrayData.initRetained(
         allocator,
         struct_ty,
@@ -150,16 +150,16 @@ test "importRecordBatch rejects unknown top level struct nulls before consuming"
     defer numbers.deinit();
 
     const number_ty: datatype.DataType = .int32;
-    const fields = [_]datatype.Field{
-        .{ .name = "number", .type = &number_ty },
-    };
-    const batch_schema = try Schema.init(allocator, &fields, &.{});
+    const number_field_t2 = try datatype.Field.create(allocator, "number", &number_ty, true, &.{});
+    defer number_field_t2.deinit();
+    const batch_schema = try Schema.init(allocator, &.{number_field_t2}, &.{});
     defer batch_schema.deinit();
 
     const validity = try validityBitmap(allocator, false);
     defer validity.deinit();
 
-    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &fields } };
+    const struct_fields_t2 = [_]*const datatype.Field{number_field_t2};
+    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &struct_fields_t2 } };
     const data = try ArrayData.initRetained(
         allocator,
         struct_ty,
@@ -193,16 +193,16 @@ test "importRecordBatch accepts unknown top level count with valid rows" {
     defer numbers.deinit();
 
     const number_ty: datatype.DataType = .int32;
-    const fields = [_]datatype.Field{
-        .{ .name = "number", .type = &number_ty },
-    };
-    const batch_schema = try Schema.init(allocator, &fields, &.{});
+    const number_field_t3 = try datatype.Field.create(allocator, "number", &number_ty, true, &.{});
+    defer number_field_t3.deinit();
+    const batch_schema = try Schema.init(allocator, &.{number_field_t3}, &.{});
     defer batch_schema.deinit();
 
     const validity = try validityBitmap(allocator, true);
     defer validity.deinit();
 
-    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &fields } };
+    const struct_fields_t3 = [_]*const datatype.Field{number_field_t3};
+    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &struct_fields_t3 } };
     const data = try ArrayData.initRetained(
         allocator,
         struct_ty,

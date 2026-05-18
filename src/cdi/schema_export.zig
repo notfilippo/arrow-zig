@@ -19,7 +19,7 @@ pub fn exportType(allocator: Allocator, ty: datatype.DataType, out: *ArrowSchema
     try exportSchemaNode(allocator, ty, null, true, &.{}, out);
 }
 
-pub fn exportField(allocator: Allocator, field: datatype.Field, out: *ArrowSchema) Error!void {
+pub fn exportField(allocator: Allocator, field: *const datatype.Field, out: *ArrowSchema) Error!void {
     try exportSchemaNode(allocator, field.type.*, field, field.nullable, field.metadata, out);
 }
 
@@ -64,7 +64,7 @@ const SchemaPrivate = struct {
 fn exportSchemaNode(
     allocator: Allocator,
     ty: datatype.DataType,
-    field: ?datatype.Field,
+    field: ?*const datatype.Field,
     nullable: bool,
     metadata: []const datatype.MetadataEntry,
     out: *ArrowSchema,
@@ -91,7 +91,7 @@ fn exportSchemaNode(
     errdefer releaseSchemas(children_storage[0..exported_children]);
 
     for (0..child_count) |i| {
-        const child_field = childFieldAt(ty, i).?;
+        const child_field = ty.childField(i).?;
         try exportField(allocator, child_field, &children_storage[i]);
         child_ptrs[i] = &children_storage[i];
         exported_children += 1;
@@ -208,18 +208,6 @@ fn formatForType(allocator: Allocator, ty: datatype.DataType) Error![:0]u8 {
         .sparse_union => |meta| unionFormat(allocator, "s", meta.type_ids),
         .dense_union => |meta| unionFormat(allocator, "d", meta.type_ids),
         .dictionary => |meta| formatForType(allocator, meta.index_type.*),
-    };
-}
-
-fn childFieldAt(ty: datatype.DataType, index: usize) ?datatype.Field {
-    return switch (ty) {
-        .list => |meta| if (index == 0) meta.child else null,
-        .large_list => |meta| if (index == 0) meta.child else null,
-        .fixed_size_list => |meta| if (index == 0) meta.child else null,
-        .struct_ => |meta| if (index < meta.fields.len) meta.fields[index] else null,
-        .sparse_union => |meta| if (index < meta.fields.len) meta.fields[index] else null,
-        .dense_union => |meta| if (index < meta.fields.len) meta.fields[index] else null,
-        else => null,
     };
 }
 

@@ -16,7 +16,7 @@ pub const ExportError = Allocator.Error || error{
     ValueOutOfRange,
 };
 
-pub fn importOwned(allocator: Allocator, metadata: ?[*]const u8) ImportError![]const datatype.MetadataEntry {
+pub fn importOwned(allocator: Allocator, metadata: ?[*]const u8) ImportError![]datatype.MetadataEntry {
     const ptr = metadata orelse return try allocator.alloc(datatype.MetadataEntry, 0);
     var reader = Reader{ .ptr = ptr };
     return parseOwned(allocator, &reader);
@@ -82,7 +82,7 @@ const Reader = struct {
     }
 };
 
-fn parseOwned(allocator: Allocator, reader: *Reader) ImportError![]const datatype.MetadataEntry {
+fn parseOwned(allocator: Allocator, reader: *Reader) ImportError![]datatype.MetadataEntry {
     const count = try reader.readInt();
     if (count < 0) return error.InvalidMetadata;
 

@@ -136,7 +136,7 @@ fn validateBinaryLike(data: anytype, total: usize, comptime Offset: type) (Error
     if (offsets) |offset_buf| try validateOffsets(data, offset_buf, values.size, Offset);
 }
 
-fn validateListLike(data: anytype, total: usize, child_field: datatype.Field, comptime Offset: type) (Error || checked.Error || datatype.ValidationError)!void {
+fn validateListLike(data: anytype, total: usize, child_field: *const datatype.Field, comptime Offset: type) (Error || checked.Error || datatype.ValidationError)!void {
     const child = data.children[0];
     if (!datatype.DataType.equals(child.type, child_field.type.*)) return error.ChildTypeMismatch;
     try child.validate();
@@ -263,7 +263,7 @@ fn validateOffsets(data: anytype, offsets: *const Buffer, limit: usize, comptime
     try offset_data.validateMonotonic(Offset, offsets, data.offset, data.len, limit);
 }
 
-fn validateNullable(field: datatype.Field, child: anytype) Error!void {
+fn validateNullable(field: *const datatype.Field, child: anytype) Error!void {
     if (field.nullable) return;
     if (child.nullCount() != 0) return error.NonNullableNulls;
 }
@@ -425,7 +425,9 @@ test "validate list and struct storage" {
     defer offsets.deinit();
 
     const value_ty: datatype.DataType = .int32;
-    const list_ty = datatype.DataType{ .list = .{ .child = .{ .name = "item", .type = &value_ty } } };
+    const item_field = try datatype.Field.create(allocator, "item", &value_ty, true, &.{});
+    defer item_field.deinit();
+    const list_ty = datatype.DataType{ .list = .{ .child = item_field } };
     const list = try ArrayData.initRetained(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null);
     defer list.deinit();
     try list.validate();
@@ -438,27 +440,25 @@ test "validate list and struct storage" {
     const child_with_null = try ArrayData.initRetained(allocator, .int32, 2, 0, 1, &.{ child_validity, child_values }, &.{}, null);
     defer child_with_null.deinit();
 
-    const required_list_ty = datatype.DataType{ .list = .{ .child = .{
-        .name = "item",
-        .type = &value_ty,
-        .nullable = false,
-    } } };
+    const req_item_field = try datatype.Field.create(allocator, "item", &value_ty, false, &.{});
+    defer req_item_field.deinit();
+    const required_list_ty = datatype.DataType{ .list = .{ .child = req_item_field } };
     const required_list = try ArrayData.initRetained(allocator, required_list_ty, 1, 0, 0, &.{ null, offsets }, &.{child_with_null}, null);
     defer required_list.deinit();
     try std.testing.expectError(error.NonNullableNulls, required_list.validate());
 
-    const fields = [_]datatype.Field{.{ .name = "a", .type = &value_ty }};
-    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &fields } };
+    const a_field = try datatype.Field.create(allocator, "a", &value_ty, true, &.{});
+    defer a_field.deinit();
+    const fields_ptrs = [_]*const datatype.Field{a_field};
+    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &fields_ptrs } };
     const struct_data = try ArrayData.initRetained(allocator, struct_ty, 3, 0, 0, &.{null}, &.{child}, null);
     defer struct_data.deinit();
     try struct_data.validate();
 
-    const required_fields = [_]datatype.Field{.{
-        .name = "a",
-        .type = &value_ty,
-        .nullable = false,
-    }};
-    const required_struct_ty = datatype.DataType{ .struct_ = .{ .fields = &required_fields } };
+    const req_a_field = try datatype.Field.create(allocator, "a", &value_ty, false, &.{});
+    defer req_a_field.deinit();
+    const req_fields_ptrs = [_]*const datatype.Field{req_a_field};
+    const required_struct_ty = datatype.DataType{ .struct_ = .{ .fields = &req_fields_ptrs } };
     const required_struct = try ArrayData.initRetained(allocator, required_struct_ty, 2, 0, 0, &.{null}, &.{child_with_null}, null);
     defer required_struct.deinit();
     try std.testing.expectError(error.NonNullableNulls, required_struct.validate());
@@ -546,12 +546,13 @@ test "validate dense union storage" {
 
     const int_ty: datatype.DataType = .int32;
     const bool_ty: datatype.DataType = .bool;
-    const fields = [_]datatype.Field{
-        .{ .name = "i", .type = &int_ty },
-        .{ .name = "b", .type = &bool_ty },
-    };
+    const int_field = try datatype.Field.create(allocator, "i", &int_ty, true, &.{});
+    defer int_field.deinit();
+    const bool_field = try datatype.Field.create(allocator, "b", &bool_ty, true, &.{});
+    defer bool_field.deinit();
+    const union_fields = [_]*const datatype.Field{ int_field, bool_field };
     const ids = [_]i8{ 7, 8 };
-    const union_ty = datatype.DataType{ .dense_union = .{ .fields = &fields, .type_ids = &ids } };
+    const union_ty = datatype.DataType{ .dense_union = .{ .fields = &union_fields, .type_ids = &ids } };
     const data = try ArrayData.initRetained(allocator, union_ty, 3, 0, 0, &.{ type_ids, offsets }, &.{ int_child, bool_child }, null);
     defer data.deinit();
     try data.validate();

@@ -61,7 +61,9 @@ test "exportArray exports nested list arrays" {
     defer offsets.deinit();
 
     const value_ty: datatype.DataType = .int32;
-    const list_ty = datatype.DataType{ .list = .{ .child = .{ .type = &value_ty } } };
+    const list_item_field = try datatype.Field.create(allocator, "", &value_ty, true, &.{});
+    defer list_item_field.deinit();
+    const list_ty = datatype.DataType{ .list = .{ .child = list_item_field } };
     const data = try ArrayData.initRetained(allocator, list_ty, 2, 0, 0, &.{ null, offsets }, &.{child}, null);
     defer data.deinit();
 
@@ -183,11 +185,12 @@ test "importArray imports exported struct array" {
 
     const number_ty: datatype.DataType = .int32;
     const flag_ty: datatype.DataType = .bool;
-    const fields = [_]datatype.Field{
-        .{ .name = "number", .type = &number_ty },
-        .{ .name = "flag", .type = &flag_ty },
-    };
-    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &fields } };
+    const number_field_struct = try datatype.Field.create(allocator, "number", &number_ty, true, &.{});
+    defer number_field_struct.deinit();
+    const flag_field_struct = try datatype.Field.create(allocator, "flag", &flag_ty, true, &.{});
+    defer flag_field_struct.deinit();
+    const struct_fields_arr = [_]*const datatype.Field{ number_field_struct, flag_field_struct };
+    const struct_ty = datatype.DataType{ .struct_ = .{ .fields = &struct_fields_arr } };
     const source = try ArrayData.initRetained(allocator, struct_ty, 3, 0, 0, &.{null}, &.{ number_data, flag_data }, null);
     defer source.deinit();
 
@@ -282,12 +285,13 @@ test "importArray imports exported dense union array" {
 
     const int_ty: datatype.DataType = .int32;
     const bool_ty: datatype.DataType = .bool;
-    const fields = [_]datatype.Field{
-        .{ .name = "i", .type = &int_ty },
-        .{ .name = "b", .type = &bool_ty },
-    };
+    const union_int_field = try datatype.Field.create(allocator, "i", &int_ty, true, &.{});
+    defer union_int_field.deinit();
+    const union_bool_field = try datatype.Field.create(allocator, "b", &bool_ty, true, &.{});
+    defer union_bool_field.deinit();
+    const union_fields_arr = [_]*const datatype.Field{ union_int_field, union_bool_field };
     const ids = [_]i8{ 7, 8 };
-    const union_ty = datatype.DataType{ .dense_union = .{ .fields = &fields, .type_ids = &ids } };
+    const union_ty = datatype.DataType{ .dense_union = .{ .fields = &union_fields_arr, .type_ids = &ids } };
     const source = try ArrayData.initRetained(allocator, union_ty, 3, 0, 0, &.{ type_ids, offsets }, &.{ int_child, bool_child }, null);
     defer source.deinit();
 
@@ -501,7 +505,9 @@ test "importArray rejects invalid buffer and child layout" {
     try std.testing.expectError(error.MissingValuesBuffer, importArray(allocator, .int32, &missing_values));
 
     const child_ty: datatype.DataType = .int32;
-    const list_ty = datatype.DataType{ .list = .{ .child = .{ .type = &child_ty } } };
+    const list_child_field = try datatype.Field.create(allocator, "", &child_ty, true, &.{});
+    defer list_child_field.deinit();
+    const list_ty = datatype.DataType{ .list = .{ .child = list_child_field } };
     var wrong_children = minimalArray();
     wrong_children.n_buffers = 2;
     var list_buffers = [_]?*const anyopaque{ null, null };

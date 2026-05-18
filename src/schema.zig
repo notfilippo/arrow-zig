@@ -17,30 +17,29 @@ pub const Error = Allocator.Error || datatype.ValidationError;
 
 pub const Schema = struct {
     allocator: Allocator,
-    field_meta: []const datatype.Field,
+    field_meta: []const *const datatype.Field,
     schema_metadata: []const MetadataEntry,
     ref_count: RefCount,
 
-    /// Create a schema by cloning fields and metadata.
-    pub fn init(allocator: Allocator, field_meta: []const datatype.Field, schema_meta: []const MetadataEntry) Error!*Schema {
-        const owned_fields = try datatype.cloneOwnedFields(allocator, field_meta);
-        var fields_owned = true;
-        errdefer if (fields_owned) datatype.deinitOwnedFields(allocator, owned_fields);
-
-        const owned_metadata = try datatype.cloneOwnedMetadata(allocator, schema_meta);
-        var metadata_owned = true;
-        errdefer if (metadata_owned) datatype.deinitOwnedMetadata(allocator, owned_metadata);
-
-        const self = try initOwned(allocator, owned_fields, owned_metadata);
-        fields_owned = false;
-        metadata_owned = false;
-        return self;
+    /// Create a schema by retaining fields and cloning metadata.
+    pub fn init(allocator: Allocator, field_meta: []const *const datatype.Field, schema_meta: []const MetadataEntry) Error!*Schema {
+        const owned_fields = try allocator.alloc(*const datatype.Field, field_meta.len);
+        errdefer allocator.free(owned_fields);
+        var retained: usize = 0;
+        errdefer for (owned_fields[0..retained]) |f| f.deinit();
+        for (field_meta, 0..) |f, i| {
+            owned_fields[i] = f.retain();
+            retained += 1;
+        }
+        const owned_meta = try datatype.cloneOwnedMetadata(allocator, schema_meta);
+        errdefer datatype.deinitOwnedMetadata(allocator, owned_meta);
+        return initOwned(allocator, owned_fields, owned_meta);
     }
 
-    /// Create a schema by consuming owned fields and metadata.
+    /// Create a schema by consuming owned fields slice and metadata.
     /// On success, caller must not deinit those inputs separately.
     /// On error, caller still owns every input.
-    pub fn initOwned(allocator: Allocator, field_meta: []const datatype.Field, schema_meta: []const MetadataEntry) Error!*Schema {
+    pub fn initOwned(allocator: Allocator, field_meta: []const *const datatype.Field, schema_meta: []const MetadataEntry) Error!*Schema {
         for (field_meta) |item| try item.type.validate();
 
         const self = try allocator.create(Schema);
@@ -61,7 +60,8 @@ pub const Schema = struct {
     pub fn deinit(self: *Schema) void {
         if (self.ref_count.fetchSub(1, .acq_rel) != 1) return;
         const allocator = self.allocator;
-        datatype.deinitOwnedFields(allocator, self.field_meta);
+        for (self.field_meta) |f| f.deinit();
+        allocator.free(self.field_meta);
         datatype.deinitOwnedMetadata(allocator, self.schema_metadata);
         allocator.destroy(self);
     }
@@ -71,7 +71,7 @@ pub const Schema = struct {
     }
 
     pub fn validate(self: *const Schema) datatype.ValidationError!void {
-        for (self.field_meta) |field_meta| try field_meta.type.validate();
+        for (self.field_meta) |f| try f.type.validate();
     }
 
     pub fn equals(a: *const Schema, b: *const Schema) bool {
@@ -83,18 +83,18 @@ pub const Schema = struct {
         return self.field_meta.len;
     }
 
-    pub fn fields(self: *const Schema) []const datatype.Field {
+    pub fn fields(self: *const Schema) []const *const datatype.Field {
         return self.field_meta;
     }
 
-    pub fn field(self: *const Schema, index: usize) ?datatype.Field {
+    pub fn field(self: *const Schema, index: usize) ?*const datatype.Field {
         if (index >= self.field_meta.len) return null;
         return self.field_meta[index];
     }
 
-    pub fn fieldNamed(self: *const Schema, name: []const u8) ?datatype.Field {
-        for (self.field_meta) |field_meta| {
-            if (std.mem.eql(u8, field_meta.name, name)) return field_meta;
+    pub fn fieldNamed(self: *const Schema, name: []const u8) ?*const datatype.Field {
+        for (self.field_meta) |f| {
+            if (std.mem.eql(u8, f.name, name)) return f;
         }
         return null;
     }
@@ -111,7 +111,7 @@ pub const Schema = struct {
     }
 };
 
-fn fieldsEqual(a: []const datatype.Field, b: []const datatype.Field) bool {
+fn fieldsEqual(a: []const *const datatype.Field, b: []const *const datatype.Field) bool {
     if (a.len != b.len) return false;
     for (a, b) |left, right| {
         if (!datatype.Field.equals(left, right)) return false;
@@ -133,15 +133,14 @@ test "Schema owns fields metadata and ref count" {
     const field_metadata = [_]MetadataEntry{
         .{ .key = "unit", .value = "ms" },
     };
-    const fields = [_]datatype.Field{
-        .{ .name = "number", .type = &int_ty, .metadata = &field_metadata },
-    };
+    const number_field = try datatype.Field.create(allocator, "number", &int_ty, true, &field_metadata);
+    defer number_field.deinit();
     const metadata = [_]MetadataEntry{
         .{ .key = "source", .value = "test" },
         .{ .key = "source", .value = "duplicate" },
     };
 
-    const s = try Schema.init(allocator, &fields, &metadata);
+    const s = try Schema.init(allocator, &.{number_field}, &metadata);
     defer s.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), s.refCount());
@@ -164,9 +163,8 @@ test "Schema owns fields metadata and ref count" {
 test "Schema equality includes ordered metadata" {
     const allocator = std.testing.allocator;
     const int_ty: datatype.DataType = .int32;
-    const fields = [_]datatype.Field{
-        .{ .name = "number", .type = &int_ty },
-    };
+    const number_field = try datatype.Field.create(allocator, "number", &int_ty, true, &.{});
+    defer number_field.deinit();
     const metadata_a = [_]MetadataEntry{
         .{ .key = "a", .value = "1" },
         .{ .key = "b", .value = "2" },
@@ -176,11 +174,11 @@ test "Schema equality includes ordered metadata" {
         .{ .key = "a", .value = "1" },
     };
 
-    const a = try Schema.init(allocator, &fields, &metadata_a);
+    const a = try Schema.init(allocator, &.{number_field}, &metadata_a);
     defer a.deinit();
-    const a2 = try Schema.init(allocator, &fields, &metadata_a);
+    const a2 = try Schema.init(allocator, &.{number_field}, &metadata_a);
     defer a2.deinit();
-    const b = try Schema.init(allocator, &fields, &metadata_b);
+    const b = try Schema.init(allocator, &.{number_field}, &metadata_b);
     defer b.deinit();
 
     try std.testing.expect(Schema.equals(a, a2));
@@ -192,18 +190,18 @@ test "Schema allocation failures" {
 }
 
 fn checkSchemaAllocationFailure(allocator: Allocator) !void {
+    const setup = std.testing.allocator;
     const int_ty: datatype.DataType = .int32;
     const field_metadata = [_]MetadataEntry{
         .{ .key = "unit", .value = "ms" },
     };
-    const fields = [_]datatype.Field{
-        .{ .name = "number", .type = &int_ty, .metadata = &field_metadata },
-    };
+    const number_field = try datatype.Field.create(setup, "number", &int_ty, true, &field_metadata);
+    defer number_field.deinit();
     const metadata = [_]MetadataEntry{
         .{ .key = "source", .value = "test" },
     };
 
-    const s = try Schema.init(allocator, &fields, &metadata);
+    const s = try Schema.init(allocator, &.{number_field}, &metadata);
     defer s.deinit();
     try s.validate();
 }
