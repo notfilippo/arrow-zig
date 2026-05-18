@@ -13,6 +13,7 @@ const binary = @import("array_binary.zig");
 const list = @import("array_list.zig");
 const dictionary = @import("array_dictionary.zig");
 const nested = @import("array_nested.zig");
+const union_array = @import("array_union.zig");
 
 /// Reference counted array storage.
 pub const ArrayData = array_data.ArrayData;
@@ -59,6 +60,8 @@ pub const ListArray = list.ListArray;
 pub const LargeListArray = list.LargeListArray;
 pub const FixedSizeListArray = list.FixedSizeListArray;
 pub const StructArray = nested.StructArray;
+pub const SparseUnionArray = union_array.SparseUnionArray;
+pub const DenseUnionArray = union_array.DenseUnionArray;
 
 pub const dataTypeAcceptsZigType = base.dataTypeAcceptsZigType;
 pub const FixedWidthArray = prim.FixedWidthArray;
