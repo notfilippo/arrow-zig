@@ -9,6 +9,7 @@
 const array_data = @import("array_data.zig");
 const base = @import("array_base.zig");
 const prim = @import("array_primitive.zig");
+const null_array = @import("array_null.zig");
 const binary = @import("array_binary.zig");
 const list = @import("array_list.zig");
 const dictionary = @import("array_dictionary.zig");
@@ -45,6 +46,7 @@ pub const VarBinaryKind = binary.VarBinaryKind;
 /// Error set for creating typed arrays from storage.
 pub const ViewError = base.ViewError;
 
+pub const NullArray = null_array.NullArray;
 pub const BooleanArray = prim.BooleanArray;
 pub const Date32Array = prim.Date32Array;
 pub const Date64Array = prim.Date64Array;
