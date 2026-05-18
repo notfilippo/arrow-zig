@@ -117,6 +117,9 @@ test "importType round trips scalar schemas" {
         .{ .time64 = .nanosecond },
         .{ .timestamp = .{ .unit = .nanosecond, .tz = "UTC" } },
         .{ .duration = .microsecond },
+        .month_interval,
+        .day_time_interval,
+        .month_day_nano_interval,
         .binary,
         .utf8,
         .large_binary,
@@ -162,6 +165,25 @@ test "importType parses decimal formats" {
 
     var bad_precision = minimalSchema("d:39,5");
     try std.testing.expectError(error.InvalidDecimalPrecision, importType(allocator, &bad_precision));
+}
+
+test "importType parses interval formats" {
+    const allocator = std.testing.allocator;
+
+    var month = minimalSchema("tiM");
+    var imported_month = try importType(allocator, &month);
+    defer datatype.deinitOwned(allocator, &imported_month);
+    try std.testing.expect(datatype.DataType.equals(.month_interval, imported_month));
+
+    var day_time = minimalSchema("tiD");
+    var imported_day_time = try importType(allocator, &day_time);
+    defer datatype.deinitOwned(allocator, &imported_day_time);
+    try std.testing.expect(datatype.DataType.equals(.day_time_interval, imported_day_time));
+
+    var month_day_nano = minimalSchema("tin");
+    var imported_month_day_nano = try importType(allocator, &month_day_nano);
+    defer datatype.deinitOwned(allocator, &imported_month_day_nano);
+    try std.testing.expect(datatype.DataType.equals(.month_day_nano_interval, imported_month_day_nano));
 }
 
 test "importField round trips field schema" {

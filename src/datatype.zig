@@ -31,6 +31,9 @@ pub const TypeId = enum(u8) {
     time64,
     timestamp,
     duration,
+    month_interval,
+    day_time_interval,
+    month_day_nano_interval,
     binary,
     utf8,
     large_binary,
@@ -289,6 +292,9 @@ pub const DataType = union(TypeId) {
     time64: TimeUnit,
     timestamp: TimestampMeta,
     duration: TimeUnit,
+    month_interval,
+    day_time_interval,
+    month_day_nano_interval,
     binary,
     utf8,
     large_binary,
@@ -317,9 +323,9 @@ pub const DataType = union(TypeId) {
             .bool => 1,
             .int8, .uint8 => 8,
             .int16, .uint16, .float16 => 16,
-            .int32, .uint32, .float32, .date32, .time32 => 32,
-            .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration => 64,
-            .decimal128 => 128,
+            .int32, .uint32, .float32, .date32, .time32, .month_interval => 32,
+            .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration, .day_time_interval => 64,
+            .decimal128, .month_day_nano_interval => 128,
             .decimal256 => 256,
             .fixed_size_binary => |meta| if (meta.byte_width > std.math.maxInt(u16) / 8) 0 else @intCast(meta.byte_width * 8),
             .binary, .utf8, .large_binary, .large_utf8, .list, .large_list, .fixed_size_list, .map, .struct_, .sparse_union, .dense_union => 0,
@@ -349,6 +355,9 @@ pub const DataType = union(TypeId) {
             .time64 => "time64",
             .timestamp => "timestamp",
             .duration => "duration",
+            .month_interval => "month_interval",
+            .day_time_interval => "day_time_interval",
+            .month_day_nano_interval => "month_day_nano_interval",
             .binary => "binary",
             .utf8 => "utf8",
             .large_binary => "large_binary",
@@ -440,6 +449,7 @@ pub const DataType = union(TypeId) {
             .duration => a.duration == b.duration,
             .timestamp => a.timestamp.unit == b.timestamp.unit and
                 std.mem.eql(u8, a.timestamp.tz orelse "", b.timestamp.tz orelse ""),
+            .month_interval, .day_time_interval, .month_day_nano_interval => true,
             .fixed_size_binary => a.fixed_size_binary.byte_width == b.fixed_size_binary.byte_width,
             .decimal128 => decimalEqual(a.decimal128, b.decimal128),
             .decimal256 => decimalEqual(a.decimal256, b.decimal256),
@@ -625,6 +635,9 @@ test "DataType.bitWidth" {
     try std.testing.expectEqual(@as(u16, 128), DataType.bitWidth(.{ .fixed_size_binary = .{ .byte_width = 16 } }));
     try std.testing.expectEqual(@as(u16, 128), DataType.bitWidth(.{ .decimal128 = .{ .precision = 38, .scale = 0 } }));
     try std.testing.expectEqual(@as(u16, 256), DataType.bitWidth(.{ .decimal256 = .{ .precision = 76, .scale = 0 } }));
+    try std.testing.expectEqual(@as(u16, 32), DataType.bitWidth(.month_interval));
+    try std.testing.expectEqual(@as(u16, 64), DataType.bitWidth(.day_time_interval));
+    try std.testing.expectEqual(@as(u16, 128), DataType.bitWidth(.month_day_nano_interval));
     try std.testing.expectEqual(@as(u16, 64), DataType.bitWidth(.float64));
     try std.testing.expectEqual(@as(u16, 0), DataType.bitWidth(.binary));
 }

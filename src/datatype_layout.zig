@@ -96,9 +96,9 @@ pub fn layout(ty: anytype) Layout {
         .bool => .{ .buffers = &bool_buffers },
         .int8, .uint8 => .{ .buffers = &fixed_1_buffers },
         .int16, .uint16, .float16 => .{ .buffers = &fixed_2_buffers },
-        .int32, .uint32, .float32, .date32, .time32 => .{ .buffers = &fixed_4_buffers },
-        .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration => .{ .buffers = &fixed_8_buffers },
-        .decimal128 => .{ .buffers = &fixed_16_buffers },
+        .int32, .uint32, .float32, .date32, .time32, .month_interval => .{ .buffers = &fixed_4_buffers },
+        .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration, .day_time_interval => .{ .buffers = &fixed_8_buffers },
+        .decimal128, .month_day_nano_interval => .{ .buffers = &fixed_16_buffers },
         .decimal256 => .{ .buffers = &fixed_32_buffers },
         .fixed_size_binary => .{ .buffers = &fixed_size_binary_buffers },
         .binary, .utf8 => .{ .buffers = &binary_buffers },
@@ -127,6 +127,9 @@ test "layout describes buffers" {
     try std.testing.expectEqual(@as(usize, 4), int32_ty.layout().buffers[1].byte_width);
     try std.testing.expectEqual(@as(usize, 16), (datatype.DataType{ .decimal128 = .{ .precision = 12, .scale = 2 } }).layout().buffers[1].byte_width);
     try std.testing.expectEqual(@as(usize, 32), (datatype.DataType{ .decimal256 = .{ .precision = 40, .scale = 2 } }).layout().buffers[1].byte_width);
+    try std.testing.expectEqual(@as(usize, 4), (@as(datatype.DataType, .month_interval)).layout().buffers[1].byte_width);
+    try std.testing.expectEqual(@as(usize, 8), (@as(datatype.DataType, .day_time_interval)).layout().buffers[1].byte_width);
+    try std.testing.expectEqual(@as(usize, 16), (@as(datatype.DataType, .month_day_nano_interval)).layout().buffers[1].byte_width);
     try std.testing.expectEqual(@as(usize, 2), (datatype.DataType{ .fixed_size_binary = .{ .byte_width = 16 } }).layout().buffers.len);
     try std.testing.expectEqual(@as(usize, 3), binary_ty.layout().buffers.len);
     try std.testing.expectEqual(BufferKind.offsets, binary_ty.layout().buffers[1].kind);

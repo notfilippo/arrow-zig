@@ -153,6 +153,9 @@ fn importTemporalType(
     if (std.mem.eql(u8, format, "ttm")) return .{ .time32 = .millisecond };
     if (std.mem.eql(u8, format, "ttu")) return .{ .time64 = .microsecond };
     if (std.mem.eql(u8, format, "ttn")) return .{ .time64 = .nanosecond };
+    if (std.mem.eql(u8, format, "tiM")) return .month_interval;
+    if (std.mem.eql(u8, format, "tiD")) return .day_time_interval;
+    if (std.mem.eql(u8, format, "tin")) return .month_day_nano_interval;
     if (format.len == 3 and format[0] == 't' and format[1] == 'D') {
         return .{ .duration = try timeUnitFromCode(format[2]) };
     }

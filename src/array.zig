@@ -12,6 +12,7 @@ const prim = @import("array_primitive.zig");
 const null_array = @import("array_null.zig");
 const binary = @import("array_binary.zig");
 const decimal = @import("array_decimal.zig");
+const interval = @import("array_interval.zig");
 const list = @import("array_list.zig");
 const map_array = @import("array_map.zig");
 const dictionary = @import("array_dictionary.zig");
@@ -48,6 +49,9 @@ pub const VarBinaryKind = binary.VarBinaryKind;
 /// Compile time kind for decimal arrays.
 pub const DecimalKind = decimal.DecimalKind;
 
+/// Compile time kind for interval arrays.
+pub const IntervalKind = interval.IntervalKind;
+
 /// Error set for creating typed arrays from storage.
 pub const ViewError = base.ViewError;
 
@@ -59,6 +63,11 @@ pub const Time32Array = prim.Time32Array;
 pub const Time64Array = prim.Time64Array;
 pub const TimestampArray = prim.TimestampArray;
 pub const DurationArray = prim.DurationArray;
+pub const DayTimeInterval = interval.DayTimeInterval;
+pub const MonthDayNanoInterval = interval.MonthDayNanoInterval;
+pub const MonthIntervalArray = interval.MonthIntervalArray;
+pub const DayTimeIntervalArray = interval.DayTimeIntervalArray;
+pub const MonthDayNanoIntervalArray = interval.MonthDayNanoIntervalArray;
 pub const BinaryArray = binary.BinaryArray;
 pub const Utf8Array = binary.Utf8Array;
 pub const LargeBinaryArray = binary.LargeBinaryArray;
@@ -77,6 +86,7 @@ pub const DenseUnionArray = union_array.DenseUnionArray;
 pub const dataTypeAcceptsZigType = base.dataTypeAcceptsZigType;
 pub const FixedWidthArray = prim.FixedWidthArray;
 pub const DecimalArray = decimal.DecimalArray;
+pub const IntervalArray = interval.IntervalArray;
 pub const VarListArray = list.VarListArray;
 pub const VarBinaryArray = binary.VarBinaryArray;
 

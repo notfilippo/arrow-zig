@@ -64,7 +64,7 @@ fn validateData(data: anytype, ty: datatype.DataType, total: usize) (Error || ch
     }
 
     switch (ty) {
-        .bool, .int8, .int16, .int32, .int64, .uint8, .uint16, .uint32, .uint64, .float16, .float32, .float64, .date32, .date64, .time32, .time64, .timestamp, .duration, .decimal128, .decimal256, .fixed_size_binary => {
+        .bool, .int8, .int16, .int32, .int64, .uint8, .uint16, .uint32, .uint64, .float16, .float32, .float64, .date32, .date64, .time32, .time64, .timestamp, .duration, .month_interval, .day_time_interval, .month_day_nano_interval, .decimal128, .decimal256, .fixed_size_binary => {
             try validateFixedWidth(data, total, ty);
         },
         .binary, .utf8 => try validateBinaryLike(data, total, i32),
