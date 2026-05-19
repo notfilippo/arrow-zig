@@ -43,13 +43,13 @@ pub fn VarBinaryArray(comptime kind: VarBinaryKind) type {
     return struct {
         const Self = @This();
 
-        view: common.NullableView,
+        view: common.ValidityView(.bitmap),
 
         pub fn fromData(data: *const ArrayData) common.ViewError!Self {
             if (!dataTypeMatches(kind, data.type)) return error.TypeMismatch;
             if (data.buffers.len < 3 or data.buffers[2] == null) return error.InvalidBufferLayout;
             if (data.len > 0 and data.buffers[1] == null) return error.InvalidBufferLayout;
-            return .{ .view = common.NullableView.init(data) };
+            return .{ .view = common.ValidityView(.bitmap).init(data) };
         }
 
         pub fn valueBytes(self: Self, i: usize) []const u8 {
@@ -71,12 +71,12 @@ pub const LargeBinaryArray = VarBinaryArray(.large_binary);
 pub const LargeUtf8Array = VarBinaryArray(.large_utf8);
 
 pub const FixedSizeBinaryArray = struct {
-    view: common.NullableView,
+    view: common.ValidityView(.bitmap),
 
     pub fn fromData(data: *const ArrayData) common.ViewError!FixedSizeBinaryArray {
         if (data.type.id() != .fixed_size_binary) return error.TypeMismatch;
         if (data.buffers.len < 2 or data.buffers[1] == null) return error.InvalidBufferLayout;
-        return .{ .view = common.NullableView.init(data) };
+        return .{ .view = common.ValidityView(.bitmap).init(data) };
     }
 
     pub fn byteWidth(self: FixedSizeBinaryArray) usize {

@@ -145,7 +145,7 @@ test "DictionaryBuilder builds dictionary arrays" {
     try data.validate();
 
     const arr = try array.DictionaryArray(i8).fromData(data);
-    try std.testing.expect(arr.view.base.dataType().dictionary.ordered);
+    try std.testing.expect(arr.view.base.data.type.dictionary.ordered);
     try std.testing.expectEqual(@as(usize, 5), arr.view.base.len);
     try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
     try std.testing.expectEqual(@as(i8, 1), arr.indexValue(1));

@@ -59,12 +59,12 @@ pub fn IntervalArray(comptime kind: IntervalKind) type {
         const Self = @This();
         pub const ValueType = Value;
 
-        view: common.NullableView,
+        view: common.ValidityView(.bitmap),
 
         pub fn fromData(data: *const ArrayData) common.ViewError!Self {
             if (!dataTypeMatches(kind, data.type)) return error.TypeMismatch;
             if (data.buffers.len < 2 or data.buffers[1] == null) return error.InvalidBufferLayout;
-            return .{ .view = common.NullableView.init(data) };
+            return .{ .view = common.ValidityView(.bitmap).init(data) };
         }
 
         pub fn byteWidth(self: Self) usize {

@@ -13,14 +13,14 @@ const Buffer = @import("buffer.zig").Buffer;
 const ArrayData = array_data.ArrayData;
 
 pub const MapArray = struct {
-    view: common.NullableView,
+    view: common.ValidityView(.bitmap),
 
     pub fn fromData(data: *const ArrayData) common.ViewError!MapArray {
         if (data.type.id() != .map) return error.TypeMismatch;
         if (data.buffers.len != 2 or data.children.len != 1) return error.InvalidBufferLayout;
         if (data.len > 0 and data.buffers[1] == null) return error.InvalidBufferLayout;
         if (data.children[0].type.id() != .struct_ or data.children[0].children.len != 2) return error.InvalidBufferLayout;
-        return .{ .view = common.NullableView.init(data) };
+        return .{ .view = common.ValidityView(.bitmap).init(data) };
     }
 
     pub fn entriesBaseData(self: MapArray) *const ArrayData {

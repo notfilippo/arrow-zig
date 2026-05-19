@@ -75,14 +75,6 @@ pub const View = struct {
         return .{ .data = data, .offset = data.offset, .len = data.len };
     }
 
-    pub fn dataType(self: View) datatype.DataType {
-        return self.data.type;
-    }
-
-    pub fn baseData(self: View) *const ArrayData {
-        return self.data;
-    }
-
     pub fn slice(self: View, off: usize, length: usize) View {
         return self.sliceChecked(off, length) catch unreachable;
     }
@@ -103,90 +95,55 @@ pub const View = struct {
     }
 };
 
-pub const NullableView = struct {
-    base: View,
-    null_count: ?usize,
+pub fn ValidityView(comptime nulls: enum { bitmap, none, all }) type {
+    return struct {
+        const Self = @This();
 
-    pub fn init(data: *const ArrayData) NullableView {
-        return .{
-            .base = View.init(data),
-            .null_count = data.null_count,
-        };
-    }
+        base: View,
+        null_count: if (nulls == .bitmap) ?usize else void = if (nulls == .bitmap) null else {},
 
-    pub fn isValid(self: NullableView, i: usize) bool {
-        return slotIsValid(self.base.data, self.base.offset, i);
-    }
+        pub fn init(data: *const ArrayData) Self {
+            return .{
+                .base = View.init(data),
+                .null_count = if (nulls == .bitmap) data.null_count else {},
+            };
+        }
 
-    pub fn isNull(self: NullableView, i: usize) bool {
-        return !self.isValid(i);
-    }
+        pub fn isValid(self: Self, i: usize) bool {
+            return switch (nulls) {
+                .bitmap => slotIsValid(self.base.data, self.base.offset, i),
+                .none => true,
+                .all => false,
+            };
+        }
 
-    pub fn nullCount(self: NullableView) usize {
-        return viewNullCount(self.base.data, self.base.offset, self.base.len, self.null_count);
-    }
+        pub fn isNull(self: Self, i: usize) bool {
+            return !self.isValid(i);
+        }
 
-    pub fn slice(self: NullableView, off: usize, length: usize) NullableView {
-        return self.sliceChecked(off, length) catch unreachable;
-    }
+        pub fn nullCount(self: Self) usize {
+            return switch (nulls) {
+                .bitmap => viewNullCount(self.base.data, self.base.offset, self.base.len, self.null_count),
+                .none => 0,
+                .all => self.base.len,
+            };
+        }
 
-    pub fn sliceChecked(self: NullableView, off: usize, length: usize) SliceError!NullableView {
-        const base = try self.base.sliceChecked(off, length);
-        return .{
-            .base = base,
-            .null_count = array_data.slicedNullCount(self.null_count, self.base.len, off, base.len),
-        };
-    }
-};
+        pub fn slice(self: Self, off: usize, length: usize) Self {
+            return self.sliceChecked(off, length) catch unreachable;
+        }
 
-pub const NoNullView = struct {
-    base: View,
-
-    pub fn init(data: *const ArrayData) NoNullView {
-        return .{ .base = View.init(data) };
-    }
-
-    pub fn isValid(self: NoNullView, i: usize) bool {
-        _ = self;
-        _ = i;
-        return true;
-    }
-
-    pub fn isNull(self: NoNullView, i: usize) bool {
-        _ = self;
-        _ = i;
-        return false;
-    }
-
-    pub fn nullCount(self: NoNullView) usize {
-        _ = self;
-        return 0;
-    }
-};
-
-pub const AlwaysNullView = struct {
-    base: View,
-
-    pub fn init(data: *const ArrayData) AlwaysNullView {
-        return .{ .base = View.init(data) };
-    }
-
-    pub fn isValid(self: AlwaysNullView, i: usize) bool {
-        _ = self;
-        _ = i;
-        return false;
-    }
-
-    pub fn isNull(self: AlwaysNullView, i: usize) bool {
-        _ = self;
-        _ = i;
-        return true;
-    }
-
-    pub fn nullCount(self: AlwaysNullView) usize {
-        return self.base.len;
-    }
-};
+        pub fn sliceChecked(self: Self, off: usize, length: usize) SliceError!Self {
+            const base = try self.base.sliceChecked(off, length);
+            return .{
+                .base = base,
+                .null_count = if (nulls == .bitmap)
+                    array_data.slicedNullCount(self.null_count, self.base.len, off, base.len)
+                else {},
+            };
+        }
+    };
+}
 
 pub fn slotIsValid(data: anytype, offset: usize, i: usize) bool {
     const validity = data.buffers[0] orelse return true;

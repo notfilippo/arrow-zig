@@ -50,12 +50,12 @@ pub fn FixedWidthArray(comptime kind: FixedWidthKind) type {
         const Self = @This();
         pub const ValueType = VT;
 
-        view: common.NullableView,
+        view: common.ValidityView(.bitmap),
 
         pub fn fromData(data: *const ArrayData) common.ViewError!Self {
             if (!dataTypeMatchesKind(kind, data.type)) return error.TypeMismatch;
             if (data.buffers.len < 2 or data.buffers[1] == null) return error.InvalidBufferLayout;
-            return .{ .view = common.NullableView.init(data) };
+            return .{ .view = common.ValidityView(.bitmap).init(data) };
         }
 
         pub fn value(self: Self, i: usize) VT {
@@ -185,7 +185,7 @@ test "logical temporal arrays validate type" {
     const date_data = try date_builder.finish();
     defer date_data.deinit();
     const date_arr = try Date32Array.fromData(date_data);
-    try std.testing.expectEqual(.date32, date_arr.view.base.dataType());
+    try std.testing.expectEqual(.date32, date_arr.view.base.data.type);
     try std.testing.expectError(error.TypeMismatch, NumericArray(i32).fromData(date_data));
 
     var time_builder = try bld.NumericBuilder(i32).initType(allocator, .{ .time32 = .millisecond });
@@ -194,7 +194,7 @@ test "logical temporal arrays validate type" {
     const time_data = try time_builder.finish();
     defer time_data.deinit();
     const time_arr = try Time32Array.fromData(time_data);
-    try std.testing.expect(time_arr.view.base.dataType().id() == .time32);
+    try std.testing.expect(time_arr.view.base.data.type.id() == .time32);
 }
 
 test "BooleanArray counts and slicing" {

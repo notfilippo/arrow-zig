@@ -17,14 +17,14 @@ pub fn DictionaryArray(comptime Index: type) type {
         const Self = @This();
         pub const IndexType = Index;
 
-        view: common.NullableView,
+        view: common.ValidityView(.bitmap),
 
         pub fn fromData(data: *const ArrayData) common.ViewError!Self {
             if (data.type.id() != .dictionary) return error.TypeMismatch;
             if (data.type.dictionary.index_type.id() != common.typeIdFor(Index)) return error.TypeMismatch;
             if (data.buffers.len < 2 or data.dictionary == null) return error.InvalidBufferLayout;
             if (data.len > 0 and data.buffers[1] == null) return error.InvalidBufferLayout;
-            return .{ .view = common.NullableView.init(data) };
+            return .{ .view = common.ValidityView(.bitmap).init(data) };
         }
 
         pub fn dictionaryBaseData(self: Self) *const ArrayData {

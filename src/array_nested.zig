@@ -14,12 +14,12 @@ const Buffer = @import("buffer.zig").Buffer;
 const ArrayData = array_data.ArrayData;
 
 pub const StructArray = struct {
-    view: common.NullableView,
+    view: common.ValidityView(.bitmap),
 
     pub fn fromData(data: *const ArrayData) common.ViewError!StructArray {
         if (data.type.id() != .struct_) return error.TypeMismatch;
         if (data.buffers.len != 1 or data.children.len != data.type.struct_.fields.len) return error.InvalidBufferLayout;
-        return .{ .view = common.NullableView.init(data) };
+        return .{ .view = common.ValidityView(.bitmap).init(data) };
     }
 
     pub fn fieldCount(self: StructArray) usize {

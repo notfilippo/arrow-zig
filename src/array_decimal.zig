@@ -48,12 +48,12 @@ pub fn DecimalArray(comptime kind: DecimalKind) type {
         const Self = @This();
         pub const ValueType = Value;
 
-        view: common.NullableView,
+        view: common.ValidityView(.bitmap),
 
         pub fn fromData(data: *const ArrayData) common.ViewError!Self {
             if (!dataTypeMatches(kind, data.type)) return error.TypeMismatch;
             if (data.buffers.len < 2 or data.buffers[1] == null) return error.InvalidBufferLayout;
-            return .{ .view = common.NullableView.init(data) };
+            return .{ .view = common.ValidityView(.bitmap).init(data) };
         }
 
         pub fn precision(self: Self) u8 {

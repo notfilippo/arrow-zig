@@ -43,13 +43,13 @@ pub fn VarListArray(comptime kind: ListKind) type {
     return struct {
         const Self = @This();
 
-        view: common.NullableView,
+        view: common.ValidityView(.bitmap),
 
         pub fn fromData(data: *const ArrayData) common.ViewError!Self {
             if (!dataTypeMatches(kind, data.type)) return error.TypeMismatch;
             if (data.buffers.len < 2 or data.children.len != 1) return error.InvalidBufferLayout;
             if (data.len > 0 and data.buffers[1] == null) return error.InvalidBufferLayout;
-            return .{ .view = common.NullableView.init(data) };
+            return .{ .view = common.ValidityView(.bitmap).init(data) };
         }
 
         pub fn childBaseData(self: Self) *const ArrayData {
@@ -72,12 +72,12 @@ pub const ListArray = VarListArray(.list);
 pub const LargeListArray = VarListArray(.large_list);
 
 pub const FixedSizeListArray = struct {
-    view: common.NullableView,
+    view: common.ValidityView(.bitmap),
 
     pub fn fromData(data: *const ArrayData) common.ViewError!FixedSizeListArray {
         if (data.type.id() != .fixed_size_list) return error.TypeMismatch;
         if (data.buffers.len != 1 or data.children.len != 1) return error.InvalidBufferLayout;
-        return .{ .view = common.NullableView.init(data) };
+        return .{ .view = common.ValidityView(.bitmap).init(data) };
     }
 
     pub fn childBaseData(self: FixedSizeListArray) *const ArrayData {
@@ -181,7 +181,7 @@ test "LargeListArray uses large offsets" {
     const arr = try LargeListArray.fromData(data);
     try std.testing.expectEqual(@as(usize, 1), arr.valueRange(1).offset);
     try std.testing.expectEqual(@as(usize, 1), arr.valueRange(1).len);
-    try std.testing.expectEqual(.large_list, arr.view.base.dataType().id());
+    try std.testing.expectEqual(.large_list, arr.view.base.data.type.id());
 }
 
 test "FixedSizeListArray value ranges and owned values" {

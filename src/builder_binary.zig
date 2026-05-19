@@ -373,7 +373,7 @@ test "LargeBinaryBuilder uses large offsets" {
     try data.validate();
 
     const arr = try array.LargeBinaryArray.fromData(data);
-    try std.testing.expectEqual(.large_binary, arr.view.base.dataType());
+    try std.testing.expectEqual(.large_binary, arr.view.base.data.type);
     try std.testing.expectEqualStrings("alpha", arr.valueBytes(0));
     try std.testing.expectEqualStrings("beta", arr.valueBytes(1));
     try std.testing.expectEqual(@as(usize, 3 * @sizeOf(i64)), data.buffers[1].?.size);

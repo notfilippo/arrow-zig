@@ -12,13 +12,13 @@ const ArrayData = array_data.ArrayData;
 const Buffer = @import("buffer.zig").Buffer;
 
 pub const SparseUnionArray = struct {
-    view: common.NoNullView,
+    view: common.ValidityView(.none),
 
     pub fn fromData(data: *const ArrayData) common.ViewError!SparseUnionArray {
         if (data.type.id() != .sparse_union) return error.TypeMismatch;
         if (data.buffers.len != 1 or data.buffers[0] == null) return error.InvalidBufferLayout;
         if (data.children.len != data.type.sparse_union.fields.len) return error.InvalidBufferLayout;
-        return .{ .view = common.NoNullView.init(data) };
+        return .{ .view = common.ValidityView(.none).init(data) };
     }
 
     pub fn typeId(self: SparseUnionArray, i: usize) i8 {
@@ -41,13 +41,13 @@ pub const SparseUnionArray = struct {
 };
 
 pub const DenseUnionArray = struct {
-    view: common.NoNullView,
+    view: common.ValidityView(.none),
 
     pub fn fromData(data: *const ArrayData) common.ViewError!DenseUnionArray {
         if (data.type.id() != .dense_union) return error.TypeMismatch;
         if (data.buffers.len != 2 or data.buffers[0] == null or data.buffers[1] == null) return error.InvalidBufferLayout;
         if (data.children.len != data.type.dense_union.fields.len) return error.InvalidBufferLayout;
-        return .{ .view = common.NoNullView.init(data) };
+        return .{ .view = common.ValidityView(.none).init(data) };
     }
 
     pub fn typeId(self: DenseUnionArray, i: usize) i8 {

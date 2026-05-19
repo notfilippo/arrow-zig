@@ -10,12 +10,12 @@ const common = @import("array_base.zig");
 const ArrayData = array_data.ArrayData;
 
 pub const NullArray = struct {
-    view: common.AlwaysNullView,
+    view: common.ValidityView(.all),
 
     pub fn fromData(data: *const ArrayData) common.ViewError!NullArray {
         if (data.type.id() != .null_) return error.TypeMismatch;
         if (data.buffers.len != 0 or data.children.len != 0 or data.dictionary != null) return error.InvalidBufferLayout;
-        return .{ .view = common.AlwaysNullView.init(data) };
+        return .{ .view = common.ValidityView(.all).init(data) };
     }
 };
 
