@@ -252,13 +252,3 @@ fn i64ToUsize(value: i64) RecordBatchImportError!usize {
     if (@as(u128, unsigned) > @as(u128, std.math.maxInt(usize))) return error.ValueOutOfRange;
     return @intCast(unsigned);
 }
-
-test {
-    std.testing.refAllDecls(@import("cdi/metadata.zig"));
-    std.testing.refAllDecls(@import("cdi/alloc_test.zig"));
-    std.testing.refAllDecls(@import("cdi/array_test.zig"));
-    std.testing.refAllDecls(@import("cdi/record_batch_test.zig"));
-    std.testing.refAllDecls(@import("cdi/schema_test.zig"));
-    std.testing.refAllDecls(@import("cdi/stream_test.zig"));
-    std.testing.refAllDecls(@import("cdi/test_helpers.zig"));
-}

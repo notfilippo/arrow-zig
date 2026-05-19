@@ -49,6 +49,9 @@ pub const cdi = @import("cdi.zig");
 /// Compile time package configuration.
 pub const config = @import("config.zig");
 
+/// Compute kernels.
+pub const compute = @import("compute.zig");
+
 /// Arrow data type metadata.
 pub const datatype = @import("datatype.zig");
 
@@ -109,6 +112,8 @@ test {
     _ = @import("cdi/stream_test.zig");
     _ = @import("checked.zig");
     _ = @import("config.zig");
+    _ = @import("compute.zig");
+    _ = @import("compute/compare.zig");
     _ = @import("datatype.zig");
     _ = @import("datatype_layout.zig");
     _ = @import("offsets.zig");
