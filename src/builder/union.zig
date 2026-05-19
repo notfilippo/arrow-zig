@@ -11,7 +11,7 @@ const offset_data = @import("../offsets.zig");
 const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("../buffer.zig").Buffer;
-const builder_base = @import("base.zig");
+const common = @import("common.zig");
 
 pub const FieldOptions = struct {
     name: []const u8,
@@ -129,7 +129,7 @@ fn UnionBuilder(comptime kind: UnionKind, comptime ChildBuilders: type) type {
 
         pub fn reserve(self: *Self, additional: usize) Error!void {
             if (additional == 0) return;
-            const capped = @max(additional, builder_base.kMinBuilderCapacity);
+            const capped = @max(additional, common.kMinBuilderCapacity);
             try self.type_ids.reserve(self.allocator, capped);
             if (comptime kind == .dense) try self.offsets.reserve(self.allocator, capped);
         }

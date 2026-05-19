@@ -15,7 +15,7 @@ const offset_data = @import("../offsets.zig");
 const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("../buffer.zig").Buffer;
-const builder_base = @import("base.zig");
+const common = @import("common.zig");
 
 pub const FieldOptions = struct {
     name: []const u8 = "item",
@@ -93,7 +93,7 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
         pub fn reserve(self: *Self, additional: usize) Error!void {
             if (additional == 0) return;
             const new_len = try checked.add(self.len, additional);
-            const capped_len = @max(new_len, builder_base.kMinBuilderCapacity);
+            const capped_len = @max(new_len, common.kMinBuilderCapacity);
             try self.offsets.reserveSlots(self.allocator, try checked.add(capped_len, 1));
             try self.validity.ensureCapacityForBits(self.allocator, additional);
         }
@@ -270,7 +270,7 @@ pub fn FixedSizeListBuilder(comptime ChildBuilder: type) type {
 
         pub fn reserve(self: *Self, additional: usize) Error!void {
             if (additional == 0) return;
-            try self.validity.ensureCapacityForBits(self.allocator, @max(additional, builder_base.kMinBuilderCapacity));
+            try self.validity.ensureCapacityForBits(self.allocator, @max(additional, common.kMinBuilderCapacity));
         }
 
         pub fn append(self: *Self) Error!void {

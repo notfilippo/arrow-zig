@@ -12,8 +12,7 @@ const checked = @import("../checked.zig");
 const bitmap = @import("../bitmap.zig");
 const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
-const Buffer = @import("../buffer.zig").Buffer;
-const builder_base = @import("base.zig");
+const common = @import("common.zig");
 
 pub const BooleanBuilderError = Allocator.Error || checked.Error || error{ValidityBufferTooSmall};
 
@@ -22,15 +21,13 @@ pub const BooleanBuilder = struct {
 
     allocator: Allocator,
     values: bitmap.BitmapBuilder,
-    validity: bitmap.BitmapBuilder,
-    len: usize,
+    slots: common.Slots,
 
     pub fn init(allocator: Allocator) BooleanBuilder {
         return .{
             .allocator = allocator,
             .values = bitmap.BitmapBuilder.init(),
-            .validity = bitmap.BitmapBuilder.init(),
-            .len = 0,
+            .slots = common.Slots.init(),
         };
     }
 
@@ -41,15 +38,14 @@ pub const BooleanBuilder = struct {
     /// Release all held memory and return to the post-`init` state.
     pub fn reset(self: *BooleanBuilder) void {
         self.values.deinit();
-        self.validity.deinit();
-        self.len = 0;
+        self.slots.deinit();
     }
 
     pub fn reserve(self: *BooleanBuilder, additional: usize) Error!void {
         if (additional == 0) return;
-        const capped = @max(additional, builder_base.kMinBuilderCapacity);
+        const capped = @max(additional, common.kMinBuilderCapacity);
         try self.values.ensureCapacityForBits(self.allocator, capped);
-        try self.validity.ensureCapacityForBits(self.allocator, capped);
+        try self.slots.reserve(self.allocator, capped);
     }
 
     pub fn append(self: *BooleanBuilder, v: bool) Error!void {
@@ -66,16 +62,14 @@ pub const BooleanBuilder = struct {
         if (n == 0) return;
         try self.reserve(n);
         self.values.unsafeAppendN(false, n);
-        self.validity.unsafeAppendN(false, n);
-        self.len = try checked.add(self.len, n);
+        try self.slots.unsafeAppendN(false, n);
     }
 
     pub fn appendSlice(self: *BooleanBuilder, vs: []const bool) Error!void {
         if (vs.len == 0) return;
         try self.reserve(vs.len);
         for (vs) |v| self.values.unsafeAppend(v);
-        self.validity.unsafeAppendN(true, vs.len);
-        self.len = try checked.add(self.len, vs.len);
+        try self.slots.unsafeAppendN(true, vs.len);
     }
 
     /// Append a valid false slot.
@@ -89,54 +83,46 @@ pub const BooleanBuilder = struct {
         if (n == 0) return;
         try self.reserve(n);
         self.values.unsafeAppendN(false, n);
-        self.validity.unsafeAppendN(true, n);
-        self.len = try checked.add(self.len, n);
+        try self.slots.unsafeAppendN(true, n);
     }
 
     pub fn length(self: BooleanBuilder) usize {
-        return self.len;
+        return self.slots.length();
     }
 
     /// Finish the builder and transfer the result to the caller.
     /// Caller owns the returned data and must call `deinit`.
     pub fn finish(self: *BooleanBuilder) Error!*ArrayData {
-        const n = self.len;
-        const null_count = self.validity.false_count;
-        self.len = 0;
-
         const values_buf = try self.values.finish(self.allocator);
         errdefer values_buf.deinit();
-        const validity_buf: ?*Buffer = try self.validity.finishNullable(self.allocator);
-        errdefer if (validity_buf) |buf| buf.deinit();
+        const slots = try self.slots.finish(self.allocator);
+        errdefer if (slots.validity) |buf| buf.deinit();
 
-        return ArrayData.initOwned(self.allocator, .bool, n, 0, null_count, &.{ validity_buf, values_buf }, &.{}, null);
+        return ArrayData.initOwned(self.allocator, .bool, slots.len, 0, slots.null_count, &.{ slots.validity, values_buf }, &.{}, null);
     }
 
     pub fn unsafeAppend(self: *BooleanBuilder, v: bool) void {
         self.values.unsafeAppend(v);
-        self.validity.unsafeAppend(true);
-        self.len += 1;
+        self.slots.unsafeAppend(true);
     }
 
     pub fn unsafeAppendNull(self: *BooleanBuilder) void {
         self.values.unsafeAppend(false);
-        self.validity.unsafeAppend(false);
-        self.len += 1;
+        self.slots.unsafeAppend(false);
     }
 
     pub fn unsafeAppendEmptyValue(self: *BooleanBuilder) void {
         self.values.unsafeAppend(false);
-        self.validity.unsafeAppend(true);
-        self.len += 1;
+        self.slots.unsafeAppend(true);
     }
 
     pub fn appendValues(self: *BooleanBuilder, vs: []const bool, valid_bytes: ?[]const u8) Error!void {
-        const M = builder_base.AppendValuesMixin(BooleanBuilder, bool, writeValues);
+        const M = common.AppendValuesMixin(BooleanBuilder, bool, writeValues);
         return M.appendValues(self, vs, valid_bytes);
     }
 
     pub fn appendValuesBitmap(self: *BooleanBuilder, vs: []const bool, validity: []const u8, validity_offset: usize) Error!void {
-        const M = builder_base.AppendValuesMixin(BooleanBuilder, bool, writeValues);
+        const M = common.AppendValuesMixin(BooleanBuilder, bool, writeValues);
         return M.appendValuesBitmap(self, vs, validity, validity_offset);
     }
 
@@ -256,7 +242,7 @@ test "BooleanBuilder reset reuses builder" {
 
     try b.appendSlice(&.{ true, false, true });
     b.reset();
-    try std.testing.expectEqual(@as(usize, 0), b.len);
+    try std.testing.expectEqual(@as(usize, 0), b.length());
 
     try b.append(true);
     const data = try b.finish();

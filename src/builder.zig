@@ -43,9 +43,6 @@ const dictionary = @import("builder/dictionary.zig");
 const structs = @import("builder/struct.zig");
 const unions = @import("builder/union.zig");
 const run_end = @import("builder/run_end.zig");
-const base = @import("builder/base.zig");
-
-pub const kMinBuilderCapacity = base.kMinBuilderCapacity;
 
 pub const NumericBuilder = numeric.NumericBuilder;
 pub const NumericBuilderError = numeric.NumericBuilderError;

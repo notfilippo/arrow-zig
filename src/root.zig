@@ -88,6 +88,7 @@ test {
     _ = @import("buffer.zig");
     _ = @import("builder/binary.zig");
     _ = @import("builder/boolean.zig");
+    _ = @import("builder/common.zig");
     _ = @import("builder/decimal.zig");
     _ = @import("builder/dictionary.zig");
     _ = @import("builder/interval.zig");

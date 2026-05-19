@@ -15,7 +15,7 @@ const offset_data = @import("../offsets.zig");
 const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("../buffer.zig").Buffer;
-const builder_base = @import("base.zig");
+const common = @import("common.zig");
 
 pub const BinaryBuilderError = Allocator.Error || checked.Error || error{ InvalidByteWidth, InvalidUtf8 };
 
@@ -62,7 +62,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
         pub fn reserve(self: *Self, additional: usize, additional_bytes: usize) Error!void {
             if (additional == 0 and additional_bytes == 0) return;
             const new_len = try checked.add(self.len, additional);
-            const capped_len = @max(new_len, builder_base.kMinBuilderCapacity);
+            const capped_len = @max(new_len, common.kMinBuilderCapacity);
             try self.offsets.reserveSlots(self.allocator, try checked.add(capped_len, 1));
 
             const values = try self.ensureValues();
