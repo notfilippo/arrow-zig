@@ -10,15 +10,15 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const checked = @import("checked.zig");
-const datatype = @import("datatype.zig");
-const bitmap = @import("bitmap.zig");
-const array_validate = @import("array_validate.zig");
-const offset_data = @import("offsets.zig");
-const buffer_mod = @import("buffer.zig");
+const checked = @import("../checked.zig");
+const datatype = @import("../datatype.zig");
+const bitmap = @import("../bitmap.zig");
+const array_validate = @import("validate.zig");
+const offset_data = @import("../offsets.zig");
+const buffer_mod = @import("../buffer.zig");
 const Buffer = buffer_mod.Buffer;
 const ExternalOwnerHandle = buffer_mod.ExternalOwnerHandle;
-const RefCount = @import("refcount.zig").RefCount;
+const RefCount = @import("../refcount.zig").RefCount;
 
 pub const ValidateError = array_validate.Error;
 pub const InitError = Allocator.Error || checked.Error;

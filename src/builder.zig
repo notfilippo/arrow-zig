@@ -31,19 +31,19 @@
 //! defer dates.deinit();
 //! ```
 
-const numeric = @import("builder_numeric.zig");
-const null_builder = @import("builder_null.zig");
-const boolean = @import("builder_boolean.zig");
-const binary = @import("builder_binary.zig");
-const decimal = @import("builder_decimal.zig");
-const interval = @import("builder_interval.zig");
-const list = @import("builder_list.zig");
-const map_builder = @import("builder_map.zig");
-const dictionary = @import("builder_dictionary.zig");
-const structs = @import("builder_struct.zig");
-const unions = @import("builder_union.zig");
-const run_end = @import("builder_run_end.zig");
-const base = @import("builder_base.zig");
+const numeric = @import("builder/numeric.zig");
+const null_builder = @import("builder/null.zig");
+const boolean = @import("builder/boolean.zig");
+const binary = @import("builder/binary.zig");
+const decimal = @import("builder/decimal.zig");
+const interval = @import("builder/interval.zig");
+const list = @import("builder/list.zig");
+const map_builder = @import("builder/map.zig");
+const dictionary = @import("builder/dictionary.zig");
+const structs = @import("builder/struct.zig");
+const unions = @import("builder/union.zig");
+const run_end = @import("builder/run_end.zig");
+const base = @import("builder/base.zig");
 
 pub const kMinBuilderCapacity = base.kMinBuilderCapacity;
 

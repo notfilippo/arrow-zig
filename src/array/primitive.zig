@@ -7,10 +7,10 @@
 //! by int32 or int64 storage.
 
 const std = @import("std");
-const datatype = @import("datatype.zig");
-const bitmap = @import("bitmap.zig");
-const array_data = @import("array_data.zig");
-const common = @import("array_base.zig");
+const datatype = @import("../datatype.zig");
+const bitmap = @import("../bitmap.zig");
+const array_data = @import("data.zig");
+const common = @import("base.zig");
 const ArrayData = array_data.ArrayData;
 
 pub const FixedWidthKind = common.FixedWidthKind;
@@ -114,7 +114,7 @@ pub const TimestampArray = FixedWidthArray(.timestamp);
 pub const DurationArray = FixedWidthArray(.duration);
 
 test "NumericArray basic slices and ownership" {
-    const bld = @import("builder.zig");
+    const bld = @import("../builder.zig");
     const allocator = std.testing.allocator;
     var b = bld.NumericBuilder(i32).init(allocator);
     defer b.deinit();
@@ -155,7 +155,7 @@ test "NumericArray basic slices and ownership" {
 }
 
 test "NumericArray all valid and all null slice counts" {
-    const bld = @import("builder.zig");
+    const bld = @import("../builder.zig");
     const allocator = std.testing.allocator;
 
     var valid_builder = bld.NumericBuilder(i32).init(allocator);
@@ -176,7 +176,7 @@ test "NumericArray all valid and all null slice counts" {
 }
 
 test "logical temporal arrays validate type" {
-    const bld = @import("builder.zig");
+    const bld = @import("../builder.zig");
     const allocator = std.testing.allocator;
 
     var date_builder = try bld.NumericBuilder(i32).initType(allocator, .date32);
@@ -198,7 +198,7 @@ test "logical temporal arrays validate type" {
 }
 
 test "BooleanArray counts and slicing" {
-    const bld = @import("builder.zig");
+    const bld = @import("../builder.zig");
     const allocator = std.testing.allocator;
     var b = bld.BooleanBuilder.init(allocator);
     defer b.deinit();

@@ -58,10 +58,10 @@ test "detects test declarations" {
 test "matches root imports" {
     const root_contents =
         \\test {
-        \\    _ = @import("array_base.zig");
+        \\    _ = @import("array/base.zig");
         \\}
     ;
 
-    try std.testing.expect(rootImportsPath(root_contents, "array_base.zig"));
+    try std.testing.expect(rootImportsPath(root_contents, "array/base.zig"));
     try std.testing.expect(!rootImportsPath(root_contents, "array_missing.zig"));
 }

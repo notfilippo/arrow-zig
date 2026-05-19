@@ -8,14 +8,14 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const checked = @import("checked.zig");
-const bitmap = @import("bitmap.zig");
-const datatype = @import("datatype.zig");
-const offset_data = @import("offsets.zig");
-const array = @import("array.zig");
+const checked = @import("../checked.zig");
+const bitmap = @import("../bitmap.zig");
+const datatype = @import("../datatype.zig");
+const offset_data = @import("../offsets.zig");
+const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
-const Buffer = @import("buffer.zig").Buffer;
-const builder_base = @import("builder_base.zig");
+const Buffer = @import("../buffer.zig").Buffer;
+const builder_base = @import("base.zig");
 
 pub const FieldOptions = struct {
     name: []const u8 = "item",
@@ -397,7 +397,7 @@ fn dataTypeForKind(comptime kind: array.ListKind, child: *const datatype.Field) 
 
 test "ListBuilder builds numeric child lists" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
     var b = ListBuilder(builder.NumericBuilder(i32)).init(allocator);
     defer b.deinit();
 
@@ -427,7 +427,7 @@ test "ListBuilder builds numeric child lists" {
 
 test "ListBuilder rejects pending child values for null slots" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
     var b = ListBuilder(builder.NumericBuilder(i32)).init(allocator);
     defer b.deinit();
 
@@ -441,7 +441,7 @@ test "ListBuilder rejects pending child values for null slots" {
 
 test "LargeListBuilder uses large offsets and field options" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
     var b = try LargeListBuilder(builder.Utf8Builder).initField(allocator, .{ .name = "words", .nullable = false });
     defer b.deinit();
 
@@ -505,7 +505,7 @@ test "ListBuilder deinit supports child builders without reset" {
 
 test "ListBuilder reset preserves field options" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
     var b = try LargeListBuilder(builder.Utf8Builder).initField(allocator, .{ .name = "words", .nullable = false });
     defer b.deinit();
 
@@ -523,7 +523,7 @@ test "ListBuilder reset preserves field options" {
 
 test "FixedSizeListBuilder builds numeric child lists" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
     var b = FixedSizeListBuilder(builder.NumericBuilder(i32)).init(allocator, 2);
     defer b.deinit();
 
@@ -558,7 +558,7 @@ test "FixedSizeListBuilder builds numeric child lists" {
 
 test "FixedSizeListBuilder rejects partial child values" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
     var b = FixedSizeListBuilder(builder.NumericBuilder(i32)).init(allocator, 2);
     defer b.deinit();
 
@@ -575,7 +575,7 @@ test "FixedSizeListBuilder rejects partial child values" {
 
 test "FixedSizeListBuilder reset and field options" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
     var b = try FixedSizeListBuilder(builder.NumericBuilder(i32)).initField(allocator, 3, .{ .name = "coords", .nullable = false });
     defer b.deinit();
 

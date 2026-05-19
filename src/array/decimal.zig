@@ -4,10 +4,10 @@
 //! Decimal array typed views.
 
 const std = @import("std");
-const datatype = @import("datatype.zig");
-const array_data = @import("array_data.zig");
-const common = @import("array_base.zig");
-const Buffer = @import("buffer.zig").Buffer;
+const datatype = @import("../datatype.zig");
+const array_data = @import("data.zig");
+const common = @import("base.zig");
+const Buffer = @import("../buffer.zig").Buffer;
 const ArrayData = array_data.ArrayData;
 
 pub const DecimalKind = enum {

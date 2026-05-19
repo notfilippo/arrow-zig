@@ -7,13 +7,13 @@
 //! access returns retained child slices.
 
 const std = @import("std");
-const checked = @import("checked.zig");
-const datatype = @import("datatype.zig");
-const offset_data = @import("offsets.zig");
-const array_data = @import("array_data.zig");
-const primitive = @import("array_primitive.zig");
-const common = @import("array_base.zig");
-const Buffer = @import("buffer.zig").Buffer;
+const checked = @import("../checked.zig");
+const datatype = @import("../datatype.zig");
+const offset_data = @import("../offsets.zig");
+const array_data = @import("data.zig");
+const primitive = @import("primitive.zig");
+const common = @import("base.zig");
+const Buffer = @import("../buffer.zig").Buffer;
 const ArrayData = array_data.ArrayData;
 
 pub const ListKind = enum {

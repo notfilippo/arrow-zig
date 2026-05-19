@@ -7,10 +7,10 @@
 //! logical range.
 
 const std = @import("std");
-const datatype = @import("datatype.zig");
-const array_data = @import("array_data.zig");
-const common = @import("array_base.zig");
-const Buffer = @import("buffer.zig").Buffer;
+const datatype = @import("../datatype.zig");
+const array_data = @import("data.zig");
+const common = @import("base.zig");
+const Buffer = @import("../buffer.zig").Buffer;
 const ArrayData = array_data.ArrayData;
 
 pub const StructArray = struct {
@@ -61,7 +61,7 @@ pub const StructArray = struct {
 
 test "StructArray exposes child fields" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
     var numbers = builder.NumericBuilder(i32).init(allocator);
     defer numbers.deinit();
     try numbers.appendSlice(&.{ 10, 20, 30 });
@@ -106,7 +106,7 @@ test "StructArray exposes child fields" {
 
     const sliced_numbers = (try sliced.fieldNamedOwned("number")).?;
     defer sliced_numbers.deinit();
-    const sliced_number_arr = try @import("array.zig").NumericArray(i32).fromData(sliced_numbers);
+    const sliced_number_arr = try @import("../array.zig").NumericArray(i32).fromData(sliced_numbers);
     try std.testing.expectEqual(@as(usize, 2), sliced_number_arr.view.base.len);
     try std.testing.expectEqual(@as(i32, 20), sliced_number_arr.value(0));
 
@@ -115,7 +115,7 @@ test "StructArray exposes child fields" {
     const sliced_owned_arr = try StructArray.fromData(sliced_owned);
     const owned_numbers = (try sliced_owned_arr.fieldNamedOwned("number")).?;
     defer owned_numbers.deinit();
-    const owned_number_arr = try @import("array.zig").NumericArray(i32).fromData(owned_numbers);
+    const owned_number_arr = try @import("../array.zig").NumericArray(i32).fromData(owned_numbers);
     try std.testing.expectEqual(@as(i32, 20), owned_number_arr.value(0));
 
     const sliced_clone = try sliced.view.base.cloneRetained();
@@ -123,7 +123,7 @@ test "StructArray exposes child fields" {
     const sliced_clone_arr = try StructArray.fromData(sliced_clone);
     const clone_numbers = (try sliced_clone_arr.fieldNamedOwned("number")).?;
     defer clone_numbers.deinit();
-    const clone_number_arr = try @import("array.zig").NumericArray(i32).fromData(clone_numbers);
+    const clone_number_arr = try @import("../array.zig").NumericArray(i32).fromData(clone_numbers);
     try std.testing.expectEqual(@as(i32, 20), clone_number_arr.value(0));
 
     try std.testing.expectError(error.OffsetOutOfBounds, arr.view.sliceChecked(4, 1));
@@ -131,7 +131,7 @@ test "StructArray exposes child fields" {
 
 test "StructArray rejects non struct data" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
     var numbers = builder.NumericBuilder(i32).init(allocator);
     defer numbers.deinit();
     try numbers.append(1);

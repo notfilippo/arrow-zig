@@ -8,9 +8,9 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const checked = @import("checked.zig");
-const bits = @import("bitmap_bits.zig");
-const Buffer = @import("buffer.zig").Buffer;
+const checked = @import("../checked.zig");
+const bits = @import("bits.zig");
+const Buffer = @import("../buffer.zig").Buffer;
 
 pub const BitmapBuilderError = Allocator.Error || checked.Error;
 

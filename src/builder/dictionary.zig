@@ -5,9 +5,9 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const datatype = @import("datatype.zig");
-const array = @import("array.zig");
-const numeric = @import("builder_numeric.zig");
+const datatype = @import("../datatype.zig");
+const array = @import("../array.zig");
+const numeric = @import("numeric.zig");
 const ArrayData = array.ArrayData;
 
 pub const DictionaryOptions = struct {
@@ -126,7 +126,7 @@ fn indexInBounds(value: anytype, len: usize) bool {
 test "DictionaryBuilder builds dictionary arrays" {
     const allocator = std.testing.allocator;
 
-    var dict_builder = @import("builder.zig").Utf8Builder.init(allocator);
+    var dict_builder = @import("../builder.zig").Utf8Builder.init(allocator);
     defer dict_builder.deinit();
     try dict_builder.append("alpha");
     try dict_builder.append("beta");
@@ -157,7 +157,7 @@ test "DictionaryBuilder builds dictionary arrays" {
 test "DictionaryBuilder rejects out of bounds indices" {
     const allocator = std.testing.allocator;
 
-    var dict_builder = @import("builder.zig").NumericBuilder(i32).init(allocator);
+    var dict_builder = @import("../builder.zig").NumericBuilder(i32).init(allocator);
     defer dict_builder.deinit();
     try dict_builder.append(10);
     const dictionary = try dict_builder.finish();

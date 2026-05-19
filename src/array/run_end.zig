@@ -4,10 +4,10 @@
 //! Run end encoded array typed views.
 
 const std = @import("std");
-const datatype = @import("datatype.zig");
-const offset_data = @import("offsets.zig");
-const array_data = @import("array_data.zig");
-const common = @import("array_base.zig");
+const datatype = @import("../datatype.zig");
+const offset_data = @import("../offsets.zig");
+const array_data = @import("data.zig");
+const common = @import("base.zig");
 const ArrayData = array_data.ArrayData;
 
 pub fn RunEndView(comptime RunEnd: type) type {
@@ -168,8 +168,8 @@ fn runEndAsUsize(value: anytype) usize {
 
 test "RunEndEncodedArray maps logical slots to runs" {
     const allocator = std.testing.allocator;
-    const Buffer = @import("buffer.zig").Buffer;
-    const builder = @import("builder.zig");
+    const Buffer = @import("../buffer.zig").Buffer;
+    const builder = @import("../builder.zig");
 
     const run_values = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
     errdefer run_values.deinit();
@@ -211,7 +211,7 @@ test "RunEndEncodedArray maps logical slots to runs" {
 
     const value = (try arr.valueOwned(3)).?;
     defer value.deinit();
-    const value_arr = try @import("array.zig").NumericArray(i32).fromData(value);
+    const value_arr = try @import("../array.zig").NumericArray(i32).fromData(value);
     try std.testing.expectEqual(@as(i32, 20), value_arr.value(0));
     try std.testing.expect((try arr.valueOwned(5)) == null);
 

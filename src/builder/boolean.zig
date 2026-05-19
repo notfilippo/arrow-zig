@@ -8,12 +8,12 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const checked = @import("checked.zig");
-const bitmap = @import("bitmap.zig");
-const array = @import("array.zig");
+const checked = @import("../checked.zig");
+const bitmap = @import("../bitmap.zig");
+const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
-const Buffer = @import("buffer.zig").Buffer;
-const builder_base = @import("builder_base.zig");
+const Buffer = @import("../buffer.zig").Buffer;
+const builder_base = @import("base.zig");
 
 pub const BooleanBuilderError = Allocator.Error || checked.Error || error{ValidityBufferTooSmall};
 

@@ -4,10 +4,10 @@
 //! Dictionary array typed views.
 
 const std = @import("std");
-const datatype = @import("datatype.zig");
-const offset_data = @import("offsets.zig");
-const array_data = @import("array_data.zig");
-const common = @import("array_base.zig");
+const datatype = @import("../datatype.zig");
+const offset_data = @import("../offsets.zig");
+const array_data = @import("data.zig");
+const common = @import("base.zig");
 const ArrayData = array_data.ArrayData;
 
 pub fn DictionaryArray(comptime Index: type) type {
@@ -63,9 +63,9 @@ fn indexAsUsize(value: anytype) usize {
 
 test "DictionaryArray exposes indices and dictionary values" {
     const allocator = std.testing.allocator;
-    const Buffer = @import("buffer.zig").Buffer;
-    const builder = @import("builder.zig");
-    const array = @import("array.zig");
+    const Buffer = @import("../buffer.zig").Buffer;
+    const builder = @import("../builder.zig");
+    const array = @import("../array.zig");
 
     var dict_builder = builder.NumericBuilder(i32).init(allocator);
     defer dict_builder.deinit();

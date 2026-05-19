@@ -8,11 +8,11 @@
 //! `DataType`.
 
 const std = @import("std");
-const checked = @import("checked.zig");
-const datatype = @import("datatype.zig");
-const bitmap = @import("bitmap.zig");
-const offset_data = @import("offsets.zig");
-const Buffer = @import("buffer.zig").Buffer;
+const checked = @import("../checked.zig");
+const datatype = @import("../datatype.zig");
+const bitmap = @import("../bitmap.zig");
+const offset_data = @import("../offsets.zig");
+const Buffer = @import("../buffer.zig").Buffer;
 
 pub const Error = error{
     InvalidBufferCount,
@@ -332,7 +332,7 @@ fn writeTestInt(comptime T: type, buffer: *Buffer, index: usize, value: T) void 
 }
 
 fn testArrayData() type {
-    return @import("array_data.zig").ArrayData;
+    return @import("data.zig").ArrayData;
 }
 
 test "validate fixed width storage" {
@@ -566,7 +566,7 @@ test "validate list and struct storage" {
 test "validate run end encoded storage" {
     const ArrayData = testArrayData();
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
 
     const run_values = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
     errdefer run_values.deinit();

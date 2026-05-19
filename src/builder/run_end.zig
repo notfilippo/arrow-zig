@@ -5,12 +5,12 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const checked = @import("checked.zig");
-const datatype = @import("datatype.zig");
-const offset_data = @import("offsets.zig");
-const array = @import("array.zig");
+const checked = @import("../checked.zig");
+const datatype = @import("../datatype.zig");
+const offset_data = @import("../offsets.zig");
+const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
-const Buffer = @import("buffer.zig").Buffer;
+const Buffer = @import("../buffer.zig").Buffer;
 
 pub fn RunEndEncodedBuilderError(comptime ValueBuilder: type) type {
     return Allocator.Error || checked.Error || datatype.ValidationError || ValueBuilder.Error || error{
@@ -198,7 +198,7 @@ fn runEndAsUsize(value: anytype) error{InvalidRunEndValue}!usize {
 
 test "RunEndEncodedBuilder builds run encoded arrays" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
 
     var b = RunEndEncodedBuilder(i32, builder.NumericBuilder(i32)).init(allocator);
     defer b.deinit();
@@ -226,7 +226,7 @@ test "RunEndEncodedBuilder builds run encoded arrays" {
 
 test "RunEndEncodedBuilder rejects incomplete and non increasing runs" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
 
     var b = RunEndEncodedBuilder(i16, builder.NumericBuilder(i32)).init(allocator);
     defer b.deinit();

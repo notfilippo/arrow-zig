@@ -7,7 +7,7 @@
 //! processed without first aligning or copying their bitmaps.
 
 const std = @import("std");
-const bits = @import("bitmap_bits.zig");
+const bits = @import("bits.zig");
 
 const BinaryOp = enum { @"and", @"or", xor, and_not, or_not };
 

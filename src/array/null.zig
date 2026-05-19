@@ -4,9 +4,9 @@
 //! Null array typed view.
 
 const std = @import("std");
-const datatype = @import("datatype.zig");
-const array_data = @import("array_data.zig");
-const common = @import("array_base.zig");
+const datatype = @import("../datatype.zig");
+const array_data = @import("data.zig");
+const common = @import("base.zig");
 const ArrayData = array_data.ArrayData;
 
 pub const NullArray = struct {

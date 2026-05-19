@@ -7,7 +7,7 @@
 //! least significant bit first ordering.
 
 const std = @import("std");
-const checked = @import("checked.zig");
+const checked = @import("../checked.zig");
 
 const bitmask = [8]u8{ 1, 2, 4, 8, 16, 32, 64, 128 };
 const flipped_bitmask = [8]u8{ 254, 253, 251, 247, 239, 223, 191, 127 };

@@ -10,7 +10,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const array_data = @import("array_data.zig");
+const array_data = @import("array/data.zig");
 const bitmap = @import("bitmap.zig");
 const checked = @import("checked.zig");
 const datatype = @import("datatype.zig");

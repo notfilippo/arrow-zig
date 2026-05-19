@@ -7,9 +7,9 @@
 //! This facade exposes bit access, copying, counting, boolean operations, and
 //! bitmap building.
 
-const bits = @import("bitmap_bits.zig");
-const ops = @import("bitmap_ops.zig");
-const builder = @import("bitmap_builder.zig");
+const bits = @import("bitmap/bits.zig");
+const ops = @import("bitmap/ops.zig");
+const builder = @import("bitmap/builder.zig");
 
 pub const BitmapBuilder = builder.BitmapBuilder;
 

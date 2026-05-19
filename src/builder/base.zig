@@ -7,8 +7,8 @@
 //! generates `appendValues` and `appendValuesBitmap` from a per-builder value
 //! writer, eliminating the duplicate preamble across NumericBuilder and BooleanBuilder.
 
-const checked = @import("checked.zig");
-const bitmap = @import("bitmap.zig");
+const checked = @import("../checked.zig");
+const bitmap = @import("../bitmap.zig");
 
 /// Minimum element capacity allocated on the first reserve call, matching C++ kMinBuilderCapacity.
 pub const kMinBuilderCapacity: usize = 32;

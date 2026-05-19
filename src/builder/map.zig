@@ -5,14 +5,14 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const checked = @import("checked.zig");
-const bitmap = @import("bitmap.zig");
-const datatype = @import("datatype.zig");
-const offset_data = @import("offsets.zig");
-const array = @import("array.zig");
+const checked = @import("../checked.zig");
+const bitmap = @import("../bitmap.zig");
+const datatype = @import("../datatype.zig");
+const offset_data = @import("../offsets.zig");
+const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
-const Buffer = @import("buffer.zig").Buffer;
-const builder_base = @import("builder_base.zig");
+const Buffer = @import("../buffer.zig").Buffer;
+const builder_base = @import("base.zig");
 
 pub const MapOptions = struct {
     entries_name: []const u8 = "entries",
@@ -261,7 +261,7 @@ pub fn MapBuilder(comptime KeyBuilder: type, comptime ValueBuilder: type) type {
 
 test "MapBuilder builds maps" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
     var b = try MapBuilder(builder.NumericBuilder(i32), builder.Utf8Builder).initOptions(allocator, .{ .keys_sorted = true });
     defer b.deinit();
 
@@ -300,7 +300,7 @@ test "MapBuilder builds maps" {
 
 test "MapBuilder rejects unfinished entries" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
     var b = MapBuilder(builder.NumericBuilder(i32), builder.Utf8Builder).init(allocator);
     defer b.deinit();
 
@@ -315,7 +315,7 @@ test "MapBuilder rejects unfinished entries" {
 
 test "MapBuilder rejects null keys and nonnullable values" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
     var null_keys = MapBuilder(builder.NumericBuilder(i32), builder.Utf8Builder).init(allocator);
     defer null_keys.deinit();
 
@@ -335,7 +335,7 @@ test "MapBuilder rejects null keys and nonnullable values" {
 
 test "MapBuilder reset preserves options" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
     var b = try MapBuilder(builder.NumericBuilder(i32), builder.NumericBuilder(i32)).initOptions(allocator, .{
         .entries_name = "pairs",
         .key_name = "id",

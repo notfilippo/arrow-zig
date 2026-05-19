@@ -6,10 +6,10 @@
 //! Type matching, null count lookup, and slice bound helpers shared by
 //! primitive, binary, list, and struct arrays.
 
-const datatype = @import("datatype.zig");
-const bitmap = @import("bitmap.zig");
-const checked = @import("checked.zig");
-const array_data = @import("array_data.zig");
+const datatype = @import("../datatype.zig");
+const bitmap = @import("../bitmap.zig");
+const checked = @import("../checked.zig");
+const array_data = @import("data.zig");
 const ArrayData = array_data.ArrayData;
 
 pub const ViewError = error{ TypeMismatch, InvalidBufferLayout };

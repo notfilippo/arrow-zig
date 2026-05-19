@@ -5,8 +5,8 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const checked = @import("checked.zig");
-const array = @import("array.zig");
+const checked = @import("../checked.zig");
+const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
 
 pub const NullBuilderError = Allocator.Error || checked.Error;

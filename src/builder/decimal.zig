@@ -5,12 +5,12 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const checked = @import("checked.zig");
-const bitmap = @import("bitmap.zig");
-const datatype = @import("datatype.zig");
-const array = @import("array.zig");
+const checked = @import("../checked.zig");
+const bitmap = @import("../bitmap.zig");
+const datatype = @import("../datatype.zig");
+const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
-const Buffer = @import("buffer.zig").Buffer;
+const Buffer = @import("../buffer.zig").Buffer;
 
 pub const DecimalBuilderError = Allocator.Error || checked.Error || datatype.ValidationError || error{InvalidByteWidth};
 

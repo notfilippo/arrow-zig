@@ -5,13 +5,13 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const checked = @import("checked.zig");
-const datatype = @import("datatype.zig");
-const offset_data = @import("offsets.zig");
-const array = @import("array.zig");
+const checked = @import("../checked.zig");
+const datatype = @import("../datatype.zig");
+const offset_data = @import("../offsets.zig");
+const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
-const Buffer = @import("buffer.zig").Buffer;
-const builder_base = @import("builder_base.zig");
+const Buffer = @import("../buffer.zig").Buffer;
+const builder_base = @import("base.zig");
 
 pub const FieldOptions = struct {
     name: []const u8,
@@ -415,7 +415,7 @@ fn ensureStruct(comptime T: type) void {
 
 test "DenseUnionBuilder builds offset based union arrays" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
 
     const Children = struct {
         number: builder.NumericBuilder(i32),
@@ -453,7 +453,7 @@ test "DenseUnionBuilder builds offset based union arrays" {
 
 test "SparseUnionBuilder builds row aligned union arrays" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
 
     const Children = struct {
         number: builder.NumericBuilder(i32),
@@ -488,7 +488,7 @@ test "SparseUnionBuilder builds row aligned union arrays" {
 
 test "UnionBuilder rejects partial child values and invalid type ids" {
     const allocator = std.testing.allocator;
-    const builder = @import("builder.zig");
+    const builder = @import("../builder.zig");
 
     const Children = struct {
         number: builder.NumericBuilder(i32),

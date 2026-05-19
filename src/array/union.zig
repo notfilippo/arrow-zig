@@ -4,12 +4,12 @@
 //! Sparse and dense union array typed views.
 
 const std = @import("std");
-const datatype = @import("datatype.zig");
-const offset_data = @import("offsets.zig");
-const array_data = @import("array_data.zig");
-const common = @import("array_base.zig");
+const datatype = @import("../datatype.zig");
+const offset_data = @import("../offsets.zig");
+const array_data = @import("data.zig");
+const common = @import("base.zig");
 const ArrayData = array_data.ArrayData;
-const Buffer = @import("buffer.zig").Buffer;
+const Buffer = @import("../buffer.zig").Buffer;
 
 pub const SparseUnionArray = struct {
     view: common.ValidityView(.none),
@@ -88,7 +88,7 @@ fn childIndexFor(meta: datatype.UnionMeta, code: i8) ?usize {
 
 test "DenseUnionArray exposes offsets and values" {
     const allocator = std.testing.allocator;
-    const array = @import("array.zig");
+    const array = @import("../array.zig");
 
     const int_values = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
     errdefer int_values.deinit();
@@ -164,8 +164,8 @@ test "DenseUnionArray exposes offsets and values" {
 
 test "SparseUnionArray uses parent row offsets" {
     const allocator = std.testing.allocator;
-    const array = @import("array.zig");
-    const builder = @import("builder.zig");
+    const array = @import("../array.zig");
+    const builder = @import("../builder.zig");
 
     var ints = builder.NumericBuilder(i32).init(allocator);
     defer ints.deinit();

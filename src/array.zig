@@ -6,19 +6,19 @@
 //! `ArrayData` owns the Arrow layout pieces. Typed arrays such as `Int32Array`,
 //! `BinaryArray`, and `ListArray` are small structs over retained storage.
 
-const array_data = @import("array_data.zig");
-const base = @import("array_base.zig");
-const prim = @import("array_primitive.zig");
-const null_array = @import("array_null.zig");
-const binary = @import("array_binary.zig");
-const decimal = @import("array_decimal.zig");
-const interval = @import("array_interval.zig");
-const list = @import("array_list.zig");
-const map_array = @import("array_map.zig");
-const dictionary = @import("array_dictionary.zig");
-const nested = @import("array_nested.zig");
-const union_array = @import("array_union.zig");
-const run_end = @import("array_run_end.zig");
+const array_data = @import("array/data.zig");
+const base = @import("array/base.zig");
+const prim = @import("array/primitive.zig");
+const null_array = @import("array/null.zig");
+const binary = @import("array/binary.zig");
+const decimal = @import("array/decimal.zig");
+const interval = @import("array/interval.zig");
+const list = @import("array/list.zig");
+const map_array = @import("array/map.zig");
+const dictionary = @import("array/dictionary.zig");
+const nested = @import("array/nested.zig");
+const union_array = @import("array/union.zig");
+const run_end = @import("array/run_end.zig");
 
 /// Reference counted array storage.
 pub const ArrayData = array_data.ArrayData;
