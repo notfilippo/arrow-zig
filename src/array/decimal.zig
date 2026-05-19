@@ -84,6 +84,11 @@ pub fn DecimalArray(comptime kind: DecimalKind) type {
             return self.view.base.data.buffers[1].?.dataSlice()[start..][0..width];
         }
 
+        pub fn valueBytesChecked(self: Self, i: usize) common.AccessError![]const u8 {
+            try common.checkValueAccess(self.view, i);
+            return self.valueBytes(i);
+        }
+
         pub fn value(self: Self, i: usize) Value {
             const bytes = self.valueBytes(i);
             return switch (kind) {
@@ -92,6 +97,11 @@ pub fn DecimalArray(comptime kind: DecimalKind) type {
                 .decimal128 => std.mem.readInt(i128, bytes[0..16], .little),
                 .decimal256 => std.mem.readInt(i256, bytes[0..32], .little),
             };
+        }
+
+        pub fn valueChecked(self: Self, i: usize) common.AccessError!Value {
+            try common.checkValueAccess(self.view, i);
+            return self.value(i);
         }
     };
 }
@@ -120,6 +130,7 @@ test "Decimal32Array reads values and metadata" {
     try std.testing.expectEqual(@as(u8, 9), arr.precision());
     try std.testing.expectEqual(@as(i32, 2), arr.scale());
     try std.testing.expectEqual(@as(i32, 12345), arr.value(0));
+    try std.testing.expectEqual(@as(i32, 12345), try arr.valueChecked(0));
     try std.testing.expectEqual(@as(i32, -67890), arr.value(1));
     const sliced = Decimal32Array{ .view = arr.view.slice(2, 1) };
     try std.testing.expectEqual(@as(i32, 42), sliced.value(0));

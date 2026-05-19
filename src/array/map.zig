@@ -44,12 +44,26 @@ pub const MapArray = struct {
         return offset_data.rangeAt(i32, offsets, self.view.base.offset + i);
     }
 
+    pub fn entryRangeChecked(self: MapArray, i: usize) common.AccessError!offset_data.ValueRange {
+        try common.checkValueAccess(self.view, i);
+        return self.entryRange(i);
+    }
+
     pub fn valueRange(self: MapArray, i: usize) offset_data.ValueRange {
         return self.entryRange(i);
     }
 
+    pub fn valueRangeChecked(self: MapArray, i: usize) common.AccessError!offset_data.ValueRange {
+        return self.entryRangeChecked(i);
+    }
+
     pub fn entriesOwned(self: MapArray, i: usize) array_data.DataSliceError!*ArrayData {
         const range = self.entryRange(i);
+        return self.entriesBaseData().slice(range.offset, range.len);
+    }
+
+    pub fn entriesOwnedChecked(self: MapArray, i: usize) (array_data.DataSliceError || common.AccessError)!*ArrayData {
+        const range = try self.entryRangeChecked(i);
         return self.entriesBaseData().slice(range.offset, range.len);
     }
 
@@ -58,8 +72,18 @@ pub const MapArray = struct {
         return self.keysBaseData().slice(range.offset, range.len);
     }
 
+    pub fn keysOwnedChecked(self: MapArray, i: usize) (array_data.DataSliceError || common.AccessError)!*ArrayData {
+        const range = try self.entryRangeChecked(i);
+        return self.keysBaseData().slice(range.offset, range.len);
+    }
+
     pub fn valuesOwned(self: MapArray, i: usize) array_data.DataSliceError!*ArrayData {
         const range = self.entryRange(i);
+        return self.valuesBaseData().slice(range.offset, range.len);
+    }
+
+    pub fn valuesOwnedChecked(self: MapArray, i: usize) (array_data.DataSliceError || common.AccessError)!*ArrayData {
+        const range = try self.entryRangeChecked(i);
         return self.valuesBaseData().slice(range.offset, range.len);
     }
 };
@@ -111,6 +135,7 @@ test "MapArray exposes entries keys and values" {
     const arr = try MapArray.fromData(data);
     try std.testing.expect(arr.keysSorted());
     try std.testing.expectEqual(@as(usize, 2), arr.entryRange(0).len);
+    try std.testing.expectEqual(@as(usize, 2), (try arr.entryRangeChecked(0)).len);
     try std.testing.expectEqual(@as(usize, 0), arr.entryRange(1).len);
     try std.testing.expectEqual(@as(usize, 2), arr.entryRange(2).offset);
 
@@ -119,6 +144,10 @@ test "MapArray exposes entries keys and values" {
     const second_key_arr = try primitive.NumericArray(i32).fromData(second_keys);
     try std.testing.expectEqual(@as(usize, 2), second_key_arr.view.base.len);
     try std.testing.expectEqual(@as(i32, 2), second_key_arr.value(1));
+    const checked_values = try arr.valuesOwnedChecked(2);
+    defer checked_values.deinit();
+    try std.testing.expectEqual(@as(usize, 1), checked_values.len);
+    try std.testing.expectError(error.IndexOutOfBounds, arr.entriesOwnedChecked(3));
 
     const sliced = MapArray{ .view = arr.view.slice(1, 2) };
     try std.testing.expectEqual(@as(usize, 1), sliced.view.base.offset);

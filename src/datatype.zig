@@ -312,6 +312,196 @@ pub fn deinitOwnedMetadata(allocator: Allocator, metadata: []const MetadataEntry
     allocator.free(metadata);
 }
 
+pub fn field(
+    allocator: Allocator,
+    name_: []const u8,
+    ty: *const DataType,
+    nullable: bool,
+    metadata: []const MetadataEntry,
+) Allocator.Error!*const Field {
+    return Field.create(allocator, name_, ty, nullable, metadata);
+}
+
+pub fn null_() DataType {
+    return .null_;
+}
+
+pub fn bool_() DataType {
+    return .bool;
+}
+
+pub fn int8() DataType {
+    return .int8;
+}
+
+pub fn int16() DataType {
+    return .int16;
+}
+
+pub fn int32() DataType {
+    return .int32;
+}
+
+pub fn int64() DataType {
+    return .int64;
+}
+
+pub fn uint8() DataType {
+    return .uint8;
+}
+
+pub fn uint16() DataType {
+    return .uint16;
+}
+
+pub fn uint32() DataType {
+    return .uint32;
+}
+
+pub fn uint64() DataType {
+    return .uint64;
+}
+
+pub fn float16() DataType {
+    return .float16;
+}
+
+pub fn float32() DataType {
+    return .float32;
+}
+
+pub fn float64() DataType {
+    return .float64;
+}
+
+pub fn date32() DataType {
+    return .date32;
+}
+
+pub fn date64() DataType {
+    return .date64;
+}
+
+pub fn time32(unit: TimeUnit) DataType {
+    return .{ .time32 = unit };
+}
+
+pub fn time64(unit: TimeUnit) DataType {
+    return .{ .time64 = unit };
+}
+
+pub fn timestamp(unit: TimeUnit, tz: ?[]const u8) DataType {
+    return .{ .timestamp = .{ .unit = unit, .tz = tz } };
+}
+
+pub fn duration(unit: TimeUnit) DataType {
+    return .{ .duration = unit };
+}
+
+pub fn monthInterval() DataType {
+    return .month_interval;
+}
+
+pub fn dayTimeInterval() DataType {
+    return .day_time_interval;
+}
+
+pub fn monthDayNanoInterval() DataType {
+    return .month_day_nano_interval;
+}
+
+pub fn binary() DataType {
+    return .binary;
+}
+
+pub fn utf8() DataType {
+    return .utf8;
+}
+
+pub fn largeBinary() DataType {
+    return .large_binary;
+}
+
+pub fn largeUtf8() DataType {
+    return .large_utf8;
+}
+
+pub fn binaryView() DataType {
+    return .binary_view;
+}
+
+pub fn utf8View() DataType {
+    return .utf8_view;
+}
+
+pub fn fixedSizeBinary(byte_width: usize) DataType {
+    return .{ .fixed_size_binary = .{ .byte_width = byte_width } };
+}
+
+pub fn decimal32(precision: u8, scale: i32) DataType {
+    return .{ .decimal32 = .{ .precision = precision, .scale = scale } };
+}
+
+pub fn decimal64(precision: u8, scale: i32) DataType {
+    return .{ .decimal64 = .{ .precision = precision, .scale = scale } };
+}
+
+pub fn decimal128(precision: u8, scale: i32) DataType {
+    return .{ .decimal128 = .{ .precision = precision, .scale = scale } };
+}
+
+pub fn decimal256(precision: u8, scale: i32) DataType {
+    return .{ .decimal256 = .{ .precision = precision, .scale = scale } };
+}
+
+pub fn list(child: *const Field) DataType {
+    return .{ .list = .{ .child = child } };
+}
+
+pub fn largeList(child: *const Field) DataType {
+    return .{ .large_list = .{ .child = child } };
+}
+
+pub fn listView(child: *const Field) DataType {
+    return .{ .list_view = .{ .child = child } };
+}
+
+pub fn largeListView(child: *const Field) DataType {
+    return .{ .large_list_view = .{ .child = child } };
+}
+
+pub fn fixedSizeList(child: *const Field, len: usize) DataType {
+    return .{ .fixed_size_list = .{ .child = child, .len = len } };
+}
+
+pub fn map(entries: *const Field, keys_sorted: bool) DataType {
+    return .{ .map = .{ .entries = entries, .keys_sorted = keys_sorted } };
+}
+
+pub fn struct_(fields: []const *const Field) DataType {
+    return .{ .struct_ = .{ .fields = fields } };
+}
+
+pub fn sparseUnion(fields: []const *const Field, type_ids: []const i8) DataType {
+    return .{ .sparse_union = .{ .fields = fields, .type_ids = type_ids } };
+}
+
+pub fn denseUnion(fields: []const *const Field, type_ids: []const i8) DataType {
+    return .{ .dense_union = .{ .fields = fields, .type_ids = type_ids } };
+}
+
+pub fn runEndEncoded(run_ends: *const Field, values: *const Field) DataType {
+    return .{ .run_end_encoded = .{ .run_ends = run_ends, .values = values } };
+}
+
+pub fn extension(storage_type: *const DataType, name_: []const u8, metadata: []const u8) DataType {
+    return .{ .extension = .{ .storage_type = storage_type, .name = name_, .metadata = metadata } };
+}
+
+pub fn dictionary(index_type: *const DataType, value_type: *const DataType, ordered: bool) DataType {
+    return .{ .dictionary = .{ .index_type = index_type, .value_type = value_type, .ordered = ordered } };
+}
+
 pub const DataType = union(TypeId) {
     null_,
     bool,
@@ -454,7 +644,7 @@ pub const DataType = union(TypeId) {
             .decimal128 => |meta| try validateDecimalMeta(meta, 38),
             .decimal256 => |meta| try validateDecimalMeta(meta, 76),
             .struct_ => |meta| {
-                for (meta.fields) |field| try field.type.validate();
+                for (meta.fields) |field_meta| try field_meta.type.validate();
             },
             .sparse_union => |meta| try validateUnionMeta(meta),
             .dense_union => |meta| try validateUnionMeta(meta),
@@ -638,7 +828,7 @@ fn validateUnionMeta(meta: UnionMeta) ValidationError!void {
             if (seen == id) return error.InvalidUnionTypeIds;
         }
     }
-    for (meta.fields) |field| try field.type.validate();
+    for (meta.fields) |field_meta| try field_meta.type.validate();
 }
 
 fn validateMapMeta(meta: MapMeta) ValidationError!void {
@@ -647,7 +837,7 @@ fn validateMapMeta(meta: MapMeta) ValidationError!void {
     const fields = meta.entries.type.struct_.fields;
     if (fields.len != 2) return error.InvalidMapEntries;
     if (fields[0].nullable) return error.NullableMapKey;
-    for (fields) |field| try field.type.validate();
+    for (fields) |field_meta| try field_meta.type.validate();
 }
 
 fn validateRunEndEncodedMeta(meta: RunEndEncodedMeta) ValidationError!void {
@@ -846,6 +1036,46 @@ test "DataType.validate" {
     const bad_entries = try Field.create(allocator, "entries", &bad_entry_ty, false, &.{});
     defer bad_entries.deinit();
     try std.testing.expectError(error.NullableMapKey, DataType.validate(.{ .map = .{ .entries = bad_entries } }));
+}
+
+test "datatype factories build common nested types" {
+    const allocator = std.testing.allocator;
+
+    const value_ty = int32();
+    const item_field = try field(allocator, "item", &value_ty, true, &.{});
+    defer item_field.deinit();
+    try std.testing.expect(DataType.equals(list(item_field), .{ .list = .{ .child = item_field } }));
+
+    const key_field = try field(allocator, "key", &value_ty, false, &.{});
+    defer key_field.deinit();
+    const utf8_ty = utf8();
+    const value_field = try field(allocator, "value", &utf8_ty, true, &.{});
+    defer value_field.deinit();
+    const entry_fields = [_]*const Field{ key_field, value_field };
+    const entry_ty = struct_(&entry_fields);
+    const entries = try field(allocator, "entries", &entry_ty, false, &.{});
+    defer entries.deinit();
+    const map_ty = map(entries, true);
+    try map_ty.validate();
+    try std.testing.expect(map_ty.map.keys_sorted);
+
+    const ids = [_]i8{ 3, 4 };
+    const union_ty = denseUnion(entry_fields[0..], ids[0..]);
+    try std.testing.expectEqual(TypeId.dense_union, union_ty.id());
+
+    const dict_index_ty = int8();
+    const dict_value_ty = utf8();
+    const dict_ty = dictionary(&dict_index_ty, &dict_value_ty, true);
+    try dict_ty.validate();
+    try std.testing.expect(dict_ty.dictionary.ordered);
+
+    const extension_ty = extension(&value_ty, "example.int32", "v1");
+    try extension_ty.validate();
+    try std.testing.expectEqualStrings("example.int32", extension_ty.extension.name);
+
+    try std.testing.expectEqual(TypeId.timestamp, timestamp(.microsecond, "UTC").id());
+    try std.testing.expectEqual(@as(u8, 12), decimal128(12, 2).decimal128.precision);
+    try std.testing.expectEqual(@as(usize, 16), fixedSizeBinary(16).fixed_size_binary.byte_width);
 }
 
 test "DataType cloneOwned retains child fields" {

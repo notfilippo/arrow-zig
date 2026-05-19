@@ -71,6 +71,11 @@ pub fn FixedWidthArray(comptime kind: FixedWidthKind) type {
             }
         }
 
+        pub fn valueChecked(self: Self, i: usize) common.AccessError!VT {
+            try common.checkValueAccess(self.view, i);
+            return self.value(i);
+        }
+
         pub fn trueCount(self: Self) usize {
             if (comptime switch (kind) {
                 .bool => false,
@@ -129,6 +134,9 @@ test "NumericArray basic slices and ownership" {
     const arr = try NumericArray(i32).fromData(data);
 
     try std.testing.expectEqual(@as(i32, 30), arr.value(2));
+    try std.testing.expectEqual(@as(i32, 30), try arr.valueChecked(2));
+    try std.testing.expectError(error.NullValue, arr.valueChecked(1));
+    try std.testing.expectError(error.IndexOutOfBounds, arr.valueChecked(5));
     try std.testing.expect(arr.view.isNull(1));
 
     const sliced = NumericArray(i32){ .view = arr.view.slice(1, 3) };

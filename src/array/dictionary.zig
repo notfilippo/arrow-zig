@@ -36,13 +36,27 @@ pub fn DictionaryArray(comptime Index: type) type {
             return offset_data.read(Index, values, self.view.base.offset + i);
         }
 
+        pub fn indexValueChecked(self: Self, i: usize) common.AccessError!Index {
+            try common.checkValueAccess(self.view, i);
+            return self.indexValue(i);
+        }
+
         pub fn valueIndex(self: Self, i: usize) usize {
             return indexAsUsize(self.indexValue(i));
+        }
+
+        pub fn valueIndexChecked(self: Self, i: usize) common.AccessError!usize {
+            return indexAsUsize(try self.indexValueChecked(i));
         }
 
         pub fn valueOwned(self: Self, i: usize) array_data.DataSliceError!?*ArrayData {
             if (self.view.isNull(i)) return null;
             return self.dictionaryBaseData().slice(self.valueIndex(i), 1);
+        }
+
+        pub fn valueOwnedChecked(self: Self, i: usize) (array_data.DataSliceError || common.AccessError)!*ArrayData {
+            const index = try self.valueIndexChecked(i);
+            return self.dictionaryBaseData().slice(index, 1);
         }
     };
 }
@@ -99,14 +113,21 @@ test "DictionaryArray exposes indices and dictionary values" {
     try std.testing.expectEqual(@as(usize, 4), arr.view.base.len);
     try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
     try std.testing.expectEqual(@as(i8, 1), arr.indexValue(1));
+    try std.testing.expectEqual(@as(i8, 1), try arr.indexValueChecked(1));
     try std.testing.expectEqual(@as(usize, 1), arr.valueIndex(1));
+    try std.testing.expectEqual(@as(usize, 1), try arr.valueIndexChecked(1));
     try std.testing.expect(arr.view.isNull(2));
 
     const owned_value = (try arr.valueOwned(1)).?;
     defer owned_value.deinit();
     const value_arr = try array.NumericArray(i32).fromData(owned_value);
     try std.testing.expectEqual(@as(i32, 20), value_arr.value(0));
+    const checked_value = try arr.valueOwnedChecked(1);
+    defer checked_value.deinit();
+    try std.testing.expectEqual(@as(usize, 1), checked_value.len);
     try std.testing.expect((try arr.valueOwned(2)) == null);
+    try std.testing.expectError(error.NullValue, arr.valueOwnedChecked(2));
+    try std.testing.expectError(error.IndexOutOfBounds, arr.valueOwnedChecked(4));
 
     const sliced = DictionaryArray(i8){ .view = arr.view.slice(1, 2) };
     try std.testing.expectEqual(@as(i8, 1), sliced.indexValue(0));

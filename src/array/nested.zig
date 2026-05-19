@@ -31,14 +31,27 @@ pub const StructArray = struct {
         return self.view.base.data.children[index];
     }
 
+    pub fn fieldBaseDataChecked(self: StructArray, index: usize) common.AccessError!*const ArrayData {
+        return self.fieldBaseData(index) orelse error.IndexOutOfBounds;
+    }
+
     pub fn fieldOwned(self: StructArray, index: usize) array_data.DataSliceError!?*ArrayData {
         const child = self.fieldBaseData(index) orelse return null;
+        return child.slice(self.view.base.offset, self.view.base.len);
+    }
+
+    pub fn fieldOwnedChecked(self: StructArray, index: usize) (array_data.DataSliceError || common.AccessError)!*ArrayData {
+        const child = try self.fieldBaseDataChecked(index);
         return child.slice(self.view.base.offset, self.view.base.len);
     }
 
     pub fn fieldName(self: StructArray, index: usize) ?[]const u8 {
         if (index >= self.view.base.data.type.struct_.fields.len) return null;
         return self.view.base.data.type.struct_.fields[index].name;
+    }
+
+    pub fn fieldNameChecked(self: StructArray, index: usize) common.AccessError![]const u8 {
+        return self.fieldName(index) orelse error.IndexOutOfBounds;
     }
 
     pub fn fieldBaseNamed(self: StructArray, name: []const u8) ?*const ArrayData {
@@ -49,6 +62,11 @@ pub const StructArray = struct {
     pub fn fieldNamedOwned(self: StructArray, name: []const u8) array_data.DataSliceError!?*ArrayData {
         const index = self.fieldIndexNamed(name) orelse return null;
         return self.fieldOwned(index);
+    }
+
+    pub fn fieldNamedOwnedChecked(self: StructArray, name: []const u8) (array_data.DataSliceError || common.AccessError)!*ArrayData {
+        const index = self.fieldIndexNamed(name) orelse return error.IndexOutOfBounds;
+        return self.fieldOwnedChecked(index);
     }
 
     fn fieldIndexNamed(self: StructArray, name: []const u8) ?usize {
@@ -95,8 +113,10 @@ test "StructArray exposes child fields" {
     const arr = try StructArray.fromData(data);
     try std.testing.expectEqual(@as(usize, 2), arr.fieldCount());
     try std.testing.expectEqualStrings("number", arr.fieldName(0).?);
+    try std.testing.expectEqualStrings("number", try arr.fieldNameChecked(0));
     try std.testing.expect(arr.fieldBaseNamed("flag") != null);
     try std.testing.expect(arr.fieldBaseNamed("missing") == null);
+    try std.testing.expectError(error.IndexOutOfBounds, arr.fieldOwnedChecked(2));
     try std.testing.expect(arr.view.isNull(1));
     try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
 

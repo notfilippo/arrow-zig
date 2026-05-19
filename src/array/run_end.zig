@@ -146,10 +146,21 @@ pub fn RunEndEncodedArray(comptime RunEnd: type) type {
             return self.valuesData().slice(run_index, 1);
         }
 
+        pub fn runValueOwnedChecked(self: Self, run_index: usize) (array_data.DataSliceError || common.AccessError)!*ArrayData {
+            if (run_index >= self.runCount()) return error.IndexOutOfBounds;
+            if (self.view.valueIsNull(run_index)) return error.NullValue;
+            return self.runValueOwned(run_index);
+        }
+
         pub fn valueOwned(self: Self, i: usize) array_data.DataSliceError!?*ArrayData {
             const run_index = self.runIndex(i);
             if (self.view.valueIsNull(run_index)) return null;
             return try self.runValueOwned(run_index);
+        }
+
+        pub fn valueOwnedChecked(self: Self, i: usize) (array_data.DataSliceError || common.AccessError)!*ArrayData {
+            try common.checkValueAccess(self.view, i);
+            return self.runValueOwned(self.runIndex(i));
         }
     };
 }
@@ -213,6 +224,11 @@ test "RunEndEncodedArray maps logical slots to runs" {
     defer value.deinit();
     const value_arr = try @import("../array.zig").NumericArray(i32).fromData(value);
     try std.testing.expectEqual(@as(i32, 20), value_arr.value(0));
+    const checked_value = try arr.valueOwnedChecked(3);
+    defer checked_value.deinit();
+    try std.testing.expectEqual(@as(usize, 1), checked_value.len);
+    try std.testing.expectError(error.NullValue, arr.valueOwnedChecked(5));
+    try std.testing.expectError(error.IndexOutOfBounds, arr.valueOwnedChecked(7));
     try std.testing.expect((try arr.valueOwned(5)) == null);
 
     const sliced = RunEndEncodedArray(i32){ .view = arr.view.slice(1, 5) };

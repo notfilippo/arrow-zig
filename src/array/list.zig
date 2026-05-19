@@ -80,8 +80,18 @@ pub fn VarListArray(comptime kind: ListKind) type {
             return offset_data.rangeAt(Offset, offsets, self.view.base.offset + i);
         }
 
+        pub fn valueRangeChecked(self: Self, i: usize) common.AccessError!ValueRange {
+            try common.checkValueAccess(self.view, i);
+            return self.valueRange(i);
+        }
+
         pub fn valueOwned(self: Self, i: usize) array_data.DataSliceError!*ArrayData {
             const range = self.valueRange(i);
+            return self.view.base.data.children[0].slice(range.offset, range.len);
+        }
+
+        pub fn valueOwnedChecked(self: Self, i: usize) (array_data.DataSliceError || common.AccessError)!*ArrayData {
+            const range = try self.valueRangeChecked(i);
             return self.view.base.data.children[0].slice(range.offset, range.len);
         }
     };
@@ -119,8 +129,18 @@ fn VarListViewArray(comptime kind: ListViewKind) type {
             };
         }
 
+        pub fn valueRangeChecked(self: Self, i: usize) common.AccessError!ValueRange {
+            try common.checkValueAccess(self.view, i);
+            return self.valueRange(i);
+        }
+
         pub fn valueOwned(self: Self, i: usize) array_data.DataSliceError!*ArrayData {
             const range = self.valueRange(i);
+            return self.view.base.data.children[0].slice(range.offset, range.len);
+        }
+
+        pub fn valueOwnedChecked(self: Self, i: usize) (array_data.DataSliceError || common.AccessError)!*ArrayData {
+            const range = try self.valueRangeChecked(i);
             return self.view.base.data.children[0].slice(range.offset, range.len);
         }
     };
@@ -154,8 +174,18 @@ pub const FixedSizeListArray = struct {
         };
     }
 
+    pub fn valueRangeChecked(self: FixedSizeListArray, i: usize) common.AccessError!ValueRange {
+        try common.checkValueAccess(self.view, i);
+        return self.valueRange(i);
+    }
+
     pub fn valueOwned(self: FixedSizeListArray, i: usize) array_data.DataSliceError!*ArrayData {
         const range = self.valueRange(i);
+        return self.view.base.data.children[0].slice(range.offset, range.len);
+    }
+
+    pub fn valueOwnedChecked(self: FixedSizeListArray, i: usize) (array_data.DataSliceError || common.AccessError)!*ArrayData {
+        const range = try self.valueRangeChecked(i);
         return self.view.base.data.children[0].slice(range.offset, range.len);
     }
 };
@@ -189,6 +219,7 @@ test "ListArray value ranges and owned values" {
     try std.testing.expectEqual(@as(usize, 3), arr.view.base.len);
     try std.testing.expectEqual(@as(usize, 0), arr.view.nullCount());
     try std.testing.expectEqual(@as(usize, 0), arr.valueRange(0).offset);
+    try std.testing.expectEqual(@as(usize, 0), (try arr.valueRangeChecked(0)).offset);
     try std.testing.expectEqual(@as(usize, 2), arr.valueRange(0).len);
     try std.testing.expectEqual(@as(usize, 0), arr.valueRange(1).len);
 
@@ -285,6 +316,10 @@ test "ListViewArray value ranges can be non monotonic" {
     defer values.deinit();
     const values_arr = try primitive.NumericArray(i32).fromData(values);
     try std.testing.expectEqual(@as(i32, 3), values_arr.value(0));
+    const checked_values = try arr.valueOwnedChecked(0);
+    defer checked_values.deinit();
+    try std.testing.expectEqual(@as(usize, 2), checked_values.len);
+    try std.testing.expectError(error.IndexOutOfBounds, arr.valueOwnedChecked(3));
 }
 
 test "LargeListViewArray uses large offsets and sizes" {
@@ -349,9 +384,11 @@ test "FixedSizeListArray value ranges and owned values" {
     const arr = try FixedSizeListArray.fromData(data);
     try std.testing.expectEqual(@as(usize, 2), arr.listSize());
     try std.testing.expectEqual(@as(usize, 0), arr.valueRange(0).offset);
+    try std.testing.expectEqual(@as(usize, 0), (try arr.valueRangeChecked(0)).offset);
     try std.testing.expectEqual(@as(usize, 2), arr.valueRange(1).offset);
     try std.testing.expectEqual(@as(usize, 2), arr.valueRange(1).len);
     try std.testing.expect(arr.view.isNull(1));
+    try std.testing.expectError(error.NullValue, arr.valueOwnedChecked(1));
 
     const values = try arr.valueOwned(2);
     defer values.deinit();

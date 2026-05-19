@@ -48,6 +48,7 @@ pub const Error = error{
     RunEndNotIncreasing,
     RunEndOutOfBounds,
     ViewBufferIndexOutOfBounds,
+    ViewPrefixMismatch,
     ViewBufferTooSmall,
     ViewOffsetOutOfBounds,
     NonNullableNulls,
@@ -112,7 +113,7 @@ fn validateData(data: anytype, ty: datatype.DataType, total: usize, comptime lev
         .list_view => |meta| try validateListViewLike(data, total, meta.child, i32, level),
         .large_list_view => |meta| try validateListViewLike(data, total, meta.child, i64, level),
         .fixed_size_list => |meta| try validateFixedSizeList(data, total, meta, level),
-        .map => |meta| try validateListLike(data, total, meta.entries, i32, level),
+        .map => |meta| try validateMap(data, total, meta, level),
         .struct_ => |meta| try validateStruct(data, total, meta, level),
         .sparse_union => |meta| try validateUnion(data, total, meta, false, level),
         .dense_union => |meta| try validateUnion(data, total, meta, true, level),
@@ -270,7 +271,9 @@ fn validateBinaryView(data: anytype, views: *const Buffer, slot: usize) (Error |
     const start: usize = @intCast(view_offset);
     const end = try checked.add(start, @as(usize, @intCast(len)));
     if (end > buf.size) return error.ViewBufferTooSmall;
-    return buf.dataSlice()[start..end];
+    const value = buf.dataSlice()[start..end];
+    if (!std.mem.eql(u8, views.dataSlice()[view_start + 4 ..][0..4], value[0..4])) return error.ViewPrefixMismatch;
+    return value;
 }
 
 fn readViewI32(views: *const Buffer, byte_offset: usize) i32 {
@@ -285,6 +288,18 @@ fn validateListLike(data: anytype, total: usize, child_field: *const datatype.Fi
 
     const offsets = try validateOffsetsBuffer(data, total, Offset);
     if (level == .full) if (offsets) |offset_buf| try validateOffsets(data, offset_buf, child.len, Offset);
+}
+
+fn validateMap(data: anytype, total: usize, meta: datatype.MapMeta, comptime level: Level) (Error || checked.Error || datatype.ValidationError)!void {
+    try validateListLike(data, total, meta.entries, i32, level);
+
+    const entries = data.children[0];
+    if (entries.type.id() != .struct_ or entries.children.len != 2) return error.ChildTypeMismatch;
+    try validateNullable(meta.entries, entries, level);
+
+    const fields = entries.type.struct_.fields;
+    if (fields.len != 2) return error.ChildTypeMismatch;
+    try validateNullable(fields[0], entries.children[0], level);
 }
 
 fn validateListViewLike(data: anytype, total: usize, child_field: *const datatype.Field, comptime Offset: type, comptime level: Level) (Error || checked.Error || datatype.ValidationError)!void {
@@ -739,6 +754,24 @@ test "validate null and binary storage" {
     defer bad_utf8.deinit();
     try bad_utf8.validate();
     try std.testing.expectError(error.InvalidUtf8, bad_utf8.validateFull());
+
+    const view_values = try Buffer.allocate(allocator, 16);
+    errdefer view_values.deinit();
+    @memcpy(view_values.data[0..16], "0123456789abcdef");
+    view_values.freeze();
+
+    const bad_views = try Buffer.allocate(allocator, 16);
+    errdefer bad_views.deinit();
+    std.mem.writeInt(i32, bad_views.data[0..4], 16, .little);
+    @memcpy(bad_views.data[4..8], "xxxx");
+    std.mem.writeInt(i32, bad_views.data[8..12], 0, .little);
+    std.mem.writeInt(i32, bad_views.data[12..16], 0, .little);
+    bad_views.freeze();
+
+    const bad_view_data = try ArrayData.initOwned(allocator, .binary_view, 1, 0, 0, &.{ null, bad_views, view_values }, &.{}, null);
+    defer bad_view_data.deinit();
+    try bad_view_data.validate();
+    try std.testing.expectError(error.ViewPrefixMismatch, bad_view_data.validateFull());
 }
 
 test "validate list and struct storage" {

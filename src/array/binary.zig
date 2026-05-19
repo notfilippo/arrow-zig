@@ -71,8 +71,17 @@ pub fn VarBinaryArray(comptime kind: VarBinaryKind) type {
             return values.dataSlice()[range.offset..][0..range.len];
         }
 
+        pub fn valueBytesChecked(self: Self, i: usize) common.AccessError![]const u8 {
+            try common.checkValueAccess(self.view, i);
+            return self.valueBytes(i);
+        }
+
         pub fn value(self: Self, i: usize) []const u8 {
             return self.valueBytes(i);
+        }
+
+        pub fn valueChecked(self: Self, i: usize) common.AccessError![]const u8 {
+            return self.valueBytesChecked(i);
         }
     };
 }
@@ -101,8 +110,17 @@ fn BinaryViewArrayType(comptime kind: BinaryViewKind) type {
             return readBinaryView(self.view.base.data, views, slot);
         }
 
+        pub fn valueBytesChecked(self: Self, i: usize) common.AccessError![]const u8 {
+            try common.checkValueAccess(self.view, i);
+            return self.valueBytes(i);
+        }
+
         pub fn value(self: Self, i: usize) []const u8 {
             return self.valueBytes(i);
+        }
+
+        pub fn valueChecked(self: Self, i: usize) common.AccessError![]const u8 {
+            return self.valueBytesChecked(i);
         }
     };
 }
@@ -129,8 +147,17 @@ pub const FixedSizeBinaryArray = struct {
         return self.view.base.data.buffers[1].?.dataSlice()[start..][0..width];
     }
 
+    pub fn valueBytesChecked(self: FixedSizeBinaryArray, i: usize) common.AccessError![]const u8 {
+        try common.checkValueAccess(self.view, i);
+        return self.valueBytes(i);
+    }
+
     pub fn value(self: FixedSizeBinaryArray, i: usize) []const u8 {
         return self.valueBytes(i);
+    }
+
+    pub fn valueChecked(self: FixedSizeBinaryArray, i: usize) common.AccessError![]const u8 {
+        return self.valueBytesChecked(i);
     }
 };
 
@@ -166,8 +193,10 @@ test "BinaryArray reads ranges and slices" {
     const arr = try BinaryArray.fromData(data);
 
     try std.testing.expectEqualStrings("ab", arr.valueBytes(0));
+    try std.testing.expectEqualStrings("ab", try arr.valueBytesChecked(0));
     try std.testing.expectEqualStrings("", arr.value(1));
     try std.testing.expectEqualStrings("cde", arr.value(2));
+    try std.testing.expectError(error.IndexOutOfBounds, arr.valueChecked(3));
     const sliced = @TypeOf(arr){ .view = arr.view.slice(1, 2) };
     try std.testing.expectEqualStrings("", sliced.valueBytes(0));
 
@@ -204,6 +233,7 @@ test "BinaryViewArray reads inline and out of line values" {
 
     const arr = try BinaryViewArray.fromData(data);
     try std.testing.expectEqualStrings("short", arr.valueBytes(0));
+    try std.testing.expectEqualStrings("short", try arr.valueBytesChecked(0));
     try std.testing.expectEqualStrings("0123456789abcdef", arr.value(1));
     try std.testing.expectEqualStrings("", arr.valueBytes(2));
 
@@ -239,7 +269,9 @@ test "FixedSizeBinaryArray reads slots and slices" {
     const arr = try FixedSizeBinaryArray.fromData(data);
     try std.testing.expectEqual(@as(usize, 3), arr.byteWidth());
     try std.testing.expectEqualStrings("abc", arr.valueBytes(0));
+    try std.testing.expectEqualStrings("abc", try arr.valueBytesChecked(0));
     try std.testing.expectEqualStrings("jkl", arr.value(3));
+    try std.testing.expectError(error.IndexOutOfBounds, arr.valueChecked(4));
     const sliced = @TypeOf(arr){ .view = arr.view.slice(1, 2) };
     try std.testing.expectEqualStrings("def", sliced.valueBytes(0));
 

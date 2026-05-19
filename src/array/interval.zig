@@ -77,8 +77,18 @@ pub fn IntervalArray(comptime kind: IntervalKind) type {
             return self.view.base.data.buffers[1].?.dataSlice()[start..][0..width];
         }
 
+        pub fn valueBytesChecked(self: Self, i: usize) common.AccessError![]const u8 {
+            try common.checkValueAccess(self.view, i);
+            return self.valueBytes(i);
+        }
+
         pub fn value(self: Self, i: usize) Value {
             return readValue(kind, self.valueBytes(i));
+        }
+
+        pub fn valueChecked(self: Self, i: usize) common.AccessError!Value {
+            try common.checkValueAccess(self.view, i);
+            return self.value(i);
         }
     };
 }
@@ -118,6 +128,7 @@ test "MonthIntervalArray reads values and slices" {
     const arr = try MonthIntervalArray.fromData(data);
     try std.testing.expectEqual(@as(usize, 4), arr.byteWidth());
     try std.testing.expectEqual(@as(i32, 1), arr.value(0));
+    try std.testing.expectEqual(@as(i32, 1), try arr.valueChecked(0));
     try std.testing.expectEqual(@as(i32, 24), arr.value(1));
     const sliced = MonthIntervalArray{ .view = arr.view.slice(2, 1) };
     try std.testing.expectEqual(@as(i32, -3), sliced.value(0));

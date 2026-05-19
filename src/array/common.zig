@@ -14,6 +14,7 @@ const ArrayData = array_data.ArrayData;
 
 pub const ViewError = error{ TypeMismatch, InvalidBufferLayout };
 pub const SliceError = error{OffsetOutOfBounds};
+pub const AccessError = error{ IndexOutOfBounds, NullValue };
 
 pub fn typeIdFor(comptime T: type) datatype.TypeId {
     return switch (T) {
@@ -168,6 +169,11 @@ pub fn clampedLen(current_len: usize, off: usize, requested: usize) SliceError!u
 
 pub fn dataRelativeOffset(data_offset: usize, view_offset: usize, off: usize) checked.Error!usize {
     return checked.add(try checked.sub(view_offset, data_offset), off);
+}
+
+pub fn checkValueAccess(view: anytype, i: usize) AccessError!void {
+    if (i >= view.base.len) return error.IndexOutOfBounds;
+    if (view.isNull(i)) return error.NullValue;
 }
 
 test "typeIdFor" {

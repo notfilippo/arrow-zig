@@ -38,6 +38,11 @@ pub const SparseUnionArray = struct {
         const child_index = self.childIndex(i) orelse return null;
         return self.view.base.data.children[child_index].slice(self.view.base.offset + i, 1);
     }
+
+    pub fn valueOwnedChecked(self: SparseUnionArray, i: usize) (array_data.DataSliceError || common.AccessError)!*ArrayData {
+        try common.checkValueAccess(self.view, i);
+        return (try self.valueOwned(i)) orelse error.NullValue;
+    }
 };
 
 pub const DenseUnionArray = struct {
@@ -71,6 +76,11 @@ pub const DenseUnionArray = struct {
     pub fn valueOwned(self: DenseUnionArray, i: usize) array_data.DataSliceError!?*ArrayData {
         const child_index = self.childIndex(i) orelse return null;
         return self.view.base.data.children[child_index].slice(self.valueOffset(i), 1);
+    }
+
+    pub fn valueOwnedChecked(self: DenseUnionArray, i: usize) (array_data.DataSliceError || common.AccessError)!*ArrayData {
+        try common.checkValueAccess(self.view, i);
+        return (try self.valueOwned(i)) orelse error.NullValue;
     }
 };
 
@@ -182,6 +192,10 @@ test "DenseUnionArray exposes offsets and values" {
     defer value.deinit();
     const value_arr = try array.NumericArray(i32).fromData(value);
     try std.testing.expectEqual(@as(i32, 30), value_arr.value(0));
+    const checked_value = try arr.valueOwnedChecked(2);
+    defer checked_value.deinit();
+    try std.testing.expectEqual(@as(usize, 1), checked_value.len);
+    try std.testing.expectError(error.IndexOutOfBounds, arr.valueOwnedChecked(3));
 
     const sliced = DenseUnionArray{ .view = .{ .base = arr.view.base.slice(1, 2) } };
     try std.testing.expectEqual(@as(i8, 8), sliced.typeId(0));
@@ -246,6 +260,9 @@ test "SparseUnionArray uses parent row offsets" {
     defer int_value.deinit();
     const int_arr = try array.NumericArray(i32).fromData(int_value);
     try std.testing.expectEqual(@as(i32, 30), int_arr.value(0));
+    const checked_int_value = try arr.valueOwnedChecked(2);
+    defer checked_int_value.deinit();
+    try std.testing.expectEqual(@as(usize, 1), checked_int_value.len);
 
     const bool_value = (try arr.valueOwned(1)).?;
     defer bool_value.deinit();

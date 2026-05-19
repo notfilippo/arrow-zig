@@ -194,6 +194,16 @@ pub const ArrayData = struct {
         );
     }
 
+    /// Return whether storage includes a physical validity bitmap.
+    pub fn hasValidityBitmap(self: *const ArrayData) bool {
+        return hasValidityBitmapForType(self, self.type);
+    }
+
+    /// Return whether physical storage may contain null slots.
+    pub fn mayHaveNulls(self: *const ArrayData) bool {
+        return mayHaveNullsForType(self, self.type);
+    }
+
     pub fn isValid(self: *const ArrayData, i: usize) bool {
         return !self.isNull(i);
     }
@@ -214,6 +224,11 @@ pub const ArrayData = struct {
             if (isLogicalNullForType(self, self.type, i)) count += 1;
         }
         return count;
+    }
+
+    /// Return whether Arrow logical null rules may mark slots null.
+    pub fn mayHaveLogicalNulls(self: *const ArrayData) bool {
+        return mayHaveLogicalNullsForType(self, self.type);
     }
 
     pub fn refCount(self: *const ArrayData) usize {
@@ -242,6 +257,7 @@ pub const ArrayData = struct {
 fn isNullForType(data: *const ArrayData, ty: datatype.DataType, i: usize) bool {
     return switch (ty) {
         .null_ => true,
+        .extension => |meta| isNullForType(data, meta.storage_type.*, i),
         .sparse_union => |meta| sparseUnionSlotIsNull(data, meta, i),
         .dense_union => |meta| denseUnionSlotIsNull(data, meta, i),
         .run_end_encoded => runEndSlotIsNull(data, i),
@@ -252,7 +268,36 @@ fn isNullForType(data: *const ArrayData, ty: datatype.DataType, i: usize) bool {
 fn isLogicalNullForType(data: *const ArrayData, ty: datatype.DataType, i: usize) bool {
     return switch (ty) {
         .dictionary => |meta| dictionarySlotIsLogicalNull(data, meta, i),
+        .extension => |meta| isLogicalNullForType(data, meta.storage_type.*, i),
         else => isNullForType(data, ty, i),
+    };
+}
+
+fn hasValidityBitmapForType(data: *const ArrayData, ty: datatype.DataType) bool {
+    if (ty.layout().null_layout != .bitmap) return false;
+    return data.buffers.len > 0 and data.buffers[0] != null;
+}
+
+fn mayHaveNullsForType(data: *const ArrayData, ty: datatype.DataType) bool {
+    return switch (ty.layout().null_layout) {
+        .always_null => data.len != 0,
+        .none => false,
+        .bitmap => if (data.null_count) |nc| nc != 0 else hasValidityBitmapForType(data, ty),
+    };
+}
+
+fn mayHaveLogicalNullsForType(data: *const ArrayData, ty: datatype.DataType) bool {
+    return switch (ty) {
+        .dictionary => data.mayHaveNulls() or if (data.dictionary) |dict| dict.mayHaveNulls() else true,
+        .extension => |meta| mayHaveLogicalNullsForType(data, meta.storage_type.*),
+        .sparse_union, .dense_union => {
+            for (data.children) |child| {
+                if (child.mayHaveLogicalNulls()) return true;
+            }
+            return false;
+        },
+        .run_end_encoded => if (data.children.len >= 2) data.children[1].mayHaveLogicalNulls() else true,
+        else => mayHaveNullsForType(data, ty),
     };
 }
 
@@ -446,6 +491,11 @@ test "ArrayData separates physical and logical dictionary nulls" {
     const data = try ArrayData.initOwned(allocator, dict_ty, 3, 0, 0, &.{ null, indices }, &.{}, dictionary);
     defer data.deinit();
 
+    try std.testing.expect(!data.hasValidityBitmap());
+    try std.testing.expect(!data.mayHaveNulls());
+    try std.testing.expect(data.mayHaveLogicalNulls());
+    try std.testing.expect(dictionary.hasValidityBitmap());
+    try std.testing.expect(dictionary.mayHaveNulls());
     try std.testing.expectEqual(@as(usize, 0), data.nullCount());
     try std.testing.expectEqual(@as(usize, 2), data.logicalNullCount());
     try std.testing.expect(data.isValid(0));
@@ -455,6 +505,48 @@ test "ArrayData separates physical and logical dictionary nulls" {
     defer sliced.deinit();
     try std.testing.expectEqual(@as(usize, 0), sliced.nullCount());
     try std.testing.expectEqual(@as(usize, 1), sliced.logicalNullCount());
+}
+
+test "ArrayData extension uses storage logical nulls" {
+    const allocator = std.testing.allocator;
+
+    const dict_validity = try Buffer.allocate(allocator, 1);
+    errdefer dict_validity.deinit();
+    dict_validity.data[0] = 0b00000010;
+    dict_validity.freeze();
+
+    const dict_values = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
+    errdefer dict_values.deinit();
+    writeTestInt(i32, dict_values, 0, 0);
+    writeTestInt(i32, dict_values, 1, 10);
+    dict_values.freeze();
+
+    const dictionary = try ArrayData.initOwned(allocator, .int32, 2, 0, 1, &.{ dict_validity, dict_values }, &.{}, null);
+    errdefer dictionary.deinit();
+
+    const indices = try Buffer.allocate(allocator, 2 * @sizeOf(i8));
+    errdefer indices.deinit();
+    writeTestInt(i8, indices, 0, 0);
+    writeTestInt(i8, indices, 1, 1);
+    indices.freeze();
+
+    const index_ty: datatype.DataType = .int8;
+    const value_ty: datatype.DataType = .int32;
+    const storage_ty = datatype.DataType{ .dictionary = .{ .index_type = &index_ty, .value_type = &value_ty } };
+    const extension_ty = datatype.DataType{ .extension = .{
+        .storage_type = &storage_ty,
+        .name = "example.dictionary",
+    } };
+    const data = try ArrayData.initOwned(allocator, extension_ty, 2, 0, 0, &.{ null, indices }, &.{}, dictionary);
+    defer data.deinit();
+
+    try data.validateFull();
+    try std.testing.expect(!data.hasValidityBitmap());
+    try std.testing.expect(!data.mayHaveNulls());
+    try std.testing.expect(data.mayHaveLogicalNulls());
+    try std.testing.expect(data.isValid(0));
+    try std.testing.expectEqual(@as(usize, 0), data.nullCount());
+    try std.testing.expectEqual(@as(usize, 1), data.logicalNullCount());
 }
 
 test "ArrayData init retained retains buffers and children" {
