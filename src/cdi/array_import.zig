@@ -83,6 +83,11 @@ fn importArrayNode(
     const len = try importLength(arr.length);
     const offset = try importOffset(arr.offset);
     const null_count = try importNullCount(ty, arr.null_count, len);
+
+    if (isBinaryViewLike(ty)) {
+        return importBinaryViewArrayNode(allocator, ty, arr, owner, len, offset, null_count);
+    }
+
     const layout = ty.layout();
 
     if (arr.n_buffers < 0) return error.InvalidBufferCount;
@@ -156,6 +161,67 @@ fn importArrayNode(
     return data;
 }
 
+fn importBinaryViewArrayNode(
+    allocator: Allocator,
+    ty: datatype.DataType,
+    arr: *ArrowArray,
+    owner: *ExternalOwnerHandle,
+    len: usize,
+    offset: usize,
+    null_count: ?usize,
+) Error!*ArrayData {
+    if (arr.n_children != 0) return error.InvalidChildCount;
+    if (arr.dictionary != null) return error.UnexpectedDictionary;
+    if (arr.n_buffers < 3) return error.InvalidBufferCount;
+    const n_c_buffers = try i64ToUsize(arr.n_buffers);
+    if (arr.buffers == null) return error.InvalidBufferCount;
+
+    const n_data_buffers = n_c_buffers - 3;
+    const n_internal_buffers = try checked.add(2, n_data_buffers);
+    const buffers = try allocator.alloc(?*Buffer, n_internal_buffers);
+    defer allocator.free(buffers);
+    @memset(buffers, null);
+
+    var objects_owned = false;
+    errdefer if (!objects_owned) {
+        for (buffers) |buf| {
+            if (buf) |b| b.deinit();
+        }
+    };
+
+    const total = try checked.add(offset, len);
+    buffers[0] = try importValidityBuffer(allocator, owner, arr, len, total);
+    buffers[1] = try importFixedBuffer(allocator, owner, arr, 1, len, total, 16, error.MissingValuesBuffer);
+
+    const sizes = try binaryViewBufferSizes(arr, n_data_buffers);
+    for (0..n_data_buffers) |i| {
+        const size = try importLength(sizes[i]);
+        const ptr = arr.buffers.?[2 + i] orelse {
+            if (size == 0) {
+                buffers[2 + i] = try wrapImportedBuffer(allocator, owner, &.{});
+                continue;
+            }
+            return error.MissingValuesBuffer;
+        };
+        const bytes: [*]const u8 = @ptrCast(ptr);
+        buffers[2 + i] = try wrapImportedBuffer(allocator, owner, bytes[0..size]);
+    }
+
+    const data = try ArrayData.initOwnedExternal(
+        allocator,
+        ty,
+        len,
+        offset,
+        null_count,
+        buffers,
+        &.{},
+        null,
+        owner,
+    );
+    objects_owned = true;
+    return data;
+}
+
 fn importBuffer(
     allocator: Allocator,
     owner: *ExternalOwnerHandle,
@@ -176,6 +242,48 @@ fn importBuffer(
     return wrapImportedBuffer(allocator, owner, bytes[0..size]);
 }
 
+fn importValidityBuffer(
+    allocator: Allocator,
+    owner: *ExternalOwnerHandle,
+    arr: *const ArrowArray,
+    len: usize,
+    total: usize,
+) Error!?*Buffer {
+    const size = if (len == 0) 0 else try bitmap.byteLenChecked(total);
+    const ptr = arr.buffers.?[0] orelse return null;
+    const bytes: [*]const u8 = @ptrCast(ptr);
+    return wrapImportedBuffer(allocator, owner, bytes[0..size]);
+}
+
+fn importFixedBuffer(
+    allocator: Allocator,
+    owner: *ExternalOwnerHandle,
+    arr: *const ArrowArray,
+    index: usize,
+    len: usize,
+    total: usize,
+    width: usize,
+    missing_error: Error,
+) Error!?*Buffer {
+    const size = if (len == 0) 0 else try checked.mul(total, width);
+    const ptr = arr.buffers.?[index] orelse {
+        if (size == 0) return wrapImportedBuffer(allocator, owner, &.{});
+        return missing_error;
+    };
+    const bytes: [*]const u8 = @ptrCast(ptr);
+    return wrapImportedBuffer(allocator, owner, bytes[0..size]);
+}
+
+fn binaryViewBufferSizes(arr: *const ArrowArray, count: usize) Error![*]const i64 {
+    const ptr = arr.buffers.?[@intCast(arr.n_buffers - 1)] orelse {
+        if (count == 0) return @ptrCast(@alignCast(&empty_binary_view_buffer_sizes));
+        return error.MissingValuesBuffer;
+    };
+    return @ptrCast(@alignCast(ptr));
+}
+
+const empty_binary_view_buffer_sizes = [_]i64{};
+
 fn wrapImportedBuffer(
     allocator: Allocator,
     owner: *ExternalOwnerHandle,
@@ -185,6 +293,10 @@ fn wrapImportedBuffer(
         error.SizeExceedsCapacity => unreachable,
         else => |e| return e,
     };
+}
+
+fn isBinaryViewLike(ty: datatype.DataType) bool {
+    return ty == .binary_view or ty == .utf8_view;
 }
 
 fn visibleBufferSize(

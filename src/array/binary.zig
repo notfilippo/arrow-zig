@@ -21,6 +21,11 @@ pub const VarBinaryKind = enum {
     large_utf8,
 };
 
+const BinaryViewKind = enum {
+    binary_view,
+    utf8_view,
+};
+
 fn offsetTypeFor(comptime kind: VarBinaryKind) type {
     return switch (kind) {
         .binary, .utf8 => i32,
@@ -34,6 +39,13 @@ fn dataTypeMatches(comptime kind: VarBinaryKind, ty: datatype.DataType) bool {
         .utf8 => ty == .utf8,
         .large_binary => ty == .large_binary,
         .large_utf8 => ty == .large_utf8,
+    };
+}
+
+fn viewDataTypeMatches(comptime kind: BinaryViewKind, ty: datatype.DataType) bool {
+    return switch (kind) {
+        .binary_view => ty == .binary_view,
+        .utf8_view => ty == .utf8_view,
     };
 }
 
@@ -70,6 +82,34 @@ pub const Utf8Array = VarBinaryArray(.utf8);
 pub const LargeBinaryArray = VarBinaryArray(.large_binary);
 pub const LargeUtf8Array = VarBinaryArray(.large_utf8);
 
+fn BinaryViewArrayType(comptime kind: BinaryViewKind) type {
+    return struct {
+        const Self = @This();
+
+        view: common.ValidityView(.bitmap),
+
+        pub fn fromData(data: *const ArrayData) common.ViewError!Self {
+            if (!viewDataTypeMatches(kind, data.type)) return error.TypeMismatch;
+            if (data.buffers.len < 2) return error.InvalidBufferLayout;
+            if (data.len > 0 and data.buffers[1] == null) return error.InvalidBufferLayout;
+            return .{ .view = common.ValidityView(.bitmap).init(data) };
+        }
+
+        pub fn valueBytes(self: Self, i: usize) []const u8 {
+            const slot = self.view.base.offset + i;
+            const views = self.view.base.data.buffers[1].?;
+            return readBinaryView(self.view.base.data, views, slot);
+        }
+
+        pub fn value(self: Self, i: usize) []const u8 {
+            return self.valueBytes(i);
+        }
+    };
+}
+
+pub const BinaryViewArray = BinaryViewArrayType(.binary_view);
+pub const Utf8ViewArray = BinaryViewArrayType(.utf8_view);
+
 pub const FixedSizeBinaryArray = struct {
     view: common.ValidityView(.bitmap),
 
@@ -93,6 +133,18 @@ pub const FixedSizeBinaryArray = struct {
         return self.valueBytes(i);
     }
 };
+
+fn readBinaryView(data: *const ArrayData, views: *const Buffer, slot: usize) []const u8 {
+    const view_start = slot * 16;
+    const bytes = views.dataSlice()[view_start..][0..16];
+    const len: usize = @intCast(std.mem.readInt(i32, bytes[0..4], .little));
+    if (len <= 12) return bytes[4..][0..len];
+
+    const buffer_index: usize = @intCast(std.mem.readInt(i32, bytes[8..12], .little));
+    const offset: usize = @intCast(std.mem.readInt(i32, bytes[12..16], .little));
+    const value_buffer = data.buffers[2 + buffer_index].?;
+    return value_buffer.dataSlice()[offset..][0..len];
+}
 
 test "BinaryArray reads ranges and slices" {
     const allocator = std.testing.allocator;
@@ -130,6 +182,46 @@ test "BinaryArray reads ranges and slices" {
     try std.testing.expectEqualStrings("", sliced_clone_arr.valueBytes(0));
 
     try std.testing.expectError(error.OffsetOutOfBounds, arr.view.sliceChecked(4, 1));
+}
+
+test "BinaryViewArray reads inline and out of line values" {
+    const allocator = std.testing.allocator;
+    const views = try Buffer.allocate(allocator, 3 * 16);
+    errdefer views.deinit();
+    writeInlineView(views.data[0..16], "short");
+    writeExternalView(views.data[16..32], "0123456789abcdef", 0, 0);
+    writeInlineView(views.data[32..48], "");
+    views.freeze();
+
+    const values = try Buffer.allocate(allocator, 16);
+    errdefer values.deinit();
+    @memcpy(values.data[0..16], "0123456789abcdef");
+    values.freeze();
+
+    const data = try ArrayData.initOwned(allocator, .binary_view, 3, 0, 0, &.{ null, views, values }, &.{}, null);
+    defer data.deinit();
+    try data.validate();
+
+    const arr = try BinaryViewArray.fromData(data);
+    try std.testing.expectEqualStrings("short", arr.valueBytes(0));
+    try std.testing.expectEqualStrings("0123456789abcdef", arr.value(1));
+    try std.testing.expectEqualStrings("", arr.valueBytes(2));
+
+    const sliced = @TypeOf(arr){ .view = arr.view.slice(1, 2) };
+    try std.testing.expectEqualStrings("0123456789abcdef", sliced.valueBytes(0));
+}
+
+fn writeInlineView(dst: []u8, bytes: []const u8) void {
+    std.mem.writeInt(i32, dst[0..4], @intCast(bytes.len), .little);
+    @memset(dst[4..16], 0);
+    @memcpy(dst[4..][0..bytes.len], bytes);
+}
+
+fn writeExternalView(dst: []u8, bytes: []const u8, buffer_index: i32, offset: i32) void {
+    std.mem.writeInt(i32, dst[0..4], @intCast(bytes.len), .little);
+    @memcpy(dst[4..8], bytes[0..4]);
+    std.mem.writeInt(i32, dst[8..12], buffer_index, .little);
+    std.mem.writeInt(i32, dst[12..16], offset, .little);
 }
 
 test "FixedSizeBinaryArray reads slots and slices" {

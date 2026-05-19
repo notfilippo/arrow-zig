@@ -157,6 +157,175 @@ pub const Utf8Builder = VarBinaryBuilder(.utf8);
 pub const LargeBinaryBuilder = VarBinaryBuilder(.large_binary);
 pub const LargeUtf8Builder = VarBinaryBuilder(.large_utf8);
 
+const BinaryViewKind = enum {
+    binary_view,
+    utf8_view,
+};
+
+fn BinaryViewBuilderType(comptime kind: BinaryViewKind) type {
+    return struct {
+        const Self = @This();
+        pub const Array = switch (kind) {
+            .binary_view => array.BinaryViewArray,
+            .utf8_view => array.Utf8ViewArray,
+        };
+        pub const Error = BinaryBuilderError;
+
+        allocator: Allocator,
+        views: ?*Buffer,
+        values: ?*Buffer,
+        slots: common.Slots,
+
+        pub fn init(allocator: Allocator) Self {
+            return .{
+                .allocator = allocator,
+                .views = null,
+                .values = null,
+                .slots = common.Slots.init(),
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.reset();
+        }
+
+        pub fn reset(self: *Self) void {
+            if (self.views) |buf| buf.deinit();
+            if (self.values) |buf| buf.deinit();
+            self.views = null;
+            self.values = null;
+            self.slots.deinit();
+        }
+
+        pub fn reserve(self: *Self, additional: usize, additional_bytes: usize) Error!void {
+            if (additional == 0 and additional_bytes == 0) return;
+            const new_len = try checked.add(self.slots.len, additional);
+            const capped_len = @max(new_len, common.kMinBuilderCapacity);
+            const views = try self.ensureViews();
+            try views.reserve(try checked.mul(capped_len, 16));
+            if (additional_bytes > 0) {
+                const values = try self.ensureValues();
+                try values.reserve(try checked.add(values.size, additional_bytes));
+            }
+            try self.slots.reserve(self.allocator, additional);
+        }
+
+        pub fn append(self: *Self, bytes: []const u8) Error!void {
+            if (comptime kind == .utf8_view) {
+                if (!std.unicode.utf8ValidateSlice(bytes)) return error.InvalidUtf8;
+            }
+            try self.appendUnchecked(bytes);
+        }
+
+        pub fn appendBytes(self: *Self, bytes: []const u8) Error!void {
+            try self.appendUnchecked(bytes);
+        }
+
+        pub fn appendNull(self: *Self) Error!void {
+            try self.reserve(1, 0);
+            writeInlineView(self.nextViewSlot(), "");
+            self.slots.unsafeAppend(false);
+        }
+
+        pub fn appendNulls(self: *Self, n: usize) Error!void {
+            if (n == 0) return;
+            try self.reserve(n, 0);
+            for (0..n) |_| {
+                writeInlineView(self.nextViewSlot(), "");
+                self.slots.unsafeAppend(false);
+            }
+        }
+
+        pub fn appendEmptyValue(self: *Self) Error!void {
+            try self.appendBytes("");
+        }
+
+        pub fn appendEmptyValues(self: *Self, n: usize) Error!void {
+            if (n == 0) return;
+            try self.reserve(n, 0);
+            for (0..n) |_| {
+                writeInlineView(self.nextViewSlot(), "");
+                self.slots.unsafeAppend(true);
+            }
+        }
+
+        pub fn length(self: Self) usize {
+            return self.slots.length();
+        }
+
+        pub fn finish(self: *Self) Error!*ArrayData {
+            const views_buf = try self.finishViews();
+            errdefer views_buf.deinit();
+            const values_buf = self.finishValues();
+            errdefer if (values_buf) |buf| buf.deinit();
+            const slots = try self.slots.finish(self.allocator);
+            errdefer if (slots.validity) |buf| buf.deinit();
+
+            var buffers = [_]?*Buffer{ slots.validity, views_buf, values_buf };
+            const buffer_count: usize = if (values_buf == null) 2 else 3;
+            return ArrayData.initOwned(self.allocator, dataTypeForViewKind(kind), slots.len, 0, slots.null_count, buffers[0..buffer_count], &.{}, null);
+        }
+
+        fn appendUnchecked(self: *Self, bytes: []const u8) Error!void {
+            try offset_data.ensureRange(i32, bytes.len);
+            if (bytes.len <= 12) {
+                try self.reserve(1, 0);
+                writeInlineView(self.nextViewSlot(), bytes);
+            } else {
+                try self.reserve(1, bytes.len);
+                const values = self.values.?;
+                const offset = values.size;
+                try offset_data.ensureRange(i32, offset);
+                const end = try checked.add(values.size, bytes.len);
+                @memcpy(values.data[values.size..end], bytes);
+                values.size = end;
+                writeExternalView(self.nextViewSlot(), bytes, 0, @intCast(offset));
+            }
+            self.slots.unsafeAppend(true);
+        }
+
+        fn nextViewSlot(self: *Self) []u8 {
+            const views = self.views.?;
+            const start = views.size;
+            views.size += 16;
+            return views.data[start..][0..16];
+        }
+
+        fn ensureViews(self: *Self) Error!*Buffer {
+            if (self.views == null) self.views = try Buffer.allocate(self.allocator, 0);
+            return self.views.?;
+        }
+
+        fn ensureValues(self: *Self) Error!*Buffer {
+            if (self.values == null) self.values = try Buffer.allocate(self.allocator, 0);
+            return self.values.?;
+        }
+
+        fn finishViews(self: *Self) Error!*Buffer {
+            const views = if (self.views) |buf| blk: {
+                self.views = null;
+                break :blk buf;
+            } else try Buffer.allocate(self.allocator, 0);
+            views.freeze();
+            return views;
+        }
+
+        fn finishValues(self: *Self) ?*Buffer {
+            const values = self.values orelse return null;
+            self.values = null;
+            if (values.size == 0) {
+                values.deinit();
+                return null;
+            }
+            values.freeze();
+            return values;
+        }
+    };
+}
+
+pub const BinaryViewBuilder = BinaryViewBuilderType(.binary_view);
+pub const Utf8ViewBuilder = BinaryViewBuilderType(.utf8_view);
+
 pub const FixedSizeBinaryBuilder = struct {
     pub const Array = array.FixedSizeBinaryArray;
     pub const Error = BinaryBuilderError;
@@ -279,6 +448,26 @@ fn dataTypeForKind(comptime kind: array_binary.VarBinaryKind) datatype.DataType 
     };
 }
 
+fn dataTypeForViewKind(comptime kind: BinaryViewKind) datatype.DataType {
+    return switch (kind) {
+        .binary_view => .binary_view,
+        .utf8_view => .utf8_view,
+    };
+}
+
+fn writeInlineView(dst: []u8, bytes: []const u8) void {
+    std.mem.writeInt(i32, dst[0..4], @intCast(bytes.len), .little);
+    @memset(dst[4..16], 0);
+    if (bytes.len != 0) @memcpy(dst[4..][0..bytes.len], bytes);
+}
+
+fn writeExternalView(dst: []u8, bytes: []const u8, buffer_index: i32, offset: i32) void {
+    std.mem.writeInt(i32, dst[0..4], @intCast(bytes.len), .little);
+    @memcpy(dst[4..8], bytes[0..4]);
+    std.mem.writeInt(i32, dst[8..12], buffer_index, .little);
+    std.mem.writeInt(i32, dst[12..16], offset, .little);
+}
+
 test "BinaryBuilder basic nulls and slices" {
     const allocator = std.testing.allocator;
     var b = BinaryBuilder.init(allocator);
@@ -297,6 +486,43 @@ test "BinaryBuilder basic nulls and slices" {
     try std.testing.expectEqualStrings("ab", arr.valueBytes(0));
     try std.testing.expect(arr.view.isNull(1));
     try std.testing.expectEqualStrings("cde", arr.value(2));
+}
+
+test "BinaryViewBuilder builds inline and out of line values" {
+    const allocator = std.testing.allocator;
+    var b = BinaryViewBuilder.init(allocator);
+    defer b.deinit();
+
+    try b.append("tiny");
+    try b.append("0123456789abcdef");
+    try b.appendNull();
+    try b.appendEmptyValue();
+    const data = try b.finish();
+    defer data.deinit();
+    try data.validate();
+
+    const arr = try array.BinaryViewArray.fromData(data);
+    try std.testing.expectEqualStrings("tiny", arr.valueBytes(0));
+    try std.testing.expectEqualStrings("0123456789abcdef", arr.value(1));
+    try std.testing.expect(arr.view.isNull(2));
+    try std.testing.expectEqualStrings("", arr.valueBytes(3));
+}
+
+test "Utf8ViewBuilder validates input" {
+    const allocator = std.testing.allocator;
+    var b = Utf8ViewBuilder.init(allocator);
+    defer b.deinit();
+
+    try b.append("hello");
+    const invalid = [_]u8{0xc0};
+    try std.testing.expectError(error.InvalidUtf8, b.append(&invalid));
+    try b.appendBytes(&invalid);
+
+    const data = try b.finish();
+    defer data.deinit();
+    const arr = try array.Utf8ViewArray.fromData(data);
+    try std.testing.expectEqualStrings("hello", arr.value(0));
+    try std.testing.expectEqual(@as(usize, 1), arr.valueBytes(1).len);
 }
 
 test "BinaryBuilder all valid and reuse" {

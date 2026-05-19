@@ -28,6 +28,7 @@ pub const Layout = struct {
     buffers: []const BufferSpec,
     null_layout: NullLayout = .bitmap,
     has_dictionary: bool = false,
+    variadic_buffers: bool = false,
 };
 
 const no_buffers = [_]BufferSpec{};
@@ -73,6 +74,10 @@ const large_binary_buffers = [_]BufferSpec{
     .{ .kind = .offsets, .byte_width = 8 },
     .{ .kind = .values },
 };
+const binary_view_buffers = [_]BufferSpec{
+    .{ .kind = .validity },
+    .{ .kind = .values, .byte_width = 16 },
+};
 const list_buffers = [_]BufferSpec{
     .{ .kind = .validity },
     .{ .kind = .offsets, .byte_width = 4 },
@@ -103,6 +108,7 @@ pub fn layout(ty: anytype) Layout {
         .fixed_size_binary => .{ .buffers = &fixed_size_binary_buffers },
         .binary, .utf8 => .{ .buffers = &binary_buffers },
         .large_binary, .large_utf8 => .{ .buffers = &large_binary_buffers },
+        .binary_view, .utf8_view => .{ .buffers = &binary_view_buffers, .variadic_buffers = true },
         .list, .map => .{ .buffers = &list_buffers },
         .large_list => .{ .buffers = &large_list_buffers },
         .fixed_size_list, .struct_ => .{ .buffers = &nested_validity_buffers },
@@ -134,6 +140,8 @@ test "layout describes buffers" {
     try std.testing.expectEqual(@as(usize, 2), (datatype.DataType{ .fixed_size_binary = .{ .byte_width = 16 } }).layout().buffers.len);
     try std.testing.expectEqual(@as(usize, 3), binary_ty.layout().buffers.len);
     try std.testing.expectEqual(BufferKind.offsets, binary_ty.layout().buffers[1].kind);
+    try std.testing.expectEqual(@as(usize, 2), (@as(datatype.DataType, .binary_view)).layout().buffers.len);
+    try std.testing.expect((@as(datatype.DataType, .binary_view)).layout().variadic_buffers);
     try std.testing.expectEqual(BufferKind.type_ids, (datatype.DataType{ .sparse_union = .{ .fields = &.{}, .type_ids = &.{} } }).layout().buffers[0].kind);
     try std.testing.expectEqual(NullLayout.none, (datatype.DataType{ .dense_union = .{ .fields = &.{}, .type_ids = &.{} } }).layout().null_layout);
 }

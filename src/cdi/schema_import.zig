@@ -126,6 +126,8 @@ fn importFormatType(
     if (std.mem.eql(u8, format, "u")) return noChildType(schema, .utf8);
     if (std.mem.eql(u8, format, "Z")) return noChildType(schema, .large_binary);
     if (std.mem.eql(u8, format, "U")) return noChildType(schema, .large_utf8);
+    if (std.mem.eql(u8, format, "vz")) return noChildType(schema, .binary_view);
+    if (std.mem.eql(u8, format, "vu")) return noChildType(schema, .utf8_view);
     if (std.mem.startsWith(u8, format, "w:")) return try importFixedSizeBinaryType(schema, format[2..]);
     if (std.mem.startsWith(u8, format, "d:")) return try importDecimalType(schema, format[2..]);
     if (format.len == 0) return error.InvalidFormat;

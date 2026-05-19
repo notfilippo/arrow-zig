@@ -141,6 +141,35 @@ test "importArray imports exported primitive array" {
     try std.testing.expectEqual(@as(usize, 1), source.refCount());
 }
 
+test "importArray imports exported binary view array" {
+    const allocator = std.testing.allocator;
+    var b = builder.BinaryViewBuilder.init(allocator);
+    defer b.deinit();
+    try b.append("tiny");
+    try b.append("0123456789abcdef");
+    try b.appendNull();
+
+    const source = try b.finish();
+    defer source.deinit();
+
+    var exported: ArrowArray = undefined;
+    try exportArray(allocator, source, &exported);
+    try std.testing.expectEqual(@as(i64, 4), exported.n_buffers);
+    try std.testing.expect(exported.buffers.?[1] != null);
+    try std.testing.expect(exported.buffers.?[2] != null);
+    try std.testing.expect(exported.buffers.?[3] != null);
+
+    const imported = try importArray(allocator, source.type, &exported);
+    defer imported.deinit();
+    try std.testing.expect(arrayIsReleased(&exported));
+    try imported.validate();
+
+    const view = try array.BinaryViewArray.fromData(imported);
+    try std.testing.expectEqualStrings("tiny", view.valueBytes(0));
+    try std.testing.expectEqualStrings("0123456789abcdef", view.value(1));
+    try std.testing.expect(view.view.isNull(2));
+}
+
 test "importArray imports exported list array" {
     const allocator = std.testing.allocator;
     var b = builder.ListBuilder(builder.NumericBuilder(i32)).init(allocator);

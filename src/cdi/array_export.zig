@@ -10,6 +10,7 @@ const array_data = @import("../array/data.zig");
 const buffer = @import("../buffer.zig");
 const checked = @import("../checked.zig");
 const cdi_types = @import("types.zig");
+const datatype = @import("../datatype.zig");
 const schema_export = @import("schema_export.zig");
 
 const ArrayData = array.ArrayData;
@@ -24,14 +25,28 @@ pub fn exportArray(allocator: Allocator, data: *ArrayData, out: *ArrowArray) Err
     const length = try usizeToI64(data.len);
     const null_count: i64 = if (data.null_count) |nc| try usizeToI64(nc) else -1;
     const offset = try usizeToI64(data.offset);
-    const n_buffers = try usizeToI64(data.buffers.len);
+    const exports_binary_view = isBinaryViewLike(data.type);
+    const exported_buffer_count = if (exports_binary_view) try checked.add(data.buffers.len, 1) else data.buffers.len;
+    const n_buffers = try usizeToI64(exported_buffer_count);
     const n_children = try usizeToI64(data.children.len);
 
-    const buffers = try allocator.alloc(?*const anyopaque, data.buffers.len);
+    const buffers = try allocator.alloc(?*const anyopaque, exported_buffer_count);
     errdefer allocator.free(buffers);
 
     for (data.buffers, 0..) |buf, i| {
         buffers[i] = if (buf) |b| bufferPointer(b) else null;
+    }
+
+    var buffer_sizes: ?[]i64 = null;
+    errdefer if (buffer_sizes) |sizes| allocator.free(sizes);
+    if (exports_binary_view) {
+        const data_buffer_count = data.buffers.len - 2;
+        const sizes = try allocator.alloc(i64, data_buffer_count);
+        for (data.buffers[2..], 0..) |buf, i| {
+            sizes[i] = if (buf) |b| try usizeToI64(b.size) else 0;
+        }
+        buffers[data.buffers.len] = if (sizes.len == 0) null else @ptrCast(sizes.ptr);
+        buffer_sizes = sizes;
     }
 
     const children_storage = try allocator.alloc(ArrowArray, data.children.len);
@@ -68,6 +83,7 @@ pub fn exportArray(allocator: Allocator, data: *ArrayData, out: *ArrowArray) Err
         .allocator = allocator,
         .data = data.retain(),
         .buffers = buffers,
+        .buffer_sizes = buffer_sizes,
         .children_storage = children_storage,
         .child_ptrs = child_ptrs,
         .dictionary = dictionary,
@@ -114,6 +130,7 @@ const ArrayPrivate = struct {
     allocator: Allocator,
     data: *ArrayData,
     buffers: []?*const anyopaque,
+    buffer_sizes: ?[]i64,
     children_storage: []ArrowArray,
     child_ptrs: []*ArrowArray,
     dictionary: ?*ArrowArray,
@@ -129,6 +146,7 @@ fn releaseArray(arr: *ArrowArray) callconv(.c) void {
         allocator.destroy(dict);
     }
     private.data.deinit();
+    if (private.buffer_sizes) |sizes| allocator.free(sizes);
     allocator.free(private.buffers);
     allocator.free(private.child_ptrs);
     allocator.free(private.children_storage);
@@ -144,6 +162,10 @@ fn releaseArrays(arrays: []ArrowArray) void {
 fn bufferPointer(buf: *const Buffer) ?*const anyopaque {
     if (buf.size == 0) return null;
     return @ptrCast(buf.data);
+}
+
+fn isBinaryViewLike(ty: datatype.DataType) bool {
+    return ty == .binary_view or ty == .utf8_view;
 }
 
 fn usizeToI64(value: usize) Error!i64 {

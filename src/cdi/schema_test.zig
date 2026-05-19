@@ -124,6 +124,8 @@ test "importType round trips scalar schemas" {
         .utf8,
         .large_binary,
         .large_utf8,
+        .binary_view,
+        .utf8_view,
         .{ .fixed_size_binary = .{ .byte_width = 16 } },
         .{ .decimal128 = .{ .precision = 12, .scale = 5 } },
         .{ .decimal128 = .{ .precision = 5, .scale = -3 } },

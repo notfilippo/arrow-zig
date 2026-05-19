@@ -43,9 +43,13 @@ pub const Error = error{
     DictionaryIndexOutOfBounds,
     DictionaryTypeMismatch,
     InvalidDictionaryIndexType,
+    NegativeViewLength,
     InvalidRunEndValue,
     RunEndNotIncreasing,
     RunEndOutOfBounds,
+    ViewBufferIndexOutOfBounds,
+    ViewBufferTooSmall,
+    ViewOffsetOutOfBounds,
     NonNullableNulls,
     UnexpectedChild,
     UnexpectedDictionary,
@@ -59,7 +63,7 @@ pub fn validate(data: anytype) (Error || checked.Error || datatype.ValidationErr
 
 fn validateData(data: anytype, ty: datatype.DataType, total: usize) (Error || checked.Error || datatype.ValidationError)!void {
     const layout = ty.layout();
-    try expectBufferCount(data, layout.buffers.len);
+    try expectBufferCount(data, layout.buffers.len, layout.variadic_buffers);
     try validateNulls(data, total, layout.null_layout);
     try validateChildCount(data, ty.childCount());
     if (layout.has_dictionary) {
@@ -74,6 +78,7 @@ fn validateData(data: anytype, ty: datatype.DataType, total: usize) (Error || ch
         },
         .binary, .utf8 => try validateBinaryLike(data, total, i32),
         .large_binary, .large_utf8 => try validateBinaryLike(data, total, i64),
+        .binary_view, .utf8_view => try validateBinaryViewLike(data, total),
         .list => |meta| try validateListLike(data, total, meta.child, i32),
         .large_list => |meta| try validateListLike(data, total, meta.child, i64),
         .fixed_size_list => |meta| try validateFixedSizeList(data, total, meta),
@@ -93,8 +98,12 @@ fn validateChildCount(data: anytype, expected: usize) Error!void {
     return error.InvalidChildCount;
 }
 
-fn expectBufferCount(data: anytype, expected: usize) Error!void {
-    if (data.buffers.len != expected) return error.InvalidBufferCount;
+fn expectBufferCount(data: anytype, expected: usize, variadic: bool) Error!void {
+    if (variadic) {
+        if (data.buffers.len < expected) return error.InvalidBufferCount;
+    } else if (data.buffers.len != expected) {
+        return error.InvalidBufferCount;
+    }
 }
 
 fn validateNulls(data: anytype, total: usize, layout: datatype.NullLayout) (Error || checked.Error)!void {
@@ -142,6 +151,47 @@ fn validateBinaryLike(data: anytype, total: usize, comptime Offset: type) (Error
     const values = data.buffers[2] orelse return error.MissingValuesBuffer;
     const offsets = try validateOffsetsBuffer(data, total, Offset);
     if (offsets) |offset_buf| try validateOffsets(data, offset_buf, values.size, Offset);
+}
+
+fn validateBinaryViewLike(data: anytype, total: usize) (Error || checked.Error)!void {
+    const views = data.buffers[1] orelse {
+        if (data.len == 0) return;
+        return error.MissingValuesBuffer;
+    };
+    const needed = if (data.len == 0) 0 else try checked.mul(total, 16);
+    if (views.size < needed) return error.ValuesBufferTooSmall;
+
+    const validity = if (data.buffers[0]) |buf| buf.dataSlice() else null;
+    for (0..data.len) |i| {
+        const slot = data.offset + i;
+        if (validity) |bits| {
+            if (!bitmap.getBit(bits, slot)) continue;
+        }
+        try validateBinaryView(data, views, slot);
+    }
+}
+
+fn validateBinaryView(data: anytype, views: *const Buffer, slot: usize) (Error || checked.Error)!void {
+    const view_start = try checked.mul(slot, 16);
+    const len = readViewI32(views, view_start);
+    if (len < 0) return error.NegativeViewLength;
+    if (len <= 12) return;
+
+    const buffer_index = readViewI32(views, view_start + 8);
+    if (buffer_index < 0) return error.ViewBufferIndexOutOfBounds;
+    const data_index = try checked.add(2, @as(usize, @intCast(buffer_index)));
+    if (data_index >= data.buffers.len) return error.ViewBufferIndexOutOfBounds;
+
+    const buf = data.buffers[data_index] orelse return error.MissingValuesBuffer;
+    const view_offset = readViewI32(views, view_start + 12);
+    if (view_offset < 0) return error.ViewOffsetOutOfBounds;
+    const start: usize = @intCast(view_offset);
+    const end = try checked.add(start, @as(usize, @intCast(len)));
+    if (end > buf.size) return error.ViewBufferTooSmall;
+}
+
+fn readViewI32(views: *const Buffer, byte_offset: usize) i32 {
+    return std.mem.readInt(i32, views.dataSlice()[byte_offset..][0..4], .little);
 }
 
 fn validateListLike(data: anytype, total: usize, child_field: *const datatype.Field, comptime Offset: type) (Error || checked.Error || datatype.ValidationError)!void {
