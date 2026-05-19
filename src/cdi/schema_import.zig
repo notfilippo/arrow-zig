@@ -185,6 +185,7 @@ fn importNestedType(
     if (std.mem.eql(u8, format, "+s")) return .{ .struct_ = .{ .fields = try importSchemaFields(allocator, schema) } };
     if (std.mem.startsWith(u8, format, "+us:")) return try importUnionType(allocator, schema, format[4..], false);
     if (std.mem.startsWith(u8, format, "+ud:")) return try importUnionType(allocator, schema, format[4..], true);
+    if (std.mem.eql(u8, format, "+r")) return try importRunEndEncodedType(allocator, schema);
     return error.InvalidFormat;
 }
 
@@ -301,6 +302,21 @@ fn importUnionType(
         .{ .dense_union = .{ .fields = fields, .type_ids = type_ids } }
     else
         .{ .sparse_union = .{ .fields = fields, .type_ids = type_ids } };
+}
+
+fn importRunEndEncodedType(
+    allocator: Allocator,
+    schema: *const ArrowSchema,
+) Error!datatype.DataType {
+    try expectSchemaChildCount(schema, 2);
+    const run_ends = try importFieldNode(allocator, schema.children.?[0]);
+    errdefer run_ends.deinit();
+    const values = try importFieldNode(allocator, schema.children.?[1]);
+    errdefer values.deinit();
+    return .{ .run_end_encoded = .{
+        .run_ends = run_ends,
+        .values = values,
+    } };
 }
 
 fn expectSchemaChildCount(schema: *const ArrowSchema, expected: usize) Error!void {

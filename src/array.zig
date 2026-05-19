@@ -18,6 +18,7 @@ const map_array = @import("array_map.zig");
 const dictionary = @import("array_dictionary.zig");
 const nested = @import("array_nested.zig");
 const union_array = @import("array_union.zig");
+const run_end = @import("array_run_end.zig");
 
 /// Reference counted array storage.
 pub const ArrayData = array_data.ArrayData;
@@ -82,6 +83,7 @@ pub const MapArray = map_array.MapArray;
 pub const StructArray = nested.StructArray;
 pub const SparseUnionArray = union_array.SparseUnionArray;
 pub const DenseUnionArray = union_array.DenseUnionArray;
+pub const RunEndEncodedArray = run_end.RunEndEncodedArray;
 
 pub const dataTypeAcceptsZigType = base.dataTypeAcceptsZigType;
 pub const FixedWidthArray = prim.FixedWidthArray;

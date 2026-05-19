@@ -108,6 +108,7 @@ pub fn layout(ty: anytype) Layout {
         .fixed_size_list, .struct_ => .{ .buffers = &nested_validity_buffers },
         .sparse_union => .{ .buffers = &sparse_union_buffers, .null_layout = .none },
         .dense_union => .{ .buffers = &dense_union_buffers, .null_layout = .none },
+        .run_end_encoded => .{ .buffers = &no_buffers, .null_layout = .none },
         .dictionary => |meta| blk: {
             var child_layout = layout(meta.index_type.*);
             child_layout.has_dictionary = true;

@@ -307,6 +307,32 @@ test "importArray imports exported dense union array" {
     try std.testing.expectEqual(@as(i32, 30), imported_ints.value(1));
 }
 
+test "importArray imports exported run end encoded array" {
+    const allocator = std.testing.allocator;
+
+    var b = builder.RunEndEncodedBuilder(i32, builder.NumericBuilder(i32)).init(allocator);
+    defer b.deinit();
+    try b.values().append(10);
+    try b.appendRun(2);
+    try b.values().append(20);
+    try b.appendRun(5);
+    const source = try b.finish();
+    defer source.deinit();
+
+    var exported: ArrowArray = undefined;
+    try exportArray(allocator, source, &exported);
+
+    const imported = try importArray(allocator, source.type, &exported);
+    defer imported.deinit();
+    try imported.validate();
+
+    const view = try array.RunEndEncodedArray(i32).fromData(imported);
+    try std.testing.expectEqual(@as(usize, 5), view.len);
+    try std.testing.expectEqual(@as(usize, 2), view.runCount());
+    try std.testing.expectEqual(@as(i32, 5), view.runEnd(1));
+    try std.testing.expectEqual(@as(usize, 1), view.runIndex(3));
+}
+
 test "importArray imports exported null array" {
     const allocator = std.testing.allocator;
     const source = try ArrayData.initOwned(allocator, .null_, 4, 0, 4, &.{}, &.{}, null);

@@ -217,6 +217,7 @@ fn formatForType(allocator: Allocator, ty: datatype.DataType) Error![:0]u8 {
         .struct_ => allocator.dupeZ(u8, "+s"),
         .sparse_union => |meta| unionFormat(allocator, "s", meta.type_ids),
         .dense_union => |meta| unionFormat(allocator, "d", meta.type_ids),
+        .run_end_encoded => allocator.dupeZ(u8, "+r"),
         .dictionary => |meta| formatForType(allocator, meta.index_type.*),
     };
 }

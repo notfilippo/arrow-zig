@@ -42,6 +42,7 @@ const map_builder = @import("builder_map.zig");
 const dictionary = @import("builder_dictionary.zig");
 const structs = @import("builder_struct.zig");
 const unions = @import("builder_union.zig");
+const run_end = @import("builder_run_end.zig");
 const base = @import("builder_base.zig");
 
 pub const kMinBuilderCapacity = base.kMinBuilderCapacity;
@@ -82,6 +83,8 @@ pub const StructFieldOptions = structs.FieldOptions;
 pub const StructBuilderError = structs.StructBuilderError;
 pub const UnionFieldOptions = unions.FieldOptions;
 pub const UnionBuilderError = unions.UnionBuilderError;
+pub const RunEndEncodedBuilder = run_end.RunEndEncodedBuilder;
+pub const RunEndEncodedBuilderError = run_end.RunEndEncodedBuilderError;
 
 pub fn DictionaryBuilder(comptime Index: type) type {
     return dictionary.DictionaryBuilder(Index);

@@ -48,6 +48,7 @@ pub const TypeId = enum(u8) {
     struct_,
     sparse_union,
     dense_union,
+    run_end_encoded,
     dictionary,
 };
 
@@ -175,6 +176,11 @@ pub const MapMeta = struct {
     keys_sorted: bool = false,
 };
 
+pub const RunEndEncodedMeta = struct {
+    run_ends: *const Field,
+    values: *const Field,
+};
+
 pub const StructMeta = struct {
     fields: []const *const Field,
 };
@@ -203,6 +209,8 @@ pub const ValidationError = error{
     NullableMapEntries,
     NullableMapKey,
     InvalidDecimalPrecision,
+    InvalidRunEndType,
+    NullableRunEnds,
 };
 
 pub fn cloneOwned(allocator: Allocator, ty: DataType) Allocator.Error!DataType {
@@ -224,6 +232,10 @@ pub fn cloneOwned(allocator: Allocator, ty: DataType) Allocator.Error!DataType {
         .struct_ => |meta| .{ .struct_ = .{ .fields = try retainFieldSlice(allocator, meta.fields) } },
         .sparse_union => |meta| .{ .sparse_union = try cloneUnionMeta(allocator, meta) },
         .dense_union => |meta| .{ .dense_union = try cloneUnionMeta(allocator, meta) },
+        .run_end_encoded => |meta| .{ .run_end_encoded = .{
+            .run_ends = meta.run_ends.retain(),
+            .values = meta.values.retain(),
+        } },
         .dictionary => |meta| .{ .dictionary = try cloneDictionaryMeta(allocator, meta) },
         else => ty,
     };
@@ -242,6 +254,10 @@ pub fn deinitOwned(allocator: Allocator, ty: *DataType) void {
         },
         .sparse_union => |meta| deinitUnionMeta(allocator, meta),
         .dense_union => |meta| deinitUnionMeta(allocator, meta),
+        .run_end_encoded => |meta| {
+            meta.run_ends.deinit();
+            meta.values.deinit();
+        },
         .dictionary => |meta| {
             deinitTypePtr(allocator, meta.index_type);
             deinitTypePtr(allocator, meta.value_type);
@@ -309,6 +325,7 @@ pub const DataType = union(TypeId) {
     struct_: StructMeta,
     sparse_union: UnionMeta,
     dense_union: UnionMeta,
+    run_end_encoded: RunEndEncodedMeta,
     dictionary: DictionaryMeta,
 
     /// Return the TypeId tag without the payload.
@@ -328,7 +345,7 @@ pub const DataType = union(TypeId) {
             .decimal128, .month_day_nano_interval => 128,
             .decimal256 => 256,
             .fixed_size_binary => |meta| if (meta.byte_width > std.math.maxInt(u16) / 8) 0 else @intCast(meta.byte_width * 8),
-            .binary, .utf8, .large_binary, .large_utf8, .list, .large_list, .fixed_size_list, .map, .struct_, .sparse_union, .dense_union => 0,
+            .binary, .utf8, .large_binary, .large_utf8, .list, .large_list, .fixed_size_list, .map, .struct_, .sparse_union, .dense_union, .run_end_encoded => 0,
             .dictionary => |meta| meta.index_type.bitWidth(),
         };
     }
@@ -372,6 +389,7 @@ pub const DataType = union(TypeId) {
             .struct_ => "struct",
             .sparse_union => "sparse_union",
             .dense_union => "dense_union",
+            .run_end_encoded => "run_end_encoded",
             .dictionary => "dictionary",
         };
     }
@@ -397,6 +415,7 @@ pub const DataType = union(TypeId) {
             },
             .sparse_union => |meta| try validateUnionMeta(meta),
             .dense_union => |meta| try validateUnionMeta(meta),
+            .run_end_encoded => |meta| try validateRunEndEncodedMeta(meta),
             .dictionary => |meta| {
                 try meta.index_type.validate();
                 try meta.value_type.validate();
@@ -420,6 +439,7 @@ pub const DataType = union(TypeId) {
             .map => 1,
             .struct_ => |meta| meta.fields.len,
             .sparse_union, .dense_union => |meta| meta.fields.len,
+            .run_end_encoded => 2,
             else => 0,
         };
     }
@@ -433,6 +453,11 @@ pub const DataType = union(TypeId) {
             .struct_ => |meta| if (index < meta.fields.len) meta.fields[index] else null,
             .sparse_union => |meta| if (index < meta.fields.len) meta.fields[index] else null,
             .dense_union => |meta| if (index < meta.fields.len) meta.fields[index] else null,
+            .run_end_encoded => |meta| switch (index) {
+                0 => meta.run_ends,
+                1 => meta.values,
+                else => null,
+            },
             else => null,
         };
     }
@@ -462,6 +487,8 @@ pub const DataType = union(TypeId) {
             .struct_ => fieldsEqual(a.struct_.fields, b.struct_.fields),
             .sparse_union => unionEqual(a.sparse_union, b.sparse_union),
             .dense_union => unionEqual(a.dense_union, b.dense_union),
+            .run_end_encoded => Field.equals(a.run_end_encoded.run_ends, b.run_end_encoded.run_ends) and
+                Field.equals(a.run_end_encoded.values, b.run_end_encoded.values),
             .dictionary => DataType.equals(a.dictionary.index_type.*, b.dictionary.index_type.*) and
                 DataType.equals(a.dictionary.value_type.*, b.dictionary.value_type.*) and
                 a.dictionary.ordered == b.dictionary.ordered,
@@ -551,6 +578,16 @@ fn validateMapMeta(meta: MapMeta) ValidationError!void {
     if (fields.len != 2) return error.InvalidMapEntries;
     if (fields[0].nullable) return error.NullableMapKey;
     for (fields) |field| try field.type.validate();
+}
+
+fn validateRunEndEncodedMeta(meta: RunEndEncodedMeta) ValidationError!void {
+    if (meta.run_ends.nullable) return error.NullableRunEnds;
+    switch (meta.run_ends.type.*) {
+        .int16, .int32, .int64 => {},
+        else => return error.InvalidRunEndType,
+    }
+    try meta.run_ends.type.validate();
+    try meta.values.type.validate();
 }
 
 fn validateDecimalMeta(meta: DecimalMeta, max_precision: u8) ValidationError!void {
@@ -666,6 +703,21 @@ test "DataType.validate" {
     try DataType.validate(.{ .decimal128 = .{ .precision = 38, .scale = -3 } });
     try std.testing.expectError(error.InvalidDecimalPrecision, DataType.validate(.{ .decimal128 = .{ .precision = 39, .scale = 0 } }));
     try std.testing.expectError(error.InvalidDecimalPrecision, DataType.validate(.{ .decimal256 = .{ .precision = 0, .scale = 0 } }));
+
+    const run_end_ty: DataType = .int32;
+    const bad_run_end_ty: DataType = .uint32;
+    const value_ty_for_ree: DataType = .utf8;
+    const run_ends = try Field.create(allocator, "run_ends", &run_end_ty, false, &.{});
+    defer run_ends.deinit();
+    const nullable_run_ends = try Field.create(allocator, "run_ends", &run_end_ty, true, &.{});
+    defer nullable_run_ends.deinit();
+    const bad_run_ends = try Field.create(allocator, "run_ends", &bad_run_end_ty, false, &.{});
+    defer bad_run_ends.deinit();
+    const ree_values = try Field.create(allocator, "values", &value_ty_for_ree, true, &.{});
+    defer ree_values.deinit();
+    try DataType.validate(.{ .run_end_encoded = .{ .run_ends = run_ends, .values = ree_values } });
+    try std.testing.expectError(error.NullableRunEnds, DataType.validate(.{ .run_end_encoded = .{ .run_ends = nullable_run_ends, .values = ree_values } }));
+    try std.testing.expectError(error.InvalidRunEndType, DataType.validate(.{ .run_end_encoded = .{ .run_ends = bad_run_ends, .values = ree_values } }));
 
     const key_field = try Field.create(allocator, "key", &value_ty, false, &.{});
     defer key_field.deinit();

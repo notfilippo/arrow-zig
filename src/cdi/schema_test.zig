@@ -311,6 +311,17 @@ test "importType round trips nested and dictionary schemas" {
         .ordered = true,
     } };
     try expectImportTypeRoundTrip(allocator, dict_ty);
+
+    const run_end_ty: datatype.DataType = .int32;
+    const run_ends_field = try datatype.Field.create(allocator, "run_ends", &run_end_ty, false, &.{});
+    defer run_ends_field.deinit();
+    const values_field = try datatype.Field.create(allocator, "values", &struct_ty, true, &.{});
+    defer values_field.deinit();
+    const ree_ty = datatype.DataType{ .run_end_encoded = .{
+        .run_ends = run_ends_field,
+        .values = values_field,
+    } };
+    try expectImportTypeRoundTrip(allocator, ree_ty);
 }
 
 test "importType rejects invalid schemas" {

@@ -38,9 +38,14 @@ pub const Error = error{
     UnionOffsetNotMonotonic,
     ChildTypeMismatch,
     ChildLengthTooSmall,
+    ChildLengthMismatch,
+    ChildOffsetMismatch,
     DictionaryIndexOutOfBounds,
     DictionaryTypeMismatch,
     InvalidDictionaryIndexType,
+    InvalidRunEndValue,
+    RunEndNotIncreasing,
+    RunEndOutOfBounds,
     NonNullableNulls,
     UnexpectedChild,
     UnexpectedDictionary,
@@ -76,6 +81,7 @@ fn validateData(data: anytype, ty: datatype.DataType, total: usize) (Error || ch
         .struct_ => |meta| try validateStruct(data, total, meta),
         .sparse_union => |meta| try validateUnion(data, total, meta, false),
         .dense_union => |meta| try validateUnion(data, total, meta, true),
+        .run_end_encoded => |meta| try validateRunEndEncoded(data, total, meta),
         .dictionary => |meta| try validateDictionary(data, total, meta),
         .null_ => {},
     }
@@ -207,6 +213,49 @@ fn validateDictionary(data: anytype, total: usize, meta: datatype.DictionaryMeta
     try dict.validate();
     if (!datatype.DataType.equals(dict.type, meta.value_type.*)) return error.DictionaryTypeMismatch;
     try validateDictionaryIndices(data, meta.index_type.*, dict.len);
+}
+
+fn validateRunEndEncoded(data: anytype, total: usize, meta: datatype.RunEndEncodedMeta) (Error || checked.Error || datatype.ValidationError)!void {
+    const run_ends = data.children[0];
+    const values = data.children[1];
+
+    try run_ends.validate();
+    try values.validate();
+    if (!datatype.DataType.equals(run_ends.type, meta.run_ends.type.*)) return error.ChildTypeMismatch;
+    if (!datatype.DataType.equals(values.type, meta.values.type.*)) return error.ChildTypeMismatch;
+    try validateNullable(meta.run_ends, run_ends);
+    try validateNullable(meta.values, values);
+    if (run_ends.len != values.len) return error.ChildLengthMismatch;
+    if (run_ends.offset != values.offset) return error.ChildOffsetMismatch;
+    if (data.len == 0) return;
+    if (run_ends.len == 0) return error.RunEndOutOfBounds;
+
+    switch (run_ends.type) {
+        .int16 => try validateRunEnds(i16, run_ends, data.offset, total),
+        .int32 => try validateRunEnds(i32, run_ends, data.offset, total),
+        .int64 => try validateRunEnds(i64, run_ends, data.offset, total),
+        else => return error.InvalidRunEndType,
+    }
+}
+
+fn validateRunEnds(comptime T: type, run_ends: anytype, logical_offset: usize, logical_total: usize) Error!void {
+    const values = run_ends.buffers[1] orelse return error.MissingValuesBuffer;
+    var previous: usize = 0;
+    var covers_offset = false;
+    for (0..run_ends.len) |i| {
+        const current = try runEndToUsize(offset_data.read(T, values, run_ends.offset + i));
+        if (current == 0) return error.InvalidRunEndValue;
+        if (current <= previous) return error.RunEndNotIncreasing;
+        if (current > logical_offset) covers_offset = true;
+        previous = current;
+    }
+    if (!covers_offset or previous < logical_total) return error.RunEndOutOfBounds;
+}
+
+fn runEndToUsize(value: anytype) Error!usize {
+    if (value < 0) return error.InvalidRunEndValue;
+    if (@as(u128, @intCast(value)) > @as(u128, std.math.maxInt(usize))) return error.InvalidRunEndValue;
+    return @intCast(value);
 }
 
 fn validateDictionaryIndices(data: anytype, index_ty: datatype.DataType, dict_len: usize) Error!void {
@@ -512,6 +561,55 @@ test "validate list and struct storage" {
     const invalid_struct = try ArrayData.initRetained(allocator, struct_ty, 6, 0, 0, &.{null}, &.{child}, null);
     defer invalid_struct.deinit();
     try std.testing.expectError(error.ChildLengthTooSmall, invalid_struct.validate());
+}
+
+test "validate run end encoded storage" {
+    const ArrayData = testArrayData();
+    const allocator = std.testing.allocator;
+    const builder = @import("builder.zig");
+
+    const run_values = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
+    errdefer run_values.deinit();
+    writeTestInt(i32, run_values, 0, 2);
+    writeTestInt(i32, run_values, 1, 5);
+    writeTestInt(i32, run_values, 2, 7);
+    run_values.freeze();
+    const run_ends = try ArrayData.initOwned(allocator, .int32, 3, 0, 0, &.{ null, run_values }, &.{}, null);
+    errdefer run_ends.deinit();
+
+    var value_builder = builder.NumericBuilder(i32).init(allocator);
+    defer value_builder.deinit();
+    try value_builder.appendSlice(&.{ 10, 20, 30 });
+    const values = try value_builder.finish();
+    errdefer values.deinit();
+
+    const run_end_ty: datatype.DataType = .int32;
+    const value_ty: datatype.DataType = .int32;
+    const run_ends_field = try datatype.Field.create(allocator, "run_ends", &run_end_ty, false, &.{});
+    defer run_ends_field.deinit();
+    const values_field = try datatype.Field.create(allocator, "values", &value_ty, true, &.{});
+    defer values_field.deinit();
+    const ty = datatype.DataType{ .run_end_encoded = .{
+        .run_ends = run_ends_field,
+        .values = values_field,
+    } };
+    const data = try ArrayData.initOwned(allocator, ty, 7, 0, 0, &.{}, &.{ run_ends, values }, null);
+    defer data.deinit();
+    try data.validate();
+
+    const bad_values = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
+    errdefer bad_values.deinit();
+    writeTestInt(i32, bad_values, 0, 2);
+    writeTestInt(i32, bad_values, 1, 2);
+    writeTestInt(i32, bad_values, 2, 7);
+    bad_values.freeze();
+    const bad_run_ends = try ArrayData.initOwned(allocator, .int32, 3, 0, 0, &.{ null, bad_values }, &.{}, null);
+    errdefer bad_run_ends.deinit();
+    const retained_values = data.children[1].retain();
+    errdefer retained_values.deinit();
+    const bad_data = try ArrayData.initOwned(allocator, ty, 7, 0, 0, &.{}, &.{ bad_run_ends, retained_values }, null);
+    defer bad_data.deinit();
+    try std.testing.expectError(error.RunEndNotIncreasing, bad_data.validate());
 }
 
 test "validate dictionary storage" {
