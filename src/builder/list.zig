@@ -23,7 +23,7 @@ pub const FieldOptions = struct {
 };
 
 pub fn ListBuilderError(comptime ChildBuilder: type) type {
-    return Allocator.Error || checked.Error || error{UnclosedListValues} || ChildBuilder.Error;
+    return Allocator.Error || checked.Error || error{ UnclosedListValues, ViewOutOfBounds } || ChildBuilder.Error;
 }
 
 pub fn VarListBuilder(comptime kind: array_list.ListKind, comptime ChildBuilder: type) type {
@@ -201,6 +201,204 @@ pub fn LargeListBuilder(comptime ChildBuilder: type) type {
     return VarListBuilder(.large_list, ChildBuilder);
 }
 
+const ListViewKind = enum {
+    list_view,
+    large_list_view,
+};
+
+fn VarListViewBuilder(comptime kind: ListViewKind, comptime ChildBuilder: type) type {
+    const Offset = switch (kind) {
+        .list_view => i32,
+        .large_list_view => i64,
+    };
+
+    return struct {
+        const Self = @This();
+        pub const Array = switch (kind) {
+            .list_view => array.ListViewArray,
+            .large_list_view => array.LargeListViewArray,
+        };
+        pub const Child = ChildBuilder;
+        pub const Error = ListBuilderError(ChildBuilder);
+
+        allocator: Allocator,
+        child: ChildBuilder,
+        offsets: ?*Buffer,
+        sizes: ?*Buffer,
+        slots: common.Slots,
+        last_child_len: usize,
+        child_name: []const u8,
+        owned_child_name: ?[]u8,
+        child_nullable: bool,
+
+        pub fn init(allocator: Allocator) Self {
+            return .{
+                .allocator = allocator,
+                .child = ChildBuilder.init(allocator),
+                .offsets = null,
+                .sizes = null,
+                .slots = common.Slots.init(),
+                .last_child_len = 0,
+                .child_name = "item",
+                .owned_child_name = null,
+                .child_nullable = true,
+            };
+        }
+
+        pub fn initField(allocator: Allocator, options: FieldOptions) Error!Self {
+            var self = init(allocator);
+            errdefer self.deinit();
+            const name = try allocator.dupe(u8, options.name);
+            self.child_name = name;
+            self.owned_child_name = name;
+            self.child_nullable = options.nullable;
+            return self;
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.child.deinit();
+            self.clearListState(true);
+        }
+
+        pub fn reset(self: *Self) void {
+            if (comptime !@hasDecl(ChildBuilder, "reset")) {
+                @compileError("ListViewBuilder.reset requires ChildBuilder.reset");
+            }
+            self.resetChild();
+            self.clearListState(false);
+        }
+
+        pub fn values(self: *Self) *ChildBuilder {
+            return &self.child;
+        }
+
+        pub fn reserve(self: *Self, additional: usize) Error!void {
+            if (additional == 0) return;
+            const new_len = try checked.add(self.slots.len, additional);
+            const capped_len = @max(new_len, common.kMinBuilderCapacity);
+            try reserveOffsetSlots(Offset, self.allocator, &self.offsets, capped_len);
+            try reserveOffsetSlots(Offset, self.allocator, &self.sizes, capped_len);
+            try self.slots.reserve(self.allocator, additional);
+        }
+
+        pub fn append(self: *Self) Error!void {
+            const child_len = self.child.length();
+            if (child_len < self.last_child_len) return error.UnclosedListValues;
+            const len = child_len - self.last_child_len;
+            try self.appendSlot(self.last_child_len, len, true);
+            self.last_child_len = child_len;
+        }
+
+        pub fn appendEmpty(self: *Self) Error!void {
+            try self.append();
+        }
+
+        pub fn appendView(self: *Self, offset: usize, len: usize) Error!void {
+            const end = try checked.add(offset, len);
+            if (end > self.child.length()) return error.ViewOutOfBounds;
+            try self.appendSlot(offset, len, true);
+            self.last_child_len = @max(self.last_child_len, end);
+        }
+
+        pub fn appendNull(self: *Self) Error!void {
+            if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
+            try self.appendSlot(self.last_child_len, 0, false);
+        }
+
+        pub fn appendNulls(self: *Self, n: usize) Error!void {
+            if (n == 0) return;
+            if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
+            try self.reserve(n);
+            for (0..n) |_| self.unsafeAppendSlot(self.last_child_len, 0, false);
+        }
+
+        pub fn appendEmptyValue(self: *Self) Error!void {
+            if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
+            try self.appendSlot(self.last_child_len, 0, true);
+        }
+
+        pub fn appendEmptyValues(self: *Self, n: usize) Error!void {
+            if (n == 0) return;
+            if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
+            try self.reserve(n);
+            for (0..n) |_| self.unsafeAppendSlot(self.last_child_len, 0, true);
+        }
+
+        pub fn length(self: Self) usize {
+            return self.slots.length();
+        }
+
+        pub fn finish(self: *Self) Error!*ArrayData {
+            if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
+
+            var consumed = false;
+            errdefer if (consumed) {
+                self.slots.len = 0;
+                self.last_child_len = 0;
+            };
+
+            const offsets_buf = try finishOffsetBuffer(Offset, self.allocator, &self.offsets);
+            consumed = true;
+            errdefer offsets_buf.deinit();
+
+            const sizes_buf = try finishOffsetBuffer(Offset, self.allocator, &self.sizes);
+            errdefer sizes_buf.deinit();
+
+            const child_data = try self.child.finish();
+            errdefer child_data.deinit();
+
+            const slots = try self.slots.finish(self.allocator);
+            errdefer if (slots.validity) |buf| buf.deinit();
+
+            const child_field = try datatype.Field.create(self.allocator, self.child_name, &child_data.type, self.child_nullable, &.{});
+            errdefer child_field.deinit();
+            const ty = dataTypeForListViewKind(kind, child_field);
+            const data = try ArrayData.initOwned(self.allocator, ty, slots.len, 0, slots.null_count, &.{ slots.validity, offsets_buf, sizes_buf }, &.{child_data}, null);
+            child_field.deinit();
+            self.last_child_len = 0;
+            return data;
+        }
+
+        fn appendSlot(self: *Self, offset: usize, len: usize, valid: bool) Error!void {
+            try self.reserve(1);
+            self.unsafeAppendSlot(offset, len, valid);
+        }
+
+        fn unsafeAppendSlot(self: *Self, offset: usize, len: usize, valid: bool) void {
+            appendOffsetSlot(Offset, self.offsets.?, offset) catch unreachable;
+            appendOffsetSlot(Offset, self.sizes.?, len) catch unreachable;
+            self.slots.unsafeAppend(valid);
+        }
+
+        fn resetChild(self: *Self) void {
+            self.child.reset();
+        }
+
+        fn clearListState(self: *Self, comptime clear_field_options: bool) void {
+            if (self.offsets) |buf| buf.deinit();
+            if (self.sizes) |buf| buf.deinit();
+            self.offsets = null;
+            self.sizes = null;
+            self.slots.deinit();
+            if (clear_field_options) {
+                if (self.owned_child_name) |name| self.allocator.free(name);
+                self.child_name = "item";
+                self.owned_child_name = null;
+                self.child_nullable = true;
+            }
+            self.last_child_len = 0;
+        }
+    };
+}
+
+pub fn ListViewBuilder(comptime ChildBuilder: type) type {
+    return VarListViewBuilder(.list_view, ChildBuilder);
+}
+
+pub fn LargeListViewBuilder(comptime ChildBuilder: type) type {
+    return VarListViewBuilder(.large_list_view, ChildBuilder);
+}
+
 pub fn FixedSizeListBuilder(comptime ChildBuilder: type) type {
     return struct {
         const Self = @This();
@@ -375,6 +573,38 @@ fn dataTypeForKind(comptime kind: array_list.ListKind, child: *const datatype.Fi
     };
 }
 
+fn dataTypeForListViewKind(comptime kind: ListViewKind, child: *const datatype.Field) datatype.DataType {
+    return switch (kind) {
+        .list_view => .{ .list_view = .{ .child = child } },
+        .large_list_view => .{ .large_list_view = .{ .child = child } },
+    };
+}
+
+fn reserveOffsetSlots(comptime Offset: type, allocator: Allocator, buffer: *?*Buffer, slots: usize) (Allocator.Error || checked.Error)!void {
+    if (slots == 0) return;
+    const buf = try ensureOffsetBuffer(allocator, buffer);
+    try buf.reserve(try checked.mul(slots, @sizeOf(Offset)));
+}
+
+fn appendOffsetSlot(comptime Offset: type, buffer: *Buffer, value: usize) checked.Error!void {
+    const index = buffer.size / @sizeOf(Offset);
+    try offset_data.write(Offset, buffer, index, value);
+    buffer.size = try checked.add(buffer.size, @sizeOf(Offset));
+}
+
+fn finishOffsetBuffer(comptime Offset: type, allocator: Allocator, buffer: *?*Buffer) (Allocator.Error || checked.Error)!*Buffer {
+    _ = Offset;
+    const buf = try ensureOffsetBuffer(allocator, buffer);
+    buffer.* = null;
+    buf.freeze();
+    return buf;
+}
+
+fn ensureOffsetBuffer(allocator: Allocator, buffer: *?*Buffer) (Allocator.Error || checked.Error)!*Buffer {
+    if (buffer.* == null) buffer.* = try Buffer.allocate(allocator, 0);
+    return buffer.*.?;
+}
+
 test "ListBuilder builds numeric child lists" {
     const allocator = std.testing.allocator;
     const builder = @import("../builder.zig");
@@ -440,6 +670,68 @@ test "LargeListBuilder uses large offsets and field options" {
     try std.testing.expectEqual(@as(usize, 2), arr.valueRange(1).len);
     try std.testing.expectEqualStrings("words", data.type.large_list.child.name);
     try std.testing.expect(!data.type.large_list.child.nullable);
+}
+
+test "ListViewBuilder builds non monotonic child views" {
+    const allocator = std.testing.allocator;
+    const builder = @import("../builder.zig");
+    var b = ListViewBuilder(builder.NumericBuilder(i32)).init(allocator);
+    defer b.deinit();
+
+    try b.values().appendSlice(&.{ 10, 20, 30, 40 });
+    try b.appendView(2, 2);
+    try b.appendView(0, 3);
+    try b.appendEmptyValue();
+    try b.appendNull();
+
+    const data = try b.finish();
+    defer data.deinit();
+    try data.validate();
+
+    const arr = try array.ListViewArray.fromData(data);
+    try std.testing.expectEqual(@as(usize, 4), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
+    try std.testing.expectEqual(@as(usize, 2), arr.valueRange(0).offset);
+    try std.testing.expectEqual(@as(usize, 2), arr.valueRange(0).len);
+    try std.testing.expectEqual(@as(usize, 0), arr.valueRange(1).offset);
+    try std.testing.expectEqual(@as(usize, 3), arr.valueRange(1).len);
+    try std.testing.expectEqual(@as(usize, 4), arr.valueRange(2).offset);
+    try std.testing.expectEqual(@as(usize, 0), arr.valueRange(2).len);
+    try std.testing.expect(arr.view.isNull(3));
+
+    const child = try array.NumericArray(i32).fromData(arr.childBaseData());
+    try std.testing.expectEqual(@as(i32, 40), child.value(3));
+}
+
+test "LargeListViewBuilder uses large offsets and field options" {
+    const allocator = std.testing.allocator;
+    const builder = @import("../builder.zig");
+    var b = try LargeListViewBuilder(builder.Utf8Builder).initField(allocator, .{ .name = "words", .nullable = false });
+    defer b.deinit();
+
+    try b.values().append("alpha");
+    try b.values().append("beta");
+    try b.appendView(1, 1);
+
+    const data = try b.finish();
+    defer data.deinit();
+    try data.validate();
+
+    const arr = try array.LargeListViewArray.fromData(data);
+    try std.testing.expectEqual(@as(usize, 1), arr.valueRange(0).offset);
+    try std.testing.expectEqual(@as(usize, 1), arr.valueRange(0).len);
+    try std.testing.expectEqualStrings("words", data.type.large_list_view.child.name);
+    try std.testing.expect(!data.type.large_list_view.child.nullable);
+}
+
+test "ListViewBuilder rejects out of bounds views" {
+    const allocator = std.testing.allocator;
+    const builder = @import("../builder.zig");
+    var b = ListViewBuilder(builder.NumericBuilder(i32)).init(allocator);
+    defer b.deinit();
+
+    try b.values().append(1);
+    try std.testing.expectError(error.ViewOutOfBounds, b.appendView(0, 2));
 }
 
 test "ListBuilder deinit supports child builders without reset" {

@@ -276,6 +276,16 @@ test "importType round trips nested and dictionary schemas" {
     const large_list_ty = datatype.DataType{ .large_list = .{ .child = large_item_field } };
     try expectImportTypeRoundTrip(allocator, large_list_ty);
 
+    const list_view_item_field = try datatype.Field.create(allocator, "view_item", &value_ty, true, &.{});
+    defer list_view_item_field.deinit();
+    const list_view_ty = datatype.DataType{ .list_view = .{ .child = list_view_item_field } };
+    try expectImportTypeRoundTrip(allocator, list_view_ty);
+
+    const large_list_view_item_field = try datatype.Field.create(allocator, "large_view_item", &value_ty, true, &.{});
+    defer large_list_view_item_field.deinit();
+    const large_list_view_ty = datatype.DataType{ .large_list_view = .{ .child = large_list_view_item_field } };
+    try expectImportTypeRoundTrip(allocator, large_list_view_ty);
+
     const slot_field = try datatype.Field.create(allocator, "slot", &value_ty, true, &.{});
     defer slot_field.deinit();
     const fixed_ty = datatype.DataType{ .fixed_size_list = .{ .child = slot_field, .len = 3 } };

@@ -45,6 +45,8 @@ pub const TypeId = enum(u8) {
     decimal256,
     list,
     large_list,
+    list_view,
+    large_list_view,
     fixed_size_list,
     map,
     struct_,
@@ -223,6 +225,8 @@ pub fn cloneOwned(allocator: Allocator, ty: DataType) Allocator.Error!DataType {
         } },
         .list => |meta| .{ .list = .{ .child = meta.child.retain() } },
         .large_list => |meta| .{ .large_list = .{ .child = meta.child.retain() } },
+        .list_view => |meta| .{ .list_view = .{ .child = meta.child.retain() } },
+        .large_list_view => |meta| .{ .large_list_view = .{ .child = meta.child.retain() } },
         .fixed_size_list => |meta| .{ .fixed_size_list = .{
             .child = meta.child.retain(),
             .len = meta.len,
@@ -248,6 +252,8 @@ pub fn deinitOwned(allocator: Allocator, ty: *DataType) void {
         .timestamp => |meta| if (meta.tz) |tz| allocator.free(tz),
         .list => |meta| meta.child.deinit(),
         .large_list => |meta| meta.child.deinit(),
+        .list_view => |meta| meta.child.deinit(),
+        .large_list_view => |meta| meta.child.deinit(),
         .fixed_size_list => |meta| meta.child.deinit(),
         .map => |meta| meta.entries.deinit(),
         .struct_ => |meta| {
@@ -324,6 +330,8 @@ pub const DataType = union(TypeId) {
     decimal256: DecimalMeta,
     list: ListMeta,
     large_list: ListMeta,
+    list_view: ListMeta,
+    large_list_view: ListMeta,
     fixed_size_list: FixedSizeListMeta,
     map: MapMeta,
     struct_: StructMeta,
@@ -349,7 +357,7 @@ pub const DataType = union(TypeId) {
             .decimal128, .month_day_nano_interval => 128,
             .decimal256 => 256,
             .fixed_size_binary => |meta| if (meta.byte_width > std.math.maxInt(u16) / 8) 0 else @intCast(meta.byte_width * 8),
-            .binary, .utf8, .large_binary, .large_utf8, .binary_view, .utf8_view, .list, .large_list, .fixed_size_list, .map, .struct_, .sparse_union, .dense_union, .run_end_encoded => 0,
+            .binary, .utf8, .large_binary, .large_utf8, .binary_view, .utf8_view, .list, .large_list, .list_view, .large_list_view, .fixed_size_list, .map, .struct_, .sparse_union, .dense_union, .run_end_encoded => 0,
             .dictionary => |meta| meta.index_type.bitWidth(),
         };
     }
@@ -390,6 +398,8 @@ pub const DataType = union(TypeId) {
             .decimal256 => "decimal256",
             .list => "list",
             .large_list => "large_list",
+            .list_view => "list_view",
+            .large_list_view => "large_list_view",
             .fixed_size_list => "fixed_size_list",
             .map => "map",
             .struct_ => "struct",
@@ -412,6 +422,8 @@ pub const DataType = union(TypeId) {
             },
             .list => |meta| try meta.child.type.validate(),
             .large_list => |meta| try meta.child.type.validate(),
+            .list_view => |meta| try meta.child.type.validate(),
+            .large_list_view => |meta| try meta.child.type.validate(),
             .fixed_size_list => |meta| try meta.child.type.validate(),
             .map => |meta| try validateMapMeta(meta),
             .decimal128 => |meta| try validateDecimalMeta(meta, 38),
@@ -440,7 +452,7 @@ pub const DataType = union(TypeId) {
 
     pub fn childCount(self: DataType) usize {
         return switch (self) {
-            .list, .large_list => 1,
+            .list, .large_list, .list_view, .large_list_view => 1,
             .fixed_size_list => 1,
             .map => 1,
             .struct_ => |meta| meta.fields.len,
@@ -454,6 +466,8 @@ pub const DataType = union(TypeId) {
         return switch (self) {
             .list => |meta| if (index == 0) meta.child else null,
             .large_list => |meta| if (index == 0) meta.child else null,
+            .list_view => |meta| if (index == 0) meta.child else null,
+            .large_list_view => |meta| if (index == 0) meta.child else null,
             .fixed_size_list => |meta| if (index == 0) meta.child else null,
             .map => |meta| if (index == 0) meta.entries else null,
             .struct_ => |meta| if (index < meta.fields.len) meta.fields[index] else null,
@@ -486,6 +500,8 @@ pub const DataType = union(TypeId) {
             .decimal256 => decimalEqual(a.decimal256, b.decimal256),
             .list => Field.equals(a.list.child, b.list.child),
             .large_list => Field.equals(a.large_list.child, b.large_list.child),
+            .list_view => Field.equals(a.list_view.child, b.list_view.child),
+            .large_list_view => Field.equals(a.large_list_view.child, b.large_list_view.child),
             .fixed_size_list => a.fixed_size_list.len == b.fixed_size_list.len and
                 Field.equals(a.fixed_size_list.child, b.fixed_size_list.child),
             .map => Field.equals(a.map.entries, b.map.entries) and

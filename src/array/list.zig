@@ -21,6 +21,11 @@ pub const ListKind = enum {
     large_list,
 };
 
+const ListViewKind = enum {
+    list_view,
+    large_list_view,
+};
+
 fn offsetTypeFor(comptime kind: ListKind) type {
     return switch (kind) {
         .list => i32,
@@ -28,10 +33,24 @@ fn offsetTypeFor(comptime kind: ListKind) type {
     };
 }
 
+fn viewOffsetTypeFor(comptime kind: ListViewKind) type {
+    return switch (kind) {
+        .list_view => i32,
+        .large_list_view => i64,
+    };
+}
+
 fn dataTypeMatches(comptime kind: ListKind, ty: datatype.DataType) bool {
     return switch (kind) {
         .list => ty.id() == .list,
         .large_list => ty.id() == .large_list,
+    };
+}
+
+fn viewDataTypeMatches(comptime kind: ListViewKind, ty: datatype.DataType) bool {
+    return switch (kind) {
+        .list_view => ty.id() == .list_view,
+        .large_list_view => ty.id() == .large_list_view,
     };
 }
 
@@ -70,6 +89,45 @@ pub fn VarListArray(comptime kind: ListKind) type {
 
 pub const ListArray = VarListArray(.list);
 pub const LargeListArray = VarListArray(.large_list);
+
+fn VarListViewArray(comptime kind: ListViewKind) type {
+    const Offset = viewOffsetTypeFor(kind);
+
+    return struct {
+        const Self = @This();
+
+        view: common.ValidityView(.bitmap),
+
+        pub fn fromData(data: *const ArrayData) common.ViewError!Self {
+            if (!viewDataTypeMatches(kind, data.type)) return error.TypeMismatch;
+            if (data.buffers.len != 3 or data.children.len != 1) return error.InvalidBufferLayout;
+            if (data.len > 0 and (data.buffers[1] == null or data.buffers[2] == null)) return error.InvalidBufferLayout;
+            return .{ .view = common.ValidityView(.bitmap).init(data) };
+        }
+
+        pub fn childBaseData(self: Self) *const ArrayData {
+            return self.view.base.data.children[0];
+        }
+
+        pub fn valueRange(self: Self, i: usize) ValueRange {
+            const slot = self.view.base.offset + i;
+            const offsets = self.view.base.data.buffers[1].?;
+            const sizes = self.view.base.data.buffers[2].?;
+            return .{
+                .offset = @intCast(offset_data.read(Offset, offsets, slot)),
+                .len = @intCast(offset_data.read(Offset, sizes, slot)),
+            };
+        }
+
+        pub fn valueOwned(self: Self, i: usize) array_data.DataSliceError!*ArrayData {
+            const range = self.valueRange(i);
+            return self.view.base.data.children[0].slice(range.offset, range.len);
+        }
+    };
+}
+
+pub const ListViewArray = VarListViewArray(.list_view);
+pub const LargeListViewArray = VarListViewArray(.large_list_view);
 
 pub const FixedSizeListArray = struct {
     view: common.ValidityView(.bitmap),
@@ -182,6 +240,87 @@ test "LargeListArray uses large offsets" {
     try std.testing.expectEqual(@as(usize, 1), arr.valueRange(1).offset);
     try std.testing.expectEqual(@as(usize, 1), arr.valueRange(1).len);
     try std.testing.expectEqual(.large_list, arr.view.base.data.type.id());
+}
+
+test "ListViewArray value ranges can be non monotonic" {
+    const allocator = std.testing.allocator;
+    const child_values = try Buffer.allocate(allocator, 5 * @sizeOf(i32));
+    errdefer child_values.deinit();
+    for (0..5) |i| try offset_data.write(i32, child_values, i, i + 1);
+    child_values.freeze();
+    const child = try ArrayData.initOwned(allocator, .int32, 5, 0, 0, &.{ null, child_values }, &.{}, null);
+    defer child.deinit();
+
+    const offsets = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
+    errdefer offsets.deinit();
+    try offset_data.write(i32, offsets, 0, 2);
+    try offset_data.write(i32, offsets, 1, 0);
+    try offset_data.write(i32, offsets, 2, 4);
+    offsets.freeze();
+    defer offsets.deinit();
+
+    const sizes = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
+    errdefer sizes.deinit();
+    try offset_data.write(i32, sizes, 0, 2);
+    try offset_data.write(i32, sizes, 1, 3);
+    try offset_data.write(i32, sizes, 2, 1);
+    sizes.freeze();
+    defer sizes.deinit();
+
+    const value_ty: datatype.DataType = .int32;
+    const item_field = try datatype.Field.create(allocator, "item", &value_ty, true, &.{});
+    defer item_field.deinit();
+    const list_ty = datatype.DataType{ .list_view = .{ .child = item_field } };
+    const data = try ArrayData.initRetained(allocator, list_ty, 3, 0, 0, &.{ null, offsets, sizes }, &.{child}, null);
+    defer data.deinit();
+    try data.validate();
+
+    const arr = try ListViewArray.fromData(data);
+    try std.testing.expectEqual(@as(usize, 2), arr.valueRange(0).offset);
+    try std.testing.expectEqual(@as(usize, 2), arr.valueRange(0).len);
+    try std.testing.expectEqual(@as(usize, 0), arr.valueRange(1).offset);
+    try std.testing.expectEqual(@as(usize, 3), arr.valueRange(1).len);
+
+    const values = try arr.valueOwned(0);
+    defer values.deinit();
+    const values_arr = try primitive.NumericArray(i32).fromData(values);
+    try std.testing.expectEqual(@as(i32, 3), values_arr.value(0));
+}
+
+test "LargeListViewArray uses large offsets and sizes" {
+    const allocator = std.testing.allocator;
+    const child_values = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
+    errdefer child_values.deinit();
+    child_values.freeze();
+    const child = try ArrayData.initOwned(allocator, .int32, 2, 0, 0, &.{ null, child_values }, &.{}, null);
+    defer child.deinit();
+
+    const offsets = try Buffer.allocate(allocator, 2 * @sizeOf(i64));
+    errdefer offsets.deinit();
+    try offset_data.write(i64, offsets, 0, 1);
+    try offset_data.write(i64, offsets, 1, 0);
+    offsets.freeze();
+    defer offsets.deinit();
+
+    const sizes = try Buffer.allocate(allocator, 2 * @sizeOf(i64));
+    errdefer sizes.deinit();
+    try offset_data.write(i64, sizes, 0, 1);
+    try offset_data.write(i64, sizes, 1, 0);
+    sizes.freeze();
+    defer sizes.deinit();
+
+    const value_ty: datatype.DataType = .int32;
+    const item_field = try datatype.Field.create(allocator, "item", &value_ty, true, &.{});
+    defer item_field.deinit();
+    const list_ty = datatype.DataType{ .large_list_view = .{ .child = item_field } };
+    const data = try ArrayData.initRetained(allocator, list_ty, 2, 0, 0, &.{ null, offsets, sizes }, &.{child}, null);
+    defer data.deinit();
+    try data.validate();
+
+    const arr = try LargeListViewArray.fromData(data);
+    try std.testing.expectEqual(@as(usize, 1), arr.valueRange(0).offset);
+    try std.testing.expectEqual(@as(usize, 1), arr.valueRange(0).len);
+    try std.testing.expectEqual(.large_list_view, arr.view.base.data.type.id());
 }
 
 test "FixedSizeListArray value ranges and owned values" {

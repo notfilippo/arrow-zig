@@ -81,6 +81,8 @@ fn validateData(data: anytype, ty: datatype.DataType, total: usize) (Error || ch
         .binary_view, .utf8_view => try validateBinaryViewLike(data, total),
         .list => |meta| try validateListLike(data, total, meta.child, i32),
         .large_list => |meta| try validateListLike(data, total, meta.child, i64),
+        .list_view => |meta| try validateListViewLike(data, total, meta.child, i32),
+        .large_list_view => |meta| try validateListViewLike(data, total, meta.child, i64),
         .fixed_size_list => |meta| try validateFixedSizeList(data, total, meta),
         .map => |meta| try validateListLike(data, total, meta.entries, i32),
         .struct_ => |meta| try validateStruct(data, total, meta),
@@ -202,6 +204,32 @@ fn validateListLike(data: anytype, total: usize, child_field: *const datatype.Fi
 
     const offsets = try validateOffsetsBuffer(data, total, Offset);
     if (offsets) |offset_buf| try validateOffsets(data, offset_buf, child.len, Offset);
+}
+
+fn validateListViewLike(data: anytype, total: usize, child_field: *const datatype.Field, comptime Offset: type) (Error || checked.Error || datatype.ValidationError)!void {
+    const child = data.children[0];
+    if (!datatype.DataType.equals(child.type, child_field.type.*)) return error.ChildTypeMismatch;
+    try child.validate();
+    try validateNullable(child_field, child);
+
+    const offsets = try validateViewOffsetBuffer(data, total, Offset, 1);
+    const sizes = try validateViewOffsetBuffer(data, total, Offset, 2);
+    if (offsets == null or sizes == null) return;
+
+    const validity = if (data.buffers[0]) |buf| buf.dataSlice() else null;
+    for (0..data.len) |i| {
+        const slot = data.offset + i;
+        if (validity) |bits| {
+            if (!bitmap.getBit(bits, slot)) continue;
+        }
+        const start = try offset_data.toUsize(offset_data.read(Offset, offsets.?, slot));
+        const len = offset_data.toUsize(offset_data.read(Offset, sizes.?, slot)) catch |err| switch (err) {
+            error.NegativeOffset => return error.NegativeViewLength,
+            else => |e| return e,
+        };
+        const end = try checked.add(start, len);
+        if (end > child.len) return error.OffsetValueOutOfBounds;
+    }
 }
 
 fn validateFixedSizeList(data: anytype, total: usize, meta: datatype.FixedSizeListMeta) (Error || checked.Error || datatype.ValidationError)!void {
@@ -358,6 +386,17 @@ fn validateOffsetsBuffer(data: anytype, total: usize, comptime Offset: type) (Er
     const needed = try checked.mul(required_offsets, @sizeOf(Offset));
     if (offsets.size < needed) return error.OffsetsBufferTooSmall;
     return offsets;
+}
+
+fn validateViewOffsetBuffer(data: anytype, total: usize, comptime Offset: type, index: usize) (Error || checked.Error)!?*Buffer {
+    const buf = data.buffers[index] orelse {
+        if (data.len == 0) return null;
+        return error.MissingOffsetsBuffer;
+    };
+
+    const needed = if (data.len == 0) 0 else try checked.mul(total, @sizeOf(Offset));
+    if (buf.size < needed) return error.OffsetsBufferTooSmall;
+    return buf;
 }
 
 fn validateOffsets(data: anytype, offsets: *const Buffer, limit: usize, comptime Offset: type) Error!void {

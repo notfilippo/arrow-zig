@@ -214,6 +214,8 @@ fn formatForType(allocator: Allocator, ty: datatype.DataType) Error![:0]u8 {
         .decimal256 => |meta| std.fmt.allocPrintSentinel(allocator, "d:{d},{d},256", .{ meta.precision, meta.scale }, 0),
         .list => allocator.dupeZ(u8, "+l"),
         .large_list => allocator.dupeZ(u8, "+L"),
+        .list_view => allocator.dupeZ(u8, "+vl"),
+        .large_list_view => allocator.dupeZ(u8, "+vL"),
         .map => allocator.dupeZ(u8, "+m"),
         .fixed_size_list => |meta| std.fmt.allocPrintSentinel(allocator, "+w:{d}", .{meta.len}, 0),
         .struct_ => allocator.dupeZ(u8, "+s"),

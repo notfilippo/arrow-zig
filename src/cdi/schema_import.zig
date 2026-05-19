@@ -179,6 +179,8 @@ fn importNestedType(
 ) Error!datatype.DataType {
     if (std.mem.eql(u8, format, "+l")) return .{ .list = .{ .child = try importSingleChildField(allocator, schema) } };
     if (std.mem.eql(u8, format, "+L")) return .{ .large_list = .{ .child = try importSingleChildField(allocator, schema) } };
+    if (std.mem.eql(u8, format, "+vl")) return .{ .list_view = .{ .child = try importSingleChildField(allocator, schema) } };
+    if (std.mem.eql(u8, format, "+vL")) return .{ .large_list_view = .{ .child = try importSingleChildField(allocator, schema) } };
     if (std.mem.eql(u8, format, "+m")) return .{ .map = .{
         .entries = try importSingleChildField(allocator, schema),
         .keys_sorted = schema.flags & schema_flag_map_keys_sorted != 0,

@@ -61,6 +61,8 @@ pub const DayTimeIntervalBuilder = interval.DayTimeIntervalBuilder;
 pub const MonthDayNanoIntervalBuilder = interval.MonthDayNanoIntervalBuilder;
 pub const ListBuilder = list.ListBuilder;
 pub const LargeListBuilder = list.LargeListBuilder;
+pub const ListViewBuilder = list.ListViewBuilder;
+pub const LargeListViewBuilder = list.LargeListViewBuilder;
 pub const FixedSizeListBuilder = list.FixedSizeListBuilder;
 pub const RunEndEncodedBuilder = run_end.RunEndEncodedBuilder;
 

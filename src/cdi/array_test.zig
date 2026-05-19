@@ -198,6 +198,35 @@ test "importArray imports exported list array" {
     try std.testing.expectEqual(@as(i32, 3), child.value(2));
 }
 
+test "importArray imports exported list view array" {
+    const allocator = std.testing.allocator;
+    var b = builder.ListViewBuilder(builder.NumericBuilder(i32)).init(allocator);
+    defer b.deinit();
+    try b.values().appendSlice(&.{ 10, 20, 30, 40 });
+    try b.appendView(2, 2);
+    try b.appendView(0, 3);
+    try b.append();
+
+    const source = try b.finish();
+    defer source.deinit();
+
+    var exported: ArrowArray = undefined;
+    try exportArray(allocator, source, &exported);
+
+    const imported = try importArray(allocator, source.type, &exported);
+    defer imported.deinit();
+    try imported.validate();
+
+    const view = try array.ListViewArray.fromData(imported);
+    try std.testing.expectEqual(@as(usize, 3), view.view.base.len);
+    try std.testing.expectEqual(@as(usize, 2), view.valueRange(0).offset);
+    try std.testing.expectEqual(@as(usize, 2), view.valueRange(0).len);
+    try std.testing.expectEqual(@as(usize, 0), view.valueRange(1).offset);
+    try std.testing.expectEqual(@as(usize, 3), view.valueRange(1).len);
+    try std.testing.expectEqual(@as(usize, 4), view.valueRange(2).offset);
+    try std.testing.expectEqual(@as(usize, 0), view.valueRange(2).len);
+}
+
 test "importArray imports exported struct array" {
     const allocator = std.testing.allocator;
     var numbers = builder.NumericBuilder(i32).init(allocator);

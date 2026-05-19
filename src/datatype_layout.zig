@@ -86,6 +86,16 @@ const large_list_buffers = [_]BufferSpec{
     .{ .kind = .validity },
     .{ .kind = .offsets, .byte_width = 8 },
 };
+const list_view_buffers = [_]BufferSpec{
+    .{ .kind = .validity },
+    .{ .kind = .values, .byte_width = 4 },
+    .{ .kind = .values, .byte_width = 4 },
+};
+const large_list_view_buffers = [_]BufferSpec{
+    .{ .kind = .validity },
+    .{ .kind = .values, .byte_width = 8 },
+    .{ .kind = .values, .byte_width = 8 },
+};
 const nested_validity_buffers = [_]BufferSpec{.{ .kind = .validity }};
 const sparse_union_buffers = [_]BufferSpec{
     .{ .kind = .type_ids, .byte_width = 1 },
@@ -111,6 +121,8 @@ pub fn layout(ty: anytype) Layout {
         .binary_view, .utf8_view => .{ .buffers = &binary_view_buffers, .variadic_buffers = true },
         .list, .map => .{ .buffers = &list_buffers },
         .large_list => .{ .buffers = &large_list_buffers },
+        .list_view => .{ .buffers = &list_view_buffers },
+        .large_list_view => .{ .buffers = &large_list_view_buffers },
         .fixed_size_list, .struct_ => .{ .buffers = &nested_validity_buffers },
         .sparse_union => .{ .buffers = &sparse_union_buffers, .null_layout = .none },
         .dense_union => .{ .buffers = &dense_union_buffers, .null_layout = .none },
@@ -125,8 +137,13 @@ pub fn layout(ty: anytype) Layout {
 
 test "layout describes buffers" {
     const datatype = @import("datatype.zig");
+    const allocator = std.testing.allocator;
     const int32_ty: datatype.DataType = .int32;
     const binary_ty: datatype.DataType = .binary;
+    const item_field = try datatype.Field.create(allocator, "item", &int32_ty, true, &.{});
+    defer item_field.deinit();
+    const list_view_ty = datatype.DataType{ .list_view = .{ .child = item_field } };
+    const large_list_view_ty = datatype.DataType{ .large_list_view = .{ .child = item_field } };
 
     try std.testing.expectEqual(@as(usize, 0), (@as(datatype.DataType, .null_)).layout().buffers.len);
     try std.testing.expectEqual(@as(usize, 2), int32_ty.layout().buffers.len);
@@ -142,6 +159,8 @@ test "layout describes buffers" {
     try std.testing.expectEqual(BufferKind.offsets, binary_ty.layout().buffers[1].kind);
     try std.testing.expectEqual(@as(usize, 2), (@as(datatype.DataType, .binary_view)).layout().buffers.len);
     try std.testing.expect((@as(datatype.DataType, .binary_view)).layout().variadic_buffers);
+    try std.testing.expectEqual(@as(usize, 3), list_view_ty.layout().buffers.len);
+    try std.testing.expectEqual(@as(usize, 8), large_list_view_ty.layout().buffers[1].byte_width);
     try std.testing.expectEqual(BufferKind.type_ids, (datatype.DataType{ .sparse_union = .{ .fields = &.{}, .type_ids = &.{} } }).layout().buffers[0].kind);
     try std.testing.expectEqual(NullLayout.none, (datatype.DataType{ .dense_union = .{ .fields = &.{}, .type_ids = &.{} } }).layout().null_layout);
 }
