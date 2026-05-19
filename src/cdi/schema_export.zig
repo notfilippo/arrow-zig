@@ -210,6 +210,8 @@ fn formatForType(allocator: Allocator, ty: datatype.DataType) Error![:0]u8 {
         .binary_view => allocator.dupeZ(u8, "vz"),
         .utf8_view => allocator.dupeZ(u8, "vu"),
         .fixed_size_binary => |meta| std.fmt.allocPrintSentinel(allocator, "w:{d}", .{meta.byte_width}, 0),
+        .decimal32 => |meta| std.fmt.allocPrintSentinel(allocator, "d:{d},{d},32", .{ meta.precision, meta.scale }, 0),
+        .decimal64 => |meta| std.fmt.allocPrintSentinel(allocator, "d:{d},{d},64", .{ meta.precision, meta.scale }, 0),
         .decimal128 => |meta| std.fmt.allocPrintSentinel(allocator, "d:{d},{d}", .{ meta.precision, meta.scale }, 0),
         .decimal256 => |meta| std.fmt.allocPrintSentinel(allocator, "d:{d},{d},256", .{ meta.precision, meta.scale }, 0),
         .list => allocator.dupeZ(u8, "+l"),

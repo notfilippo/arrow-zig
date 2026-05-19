@@ -73,7 +73,7 @@ fn validateData(data: anytype, ty: datatype.DataType, total: usize) (Error || ch
     }
 
     switch (ty) {
-        .bool, .int8, .int16, .int32, .int64, .uint8, .uint16, .uint32, .uint64, .float16, .float32, .float64, .date32, .date64, .time32, .time64, .timestamp, .duration, .month_interval, .day_time_interval, .month_day_nano_interval, .decimal128, .decimal256, .fixed_size_binary => {
+        .bool, .int8, .int16, .int32, .int64, .uint8, .uint16, .uint32, .uint64, .float16, .float32, .float64, .date32, .date64, .time32, .time64, .timestamp, .duration, .month_interval, .day_time_interval, .month_day_nano_interval, .decimal32, .decimal64, .decimal128, .decimal256, .fixed_size_binary => {
             try validateFixedWidth(data, total, ty);
         },
         .binary, .utf8 => try validateBinaryLike(data, total, i32),
@@ -553,6 +553,22 @@ test "validate null and binary storage" {
     const decimal = try ArrayData.initOwned(allocator, decimal_ty, 2, 0, 0, &.{ null, decimal_values }, &.{}, null);
     defer decimal.deinit();
     try decimal.validate();
+
+    const decimal32_values = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
+    errdefer decimal32_values.deinit();
+    decimal32_values.freeze();
+    const decimal32_ty = datatype.DataType{ .decimal32 = .{ .precision = 9, .scale = 2 } };
+    const decimal32 = try ArrayData.initOwned(allocator, decimal32_ty, 2, 0, 0, &.{ null, decimal32_values }, &.{}, null);
+    defer decimal32.deinit();
+    try decimal32.validate();
+
+    const decimal64_values = try Buffer.allocate(allocator, 2 * @sizeOf(i64));
+    errdefer decimal64_values.deinit();
+    decimal64_values.freeze();
+    const decimal64_ty = datatype.DataType{ .decimal64 = .{ .precision = 18, .scale = 2 } };
+    const decimal64 = try ArrayData.initOwned(allocator, decimal64_ty, 2, 0, 0, &.{ null, decimal64_values }, &.{}, null);
+    defer decimal64.deinit();
+    try decimal64.validate();
 
     const short_fixed_values = try Buffer.allocate(allocator, 5);
     errdefer short_fixed_values.deinit();

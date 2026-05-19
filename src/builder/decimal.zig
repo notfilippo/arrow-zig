@@ -17,6 +17,8 @@ pub const DecimalBuilderError = Allocator.Error || checked.Error || datatype.Val
 
 fn byteWidthFor(comptime kind: array_decimal.DecimalKind) usize {
     return switch (kind) {
+        .decimal32 => 4,
+        .decimal64 => 8,
         .decimal128 => 16,
         .decimal256 => 32,
     };
@@ -24,6 +26,8 @@ fn byteWidthFor(comptime kind: array_decimal.DecimalKind) usize {
 
 fn valueTypeFor(comptime kind: array_decimal.DecimalKind) type {
     return switch (kind) {
+        .decimal32 => i32,
+        .decimal64 => i64,
         .decimal128 => i128,
         .decimal256 => i256,
     };
@@ -152,11 +156,15 @@ pub fn DecimalBuilder(comptime kind: array_decimal.DecimalKind) type {
     };
 }
 
+pub const Decimal32Builder = DecimalBuilder(.decimal32);
+pub const Decimal64Builder = DecimalBuilder(.decimal64);
 pub const Decimal128Builder = DecimalBuilder(.decimal128);
 pub const Decimal256Builder = DecimalBuilder(.decimal256);
 
 fn dataTypeForKind(comptime kind: array_decimal.DecimalKind, precision: u8, scale: i32) datatype.DataType {
     return switch (kind) {
+        .decimal32 => .{ .decimal32 = .{ .precision = precision, .scale = scale } },
+        .decimal64 => .{ .decimal64 = .{ .precision = precision, .scale = scale } },
         .decimal128 => .{ .decimal128 = .{ .precision = precision, .scale = scale } },
         .decimal256 => .{ .decimal256 = .{ .precision = precision, .scale = scale } },
     };
@@ -164,10 +172,52 @@ fn dataTypeForKind(comptime kind: array_decimal.DecimalKind, precision: u8, scal
 
 fn writeValue(dst: []u8, value: anytype) void {
     switch (@TypeOf(value)) {
+        i32 => std.mem.writeInt(i32, dst[0..4], value, .little),
+        i64 => std.mem.writeInt(i64, dst[0..8], value, .little),
         i128 => std.mem.writeInt(i128, dst[0..16], value, .little),
         i256 => std.mem.writeInt(i256, dst[0..32], value, .little),
         else => @compileError("unsupported decimal builder value type"),
     }
+}
+
+test "Decimal32Builder builds decimal arrays" {
+    const allocator = std.testing.allocator;
+    var b = try Decimal32Builder.init(allocator, 9, 2);
+    defer b.deinit();
+
+    try b.append(12345);
+    try b.appendNull();
+    try b.append(-67890);
+    const data = try b.finish();
+    defer data.deinit();
+    try data.validate();
+
+    const arr = try array.Decimal32Array.fromData(data);
+    try std.testing.expectEqual(@as(u8, 9), arr.precision());
+    try std.testing.expectEqual(@as(i32, 2), arr.scale());
+    try std.testing.expectEqual(@as(i32, 12345), arr.value(0));
+    try std.testing.expect(arr.view.isNull(1));
+    try std.testing.expectEqual(@as(i32, -67890), arr.value(2));
+}
+
+test "Decimal64Builder builds decimal arrays" {
+    const allocator = std.testing.allocator;
+    var b = try Decimal64Builder.init(allocator, 18, -2);
+    defer b.deinit();
+
+    try b.append(12345);
+    try b.appendNull();
+    try b.append(-67890);
+    const data = try b.finish();
+    defer data.deinit();
+    try data.validate();
+
+    const arr = try array.Decimal64Array.fromData(data);
+    try std.testing.expectEqual(@as(u8, 18), arr.precision());
+    try std.testing.expectEqual(@as(i32, -2), arr.scale());
+    try std.testing.expectEqual(@as(i64, 12345), arr.value(0));
+    try std.testing.expect(arr.view.isNull(1));
+    try std.testing.expectEqual(@as(i64, -67890), arr.value(2));
 }
 
 test "Decimal128Builder builds decimal arrays" {
@@ -216,6 +266,8 @@ test "Decimal256Builder builds decimal arrays" {
 
 test "DecimalBuilder validates metadata and byte width" {
     const allocator = std.testing.allocator;
+    try std.testing.expectError(error.InvalidDecimalPrecision, Decimal32Builder.init(allocator, 10, 0));
+    try std.testing.expectError(error.InvalidDecimalPrecision, Decimal64Builder.init(allocator, 19, 0));
     try std.testing.expectError(error.InvalidDecimalPrecision, Decimal128Builder.init(allocator, 39, 0));
 
     var b = try Decimal256Builder.init(allocator, 76, 0);

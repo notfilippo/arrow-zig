@@ -111,8 +111,8 @@ pub fn layout(ty: anytype) Layout {
         .bool => .{ .buffers = &bool_buffers },
         .int8, .uint8 => .{ .buffers = &fixed_1_buffers },
         .int16, .uint16, .float16 => .{ .buffers = &fixed_2_buffers },
-        .int32, .uint32, .float32, .date32, .time32, .month_interval => .{ .buffers = &fixed_4_buffers },
-        .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration, .day_time_interval => .{ .buffers = &fixed_8_buffers },
+        .int32, .uint32, .float32, .date32, .time32, .month_interval, .decimal32 => .{ .buffers = &fixed_4_buffers },
+        .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration, .day_time_interval, .decimal64 => .{ .buffers = &fixed_8_buffers },
         .decimal128, .month_day_nano_interval => .{ .buffers = &fixed_16_buffers },
         .decimal256 => .{ .buffers = &fixed_32_buffers },
         .fixed_size_binary => .{ .buffers = &fixed_size_binary_buffers },
@@ -150,6 +150,8 @@ test "layout describes buffers" {
     try std.testing.expectEqual(BufferKind.values, int32_ty.layout().buffers[1].kind);
     try std.testing.expectEqual(@as(usize, 4), int32_ty.layout().buffers[1].byte_width);
     try std.testing.expectEqual(@as(usize, 16), (datatype.DataType{ .decimal128 = .{ .precision = 12, .scale = 2 } }).layout().buffers[1].byte_width);
+    try std.testing.expectEqual(@as(usize, 4), (datatype.DataType{ .decimal32 = .{ .precision = 9, .scale = 2 } }).layout().buffers[1].byte_width);
+    try std.testing.expectEqual(@as(usize, 8), (datatype.DataType{ .decimal64 = .{ .precision = 18, .scale = 2 } }).layout().buffers[1].byte_width);
     try std.testing.expectEqual(@as(usize, 32), (datatype.DataType{ .decimal256 = .{ .precision = 40, .scale = 2 } }).layout().buffers[1].byte_width);
     try std.testing.expectEqual(@as(usize, 4), (@as(datatype.DataType, .month_interval)).layout().buffers[1].byte_width);
     try std.testing.expectEqual(@as(usize, 8), (@as(datatype.DataType, .day_time_interval)).layout().buffers[1].byte_width);

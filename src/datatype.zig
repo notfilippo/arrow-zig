@@ -41,6 +41,8 @@ pub const TypeId = enum(u8) {
     binary_view,
     utf8_view,
     fixed_size_binary,
+    decimal32,
+    decimal64,
     decimal128,
     decimal256,
     list,
@@ -326,6 +328,8 @@ pub const DataType = union(TypeId) {
     binary_view,
     utf8_view,
     fixed_size_binary: FixedSizeBinaryMeta,
+    decimal32: DecimalMeta,
+    decimal64: DecimalMeta,
     decimal128: DecimalMeta,
     decimal256: DecimalMeta,
     list: ListMeta,
@@ -352,8 +356,8 @@ pub const DataType = union(TypeId) {
             .bool => 1,
             .int8, .uint8 => 8,
             .int16, .uint16, .float16 => 16,
-            .int32, .uint32, .float32, .date32, .time32, .month_interval => 32,
-            .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration, .day_time_interval => 64,
+            .int32, .uint32, .float32, .date32, .time32, .month_interval, .decimal32 => 32,
+            .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration, .day_time_interval, .decimal64 => 64,
             .decimal128, .month_day_nano_interval => 128,
             .decimal256 => 256,
             .fixed_size_binary => |meta| if (meta.byte_width > std.math.maxInt(u16) / 8) 0 else @intCast(meta.byte_width * 8),
@@ -394,6 +398,8 @@ pub const DataType = union(TypeId) {
             .binary_view => "binary_view",
             .utf8_view => "utf8_view",
             .fixed_size_binary => "fixed_size_binary",
+            .decimal32 => "decimal32",
+            .decimal64 => "decimal64",
             .decimal128 => "decimal128",
             .decimal256 => "decimal256",
             .list => "list",
@@ -426,6 +432,8 @@ pub const DataType = union(TypeId) {
             .large_list_view => |meta| try meta.child.type.validate(),
             .fixed_size_list => |meta| try meta.child.type.validate(),
             .map => |meta| try validateMapMeta(meta),
+            .decimal32 => |meta| try validateDecimalMeta(meta, 9),
+            .decimal64 => |meta| try validateDecimalMeta(meta, 18),
             .decimal128 => |meta| try validateDecimalMeta(meta, 38),
             .decimal256 => |meta| try validateDecimalMeta(meta, 76),
             .struct_ => |meta| {
@@ -496,6 +504,8 @@ pub const DataType = union(TypeId) {
                 std.mem.eql(u8, a.timestamp.tz orelse "", b.timestamp.tz orelse ""),
             .month_interval, .day_time_interval, .month_day_nano_interval => true,
             .fixed_size_binary => a.fixed_size_binary.byte_width == b.fixed_size_binary.byte_width,
+            .decimal32 => decimalEqual(a.decimal32, b.decimal32),
+            .decimal64 => decimalEqual(a.decimal64, b.decimal64),
             .decimal128 => decimalEqual(a.decimal128, b.decimal128),
             .decimal256 => decimalEqual(a.decimal256, b.decimal256),
             .list => Field.equals(a.list.child, b.list.child),
@@ -665,6 +675,14 @@ test "DataType.equals" {
         .{ .fixed_size_binary = .{ .byte_width = 32 } },
     ));
     try std.testing.expect(DataType.equals(
+        .{ .decimal32 = .{ .precision = 9, .scale = 2 } },
+        .{ .decimal32 = .{ .precision = 9, .scale = 2 } },
+    ));
+    try std.testing.expect(!DataType.equals(
+        .{ .decimal64 = .{ .precision = 18, .scale = 2 } },
+        .{ .decimal64 = .{ .precision = 18, .scale = -2 } },
+    ));
+    try std.testing.expect(DataType.equals(
         .{ .decimal128 = .{ .precision = 12, .scale = 2 } },
         .{ .decimal128 = .{ .precision = 12, .scale = 2 } },
     ));
@@ -692,6 +710,8 @@ test "DataType.bitWidth" {
     try std.testing.expectEqual(@as(u16, 1), DataType.bitWidth(.bool));
     try std.testing.expectEqual(@as(u16, 32), DataType.bitWidth(.int32));
     try std.testing.expectEqual(@as(u16, 128), DataType.bitWidth(.{ .fixed_size_binary = .{ .byte_width = 16 } }));
+    try std.testing.expectEqual(@as(u16, 32), DataType.bitWidth(.{ .decimal32 = .{ .precision = 9, .scale = 0 } }));
+    try std.testing.expectEqual(@as(u16, 64), DataType.bitWidth(.{ .decimal64 = .{ .precision = 18, .scale = 0 } }));
     try std.testing.expectEqual(@as(u16, 128), DataType.bitWidth(.{ .decimal128 = .{ .precision = 38, .scale = 0 } }));
     try std.testing.expectEqual(@as(u16, 256), DataType.bitWidth(.{ .decimal256 = .{ .precision = 76, .scale = 0 } }));
     try std.testing.expectEqual(@as(u16, 32), DataType.bitWidth(.month_interval));
@@ -722,7 +742,11 @@ test "DataType.validate" {
     const duplicate_ids = [_]i8{ 1, 1 };
     const duplicate_union = DataType{ .dense_union = .{ .fields = &fields_ptrs, .type_ids = &duplicate_ids } };
     try std.testing.expectError(error.InvalidUnionTypeIds, duplicate_union.validate());
+    try DataType.validate(.{ .decimal32 = .{ .precision = 9, .scale = -3 } });
+    try DataType.validate(.{ .decimal64 = .{ .precision = 18, .scale = -3 } });
     try DataType.validate(.{ .decimal128 = .{ .precision = 38, .scale = -3 } });
+    try std.testing.expectError(error.InvalidDecimalPrecision, DataType.validate(.{ .decimal32 = .{ .precision = 10, .scale = 0 } }));
+    try std.testing.expectError(error.InvalidDecimalPrecision, DataType.validate(.{ .decimal64 = .{ .precision = 19, .scale = 0 } }));
     try std.testing.expectError(error.InvalidDecimalPrecision, DataType.validate(.{ .decimal128 = .{ .precision = 39, .scale = 0 } }));
     try std.testing.expectError(error.InvalidDecimalPrecision, DataType.validate(.{ .decimal256 = .{ .precision = 0, .scale = 0 } }));
 

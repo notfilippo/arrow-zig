@@ -226,6 +226,8 @@ fn importDecimalType(
     const width = if (parts.next()) |width_text| try parseUsize(width_text) else 128;
     if (parts.next() != null) return error.InvalidFormat;
     return switch (width) {
+        32 => .{ .decimal32 = .{ .precision = precision, .scale = scale } },
+        64 => .{ .decimal64 = .{ .precision = precision, .scale = scale } },
         128 => .{ .decimal128 = .{ .precision = precision, .scale = scale } },
         256 => .{ .decimal256 = .{ .precision = precision, .scale = scale } },
         else => error.InvalidFormat,

@@ -141,6 +141,54 @@ test "importArray imports exported primitive array" {
     try std.testing.expectEqual(@as(usize, 1), source.refCount());
 }
 
+test "importArray imports exported decimal32 array" {
+    const allocator = std.testing.allocator;
+    var b = try builder.Decimal32Builder.init(allocator, 9, 2);
+    defer b.deinit();
+    try b.append(12345);
+    try b.appendNull();
+    try b.append(-67890);
+
+    const source = try b.finish();
+    defer source.deinit();
+
+    var exported: ArrowArray = undefined;
+    try exportArray(allocator, source, &exported);
+
+    const imported = try importArray(allocator, source.type, &exported);
+    defer imported.deinit();
+    try imported.validate();
+
+    const view = try array.Decimal32Array.fromData(imported);
+    try std.testing.expectEqual(@as(i32, 12345), view.value(0));
+    try std.testing.expect(view.view.isNull(1));
+    try std.testing.expectEqual(@as(i32, -67890), view.value(2));
+}
+
+test "importArray imports exported decimal64 array" {
+    const allocator = std.testing.allocator;
+    var b = try builder.Decimal64Builder.init(allocator, 18, -2);
+    defer b.deinit();
+    try b.append(12345);
+    try b.appendNull();
+    try b.append(-67890);
+
+    const source = try b.finish();
+    defer source.deinit();
+
+    var exported: ArrowArray = undefined;
+    try exportArray(allocator, source, &exported);
+
+    const imported = try importArray(allocator, source.type, &exported);
+    defer imported.deinit();
+    try imported.validate();
+
+    const view = try array.Decimal64Array.fromData(imported);
+    try std.testing.expectEqual(@as(i64, 12345), view.value(0));
+    try std.testing.expect(view.view.isNull(1));
+    try std.testing.expectEqual(@as(i64, -67890), view.value(2));
+}
+
 test "importArray imports exported binary view array" {
     const allocator = std.testing.allocator;
     var b = builder.BinaryViewBuilder.init(allocator);
