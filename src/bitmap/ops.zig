@@ -50,6 +50,11 @@ fn binaryBits(
 ) void {
     if (len == 0) return;
 
+    if (((dst_off | lhs_off | rhs_off) & 7) == 0) {
+        binaryBitsByteAligned(op, dst, dst_off, lhs, lhs_off, rhs, rhs_off, len);
+        return;
+    }
+
     var done: usize = 0;
     while (done + 64 <= len) : (done += 64) {
         bits.writeWord64(
@@ -62,6 +67,37 @@ fn binaryBits(
             ),
         );
     }
+    binaryBitsScalar(op, dst, dst_off + done, lhs, lhs_off + done, rhs, rhs_off + done, len - done);
+}
+
+fn binaryBitsByteAligned(
+    comptime op: BinaryOp,
+    dst: []u8,
+    dst_off: usize,
+    lhs: []const u8,
+    lhs_off: usize,
+    rhs: []const u8,
+    rhs_off: usize,
+    len: usize,
+) void {
+    const dst_byte = dst_off / 8;
+    const lhs_byte = lhs_off / 8;
+    const rhs_byte = rhs_off / 8;
+    const full_bytes = len / 8;
+
+    const lanes = 32;
+    var i: usize = 0;
+    while (i + lanes <= full_bytes) : (i += lanes) {
+        const lhs_vec: @Vector(lanes, u8) = lhs[lhs_byte + i ..][0..lanes].*;
+        const rhs_vec: @Vector(lanes, u8) = rhs[rhs_byte + i ..][0..lanes].*;
+        dst[dst_byte + i ..][0..lanes].* = @bitCast(applyBinaryOp(op, lhs_vec, rhs_vec));
+    }
+
+    while (i < full_bytes) : (i += 1) {
+        dst[dst_byte + i] = applyBinaryOp(op, lhs[lhs_byte + i], rhs[rhs_byte + i]);
+    }
+
+    const done = full_bytes * 8;
     binaryBitsScalar(op, dst, dst_off + done, lhs, lhs_off + done, rhs, rhs_off + done, len - done);
 }
 
@@ -139,6 +175,25 @@ test "binary bit ops unaligned multiword" {
         @memset(&slow, 0x5A);
         binaryBits(op, &fast, 3, &lhs, 5, &rhs, 11, 211);
         binaryBitsScalar(op, &slow, 3, &lhs, 5, &rhs, 11, 211);
+        try std.testing.expectEqualSlices(u8, &slow, &fast);
+    }
+}
+
+test "binary bit ops byte aligned vector path" {
+    const n_bytes = 96;
+    var lhs: [n_bytes]u8 = undefined;
+    var rhs: [n_bytes]u8 = undefined;
+    var fast: [n_bytes]u8 = undefined;
+    var slow: [n_bytes]u8 = undefined;
+
+    for (&lhs, 0..) |*b, i| b.* = @as(u8, @truncate(i *% 131 +% 7));
+    for (&rhs, 0..) |*b, i| b.* = @as(u8, @truncate(i *% 97 +% 53));
+
+    inline for (.{ BinaryOp.@"and", .@"or", .xor, .and_not, .or_not }) |op| {
+        @memset(&fast, 0x5A);
+        @memset(&slow, 0x5A);
+        binaryBits(op, &fast, 16, &lhs, 8, &rhs, 24, 515);
+        binaryBitsScalar(op, &slow, 16, &lhs, 8, &rhs, 24, 515);
         try std.testing.expectEqualSlices(u8, &slow, &fast);
     }
 }
