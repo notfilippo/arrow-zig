@@ -8,33 +8,34 @@ const Allocator = std.mem.Allocator;
 const checked = @import("../checked.zig");
 const datatype = @import("../datatype.zig");
 const array = @import("../array.zig");
+const array_decimal = @import("../array/decimal.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("../buffer.zig").Buffer;
 const common = @import("common.zig");
 
 pub const DecimalBuilderError = Allocator.Error || checked.Error || datatype.ValidationError || error{InvalidByteWidth};
 
-fn byteWidthFor(comptime kind: array.DecimalKind) usize {
+fn byteWidthFor(comptime kind: array_decimal.DecimalKind) usize {
     return switch (kind) {
         .decimal128 => 16,
         .decimal256 => 32,
     };
 }
 
-fn valueTypeFor(comptime kind: array.DecimalKind) type {
+fn valueTypeFor(comptime kind: array_decimal.DecimalKind) type {
     return switch (kind) {
         .decimal128 => i128,
         .decimal256 => i256,
     };
 }
 
-pub fn DecimalBuilder(comptime kind: array.DecimalKind) type {
+pub fn DecimalBuilder(comptime kind: array_decimal.DecimalKind) type {
     const width = byteWidthFor(kind);
     const Value = valueTypeFor(kind);
 
     return struct {
         const Self = @This();
-        pub const Array = array.DecimalArray(kind);
+        pub const Array = array_decimal.DecimalArray(kind);
         pub const Error = DecimalBuilderError;
         pub const ValueType = Value;
 
@@ -154,7 +155,7 @@ pub fn DecimalBuilder(comptime kind: array.DecimalKind) type {
 pub const Decimal128Builder = DecimalBuilder(.decimal128);
 pub const Decimal256Builder = DecimalBuilder(.decimal256);
 
-fn dataTypeForKind(comptime kind: array.DecimalKind, precision: u8, scale: i32) datatype.DataType {
+fn dataTypeForKind(comptime kind: array_decimal.DecimalKind, precision: u8, scale: i32) datatype.DataType {
     return switch (kind) {
         .decimal128 => .{ .decimal128 = .{ .precision = precision, .scale = scale } },
         .decimal256 => .{ .decimal256 = .{ .precision = precision, .scale = scale } },

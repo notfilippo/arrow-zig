@@ -12,13 +12,14 @@ const checked = @import("../checked.zig");
 const datatype = @import("../datatype.zig");
 const offset_data = @import("../offsets.zig");
 const array = @import("../array.zig");
+const array_binary = @import("../array/binary.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("../buffer.zig").Buffer;
 const common = @import("common.zig");
 
 pub const BinaryBuilderError = Allocator.Error || checked.Error || error{ InvalidByteWidth, InvalidUtf8 };
 
-pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
+pub fn VarBinaryBuilder(comptime kind: array_binary.VarBinaryKind) type {
     const Offset = switch (kind) {
         .binary, .utf8 => i32,
         .large_binary, .large_utf8 => i64,
@@ -26,7 +27,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
 
     return struct {
         const Self = @This();
-        pub const Array = array.VarBinaryArray(kind);
+        pub const Array = array_binary.VarBinaryArray(kind);
         pub const Error = BinaryBuilderError;
 
         allocator: Allocator,
@@ -269,7 +270,7 @@ pub const FixedSizeBinaryBuilder = struct {
     }
 };
 
-fn dataTypeForKind(comptime kind: array.VarBinaryKind) datatype.DataType {
+fn dataTypeForKind(comptime kind: array_binary.VarBinaryKind) datatype.DataType {
     return switch (kind) {
         .binary => .binary,
         .utf8 => .utf8,

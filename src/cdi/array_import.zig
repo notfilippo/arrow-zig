@@ -6,6 +6,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const array = @import("../array.zig");
+const array_data = @import("../array/data.zig");
 const bitmap = @import("../bitmap.zig");
 const buffer = @import("../buffer.zig");
 const checked = @import("../checked.zig");
@@ -21,7 +22,7 @@ pub const Error =
     Allocator.Error ||
     checked.Error ||
     datatype.ValidationError ||
-    array.ValidateError ||
+    array_data.ValidateError ||
     error{
         ReleasedArray,
         NegativeLength,

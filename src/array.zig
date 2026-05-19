@@ -3,11 +3,11 @@
 
 //! Array storage and typed array facade.
 //!
-//! `ArrayData` owns the Arrow layout pieces. Typed arrays such as `Int32Array`,
-//! `BinaryArray`, and `ListArray` are small structs over retained storage.
+//! `ArrayData` owns the Arrow layout pieces. Typed arrays such as
+//! `NumericArray(i32)`, `BinaryArray`, and `ListArray` are small structs over
+//! retained storage.
 
 const array_data = @import("array/data.zig");
-const common = @import("array/common.zig");
 const prim = @import("array/primitive.zig");
 const null_array = @import("array/null.zig");
 const binary = @import("array/binary.zig");
@@ -23,38 +23,8 @@ const run_end = @import("array/run_end.zig");
 /// Reference counted array storage.
 pub const ArrayData = array_data.ArrayData;
 
-/// Error set for retained array slices.
-pub const DataSliceError = array_data.DataSliceError;
-
-/// Error set for array storage creation.
-pub const InitError = array_data.InitError;
-
-/// Error set for storage validation.
-pub const ValidateError = array_data.ValidateError;
-
-/// Compile time kind for fixed width arrays.
-pub const FixedWidthKind = common.FixedWidthKind;
-
-/// Compile time kind for list arrays.
-pub const ListKind = list.ListKind;
-
-/// Error set for non owning array slices.
-pub const SliceError = common.SliceError;
-
 /// Offset and length pair for list values.
 pub const ValueRange = list.ValueRange;
-
-/// Compile time kind for variable width binary arrays.
-pub const VarBinaryKind = binary.VarBinaryKind;
-
-/// Compile time kind for decimal arrays.
-pub const DecimalKind = decimal.DecimalKind;
-
-/// Compile time kind for interval arrays.
-pub const IntervalKind = interval.IntervalKind;
-
-/// Error set for creating typed arrays from storage.
-pub const ViewError = common.ViewError;
 
 pub const NullArray = null_array.NullArray;
 pub const BooleanArray = prim.BooleanArray;
@@ -85,21 +55,10 @@ pub const SparseUnionArray = union_array.SparseUnionArray;
 pub const DenseUnionArray = union_array.DenseUnionArray;
 pub const RunEndEncodedArray = run_end.RunEndEncodedArray;
 
-pub const dataTypeAcceptsZigType = common.dataTypeAcceptsZigType;
-pub const FixedWidthArray = prim.FixedWidthArray;
-pub const DecimalArray = decimal.DecimalArray;
-pub const IntervalArray = interval.IntervalArray;
-pub const VarListArray = list.VarListArray;
-pub const VarBinaryArray = binary.VarBinaryArray;
-
 pub fn DictionaryArray(comptime Index: type) type {
     return dictionary.DictionaryArray(Index);
 }
 
 pub fn NumericArray(comptime T: type) type {
     return prim.NumericArray(T);
-}
-
-pub fn typeIdFor(comptime T: type) @import("datatype.zig").TypeId {
-    return common.typeIdFor(T);
 }

@@ -8,13 +8,14 @@ const Allocator = std.mem.Allocator;
 const checked = @import("../checked.zig");
 const datatype = @import("../datatype.zig");
 const array = @import("../array.zig");
+const array_interval = @import("../array/interval.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("../buffer.zig").Buffer;
 const common = @import("common.zig");
 
 pub const IntervalBuilderError = Allocator.Error || checked.Error || error{InvalidByteWidth};
 
-fn byteWidthFor(comptime kind: array.IntervalKind) usize {
+fn byteWidthFor(comptime kind: array_interval.IntervalKind) usize {
     return switch (kind) {
         .month_interval => 4,
         .day_time_interval => 8,
@@ -22,21 +23,21 @@ fn byteWidthFor(comptime kind: array.IntervalKind) usize {
     };
 }
 
-fn valueTypeFor(comptime kind: array.IntervalKind) type {
+fn valueTypeFor(comptime kind: array_interval.IntervalKind) type {
     return switch (kind) {
         .month_interval => i32,
-        .day_time_interval => array.DayTimeInterval,
-        .month_day_nano_interval => array.MonthDayNanoInterval,
+        .day_time_interval => array_interval.DayTimeInterval,
+        .month_day_nano_interval => array_interval.MonthDayNanoInterval,
     };
 }
 
-pub fn IntervalBuilder(comptime kind: array.IntervalKind) type {
+pub fn IntervalBuilder(comptime kind: array_interval.IntervalKind) type {
     const width = byteWidthFor(kind);
     const Value = valueTypeFor(kind);
 
     return struct {
         const Self = @This();
-        pub const Array = array.IntervalArray(kind);
+        pub const Array = array_interval.IntervalArray(kind);
         pub const Error = IntervalBuilderError;
         pub const ValueType = Value;
 
@@ -148,7 +149,7 @@ pub const MonthIntervalBuilder = IntervalBuilder(.month_interval);
 pub const DayTimeIntervalBuilder = IntervalBuilder(.day_time_interval);
 pub const MonthDayNanoIntervalBuilder = IntervalBuilder(.month_day_nano_interval);
 
-fn dataTypeForKind(comptime kind: array.IntervalKind) datatype.DataType {
+fn dataTypeForKind(comptime kind: array_interval.IntervalKind) datatype.DataType {
     return switch (kind) {
         .month_interval => .month_interval,
         .day_time_interval => .day_time_interval,
@@ -156,7 +157,7 @@ fn dataTypeForKind(comptime kind: array.IntervalKind) datatype.DataType {
     };
 }
 
-fn writeValue(comptime kind: array.IntervalKind, dst: []u8, value: valueTypeFor(kind)) void {
+fn writeValue(comptime kind: array_interval.IntervalKind, dst: []u8, value: valueTypeFor(kind)) void {
     switch (kind) {
         .month_interval => std.mem.writeInt(i32, dst[0..4], value, .little),
         .day_time_interval => {

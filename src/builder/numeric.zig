@@ -12,6 +12,7 @@ const Allocator = std.mem.Allocator;
 const checked = @import("../checked.zig");
 const datatype = @import("../datatype.zig");
 const array = @import("../array.zig");
+const array_common = @import("../array/common.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("../buffer.zig").Buffer;
 const common = @import("common.zig");
@@ -20,7 +21,7 @@ pub const NumericBuilderInitError = datatype.ValidationError || error{TypeMismat
 pub const NumericBuilderError = Allocator.Error || checked.Error || error{ValidityBufferTooSmall};
 
 pub fn NumericBuilder(comptime T: type) type {
-    _ = array.typeIdFor(T);
+    _ = array_common.typeIdFor(T);
 
     return struct {
         const Self = @This();
@@ -34,7 +35,7 @@ pub fn NumericBuilder(comptime T: type) type {
         slots: common.Slots,
 
         pub fn init(allocator: Allocator) Self {
-            const id = comptime array.typeIdFor(T);
+            const id = comptime array_common.typeIdFor(T);
             return .{
                 .allocator = allocator,
                 .ty = @unionInit(datatype.DataType, @tagName(id), {}),
@@ -45,7 +46,7 @@ pub fn NumericBuilder(comptime T: type) type {
 
         pub fn initType(allocator: Allocator, ty: datatype.DataType) InitTypeError!Self {
             try ty.validate();
-            if (!array.dataTypeAcceptsZigType(T, ty)) return error.TypeMismatch;
+            if (!array_common.dataTypeAcceptsZigType(T, ty)) return error.TypeMismatch;
             var self = init(allocator);
             self.ty = ty;
             return self;

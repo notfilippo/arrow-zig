@@ -6,6 +6,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const array = @import("../array.zig");
+const array_data = @import("../array/data.zig");
 const buffer = @import("../buffer.zig");
 const checked = @import("../checked.zig");
 const cdi_types = @import("types.zig");
@@ -15,7 +16,7 @@ const ArrayData = array.ArrayData;
 const ArrowArray = cdi_types.ArrowArray;
 const Buffer = buffer.Buffer;
 
-pub const Error = schema_export.Error || array.ValidateError || checked.Error;
+pub const Error = schema_export.Error || array_data.ValidateError || checked.Error;
 
 pub fn exportArray(allocator: Allocator, data: *ArrayData, out: *ArrowArray) Error!void {
     try data.validate();

@@ -7,6 +7,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const datatype = @import("../datatype.zig");
 const array = @import("../array.zig");
+const array_common = @import("../array/common.zig");
 const numeric = @import("numeric.zig");
 const ArrayData = array.ArrayData;
 
@@ -106,13 +107,13 @@ pub fn DictionaryBuilder(comptime Index: type) type {
 
 fn ensureInteger(comptime T: type) void {
     switch (@typeInfo(T)) {
-        .int => _ = array.typeIdFor(T),
+        .int => _ = array_common.typeIdFor(T),
         else => @compileError("unsupported Arrow dictionary index type: " ++ @typeName(T)),
     }
 }
 
 fn indexDataType(comptime Index: type) datatype.DataType {
-    const id = comptime array.typeIdFor(Index);
+    const id = comptime array_common.typeIdFor(Index);
     return @unionInit(datatype.DataType, @tagName(id), {});
 }
 

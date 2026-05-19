@@ -12,6 +12,7 @@ const checked = @import("../checked.zig");
 const datatype = @import("../datatype.zig");
 const offset_data = @import("../offsets.zig");
 const array = @import("../array.zig");
+const array_list = @import("../array/list.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("../buffer.zig").Buffer;
 const common = @import("common.zig");
@@ -25,7 +26,7 @@ pub fn ListBuilderError(comptime ChildBuilder: type) type {
     return Allocator.Error || checked.Error || error{UnclosedListValues} || ChildBuilder.Error;
 }
 
-pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type) type {
+pub fn VarListBuilder(comptime kind: array_list.ListKind, comptime ChildBuilder: type) type {
     const Offset = switch (kind) {
         .list => i32,
         .large_list => i64,
@@ -33,7 +34,7 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
 
     return struct {
         const Self = @This();
-        pub const Array = array.VarListArray(kind);
+        pub const Array = array_list.VarListArray(kind);
         pub const Child = ChildBuilder;
         pub const Error = ListBuilderError(ChildBuilder);
 
@@ -367,7 +368,7 @@ pub fn FixedSizeListBuilder(comptime ChildBuilder: type) type {
     };
 }
 
-fn dataTypeForKind(comptime kind: array.ListKind, child: *const datatype.Field) datatype.DataType {
+fn dataTypeForKind(comptime kind: array_list.ListKind, child: *const datatype.Field) datatype.DataType {
     return switch (kind) {
         .list => .{ .list = .{ .child = child } },
         .large_list => .{ .large_list = .{ .child = child } },
