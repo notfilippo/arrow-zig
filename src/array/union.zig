@@ -12,13 +12,13 @@ const ArrayData = array_data.ArrayData;
 const Buffer = @import("../buffer.zig").Buffer;
 
 pub const SparseUnionArray = struct {
-    view: common.ValidityView(.none),
+    view: UnionView,
 
     pub fn fromData(data: *const ArrayData) common.ViewError!SparseUnionArray {
         if (data.type.id() != .sparse_union) return error.TypeMismatch;
         if (data.buffers.len != 1 or data.buffers[0] == null) return error.InvalidBufferLayout;
         if (data.children.len != data.type.sparse_union.fields.len) return error.InvalidBufferLayout;
-        return .{ .view = common.ValidityView(.none).init(data) };
+        return .{ .view = UnionView.init(data) };
     }
 
     pub fn typeId(self: SparseUnionArray, i: usize) i8 {
@@ -41,13 +41,13 @@ pub const SparseUnionArray = struct {
 };
 
 pub const DenseUnionArray = struct {
-    view: common.ValidityView(.none),
+    view: UnionView,
 
     pub fn fromData(data: *const ArrayData) common.ViewError!DenseUnionArray {
         if (data.type.id() != .dense_union) return error.TypeMismatch;
         if (data.buffers.len != 2 or data.buffers[0] == null or data.buffers[1] == null) return error.InvalidBufferLayout;
         if (data.children.len != data.type.dense_union.fields.len) return error.InvalidBufferLayout;
-        return .{ .view = common.ValidityView(.none).init(data) };
+        return .{ .view = UnionView.init(data) };
     }
 
     pub fn typeId(self: DenseUnionArray, i: usize) i8 {
@@ -71,6 +71,42 @@ pub const DenseUnionArray = struct {
     pub fn valueOwned(self: DenseUnionArray, i: usize) array_data.DataSliceError!?*ArrayData {
         const child_index = self.childIndex(i) orelse return null;
         return self.view.base.data.children[child_index].slice(self.valueOffset(i), 1);
+    }
+};
+
+pub const UnionView = struct {
+    base: common.View,
+
+    pub fn init(data: *const ArrayData) UnionView {
+        return .{ .base = common.View.init(data) };
+    }
+
+    pub fn isValid(self: UnionView, i: usize) bool {
+        return !self.isNull(i);
+    }
+
+    pub fn isNull(self: UnionView, i: usize) bool {
+        return self.base.data.isNull(self.dataIndex(i));
+    }
+
+    pub fn nullCount(self: UnionView) usize {
+        var count: usize = 0;
+        for (0..self.base.len) |i| {
+            if (self.isNull(i)) count += 1;
+        }
+        return count;
+    }
+
+    pub fn slice(self: UnionView, off: usize, length: usize) UnionView {
+        return self.sliceChecked(off, length) catch unreachable;
+    }
+
+    pub fn sliceChecked(self: UnionView, off: usize, length: usize) common.SliceError!UnionView {
+        return .{ .base = try self.base.sliceChecked(off, length) };
+    }
+
+    fn dataIndex(self: UnionView, i: usize) usize {
+        return common.dataRelativeOffset(self.base.data.offset, self.base.offset, i) catch unreachable;
     }
 };
 

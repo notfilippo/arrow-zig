@@ -171,6 +171,10 @@ pub const ArrayData = struct {
         try array_validate.validate(self);
     }
 
+    pub fn validateFull(self: *const ArrayData) (ValidateError || checked.Error || datatype.ValidationError)!void {
+        try array_validate.validateFull(self);
+    }
+
     pub fn slice(self: *const ArrayData, off: usize, length: usize) DataSliceError!*ArrayData {
         if (off > self.len) return error.OffsetOutOfBounds;
         const clamped = @min(length, self.len - off);
@@ -188,6 +192,28 @@ pub const ArrayData = struct {
             self.len,
             self.null_count,
         );
+    }
+
+    pub fn isValid(self: *const ArrayData, i: usize) bool {
+        return !self.isNull(i);
+    }
+
+    /// Return nullness for one logical slot.
+    /// Dictionary arrays follow Arrow C++ `IsNull`: dictionary values may be
+    /// null, but slot nullness is the index array validity.
+    pub fn isNull(self: *const ArrayData, i: usize) bool {
+        return isNullForType(self, self.type, i);
+    }
+
+    /// Return the Arrow C++ `ComputeLogicalNullCount` equivalent.
+    /// This includes union child nulls, run-end value nulls, and dictionary
+    /// value nulls in addition to physical validity bitmap nulls.
+    pub fn logicalNullCount(self: *const ArrayData) usize {
+        var count: usize = 0;
+        for (0..self.len) |i| {
+            if (isLogicalNullForType(self, self.type, i)) count += 1;
+        }
+        return count;
     }
 
     pub fn refCount(self: *const ArrayData) usize {
@@ -212,6 +238,114 @@ pub const ArrayData = struct {
         allocator.destroy(self);
     }
 };
+
+fn isNullForType(data: *const ArrayData, ty: datatype.DataType, i: usize) bool {
+    return switch (ty) {
+        .null_ => true,
+        .sparse_union => |meta| sparseUnionSlotIsNull(data, meta, i),
+        .dense_union => |meta| denseUnionSlotIsNull(data, meta, i),
+        .run_end_encoded => runEndSlotIsNull(data, i),
+        else => physicalSlotIsNull(data, ty, i),
+    };
+}
+
+fn isLogicalNullForType(data: *const ArrayData, ty: datatype.DataType, i: usize) bool {
+    return switch (ty) {
+        .dictionary => |meta| dictionarySlotIsLogicalNull(data, meta, i),
+        else => isNullForType(data, ty, i),
+    };
+}
+
+fn physicalSlotIsNull(data: *const ArrayData, ty: datatype.DataType, i: usize) bool {
+    if (ty.layout().null_layout == .always_null) return true;
+    if (ty.layout().null_layout == .none) return false;
+    const validity = data.buffers[0] orelse return false;
+    return !bitmap.getBit(validity.dataSlice(), data.offset + i);
+}
+
+fn sparseUnionSlotIsNull(data: *const ArrayData, meta: datatype.UnionMeta, i: usize) bool {
+    const type_ids = data.buffers[0].?;
+    const code = offset_data.read(i8, type_ids, data.offset + i);
+    const child_index = childIndexFor(meta, code) orelse unreachable;
+    return data.children[child_index].isNull(data.offset + i);
+}
+
+fn denseUnionSlotIsNull(data: *const ArrayData, meta: datatype.UnionMeta, i: usize) bool {
+    const type_ids = data.buffers[0].?;
+    const offsets = data.buffers[1].?;
+    const code = offset_data.read(i8, type_ids, data.offset + i);
+    const child_index = childIndexFor(meta, code) orelse unreachable;
+    const child_offset = offset_data.toUsize(offset_data.read(i32, offsets, data.offset + i)) catch unreachable;
+    return data.children[child_index].isNull(child_offset);
+}
+
+fn runEndSlotIsNull(data: *const ArrayData, i: usize) bool {
+    const values = data.children[1];
+    return values.isNull(runEndSlotIndex(data, i));
+}
+
+fn runEndSlotIndex(data: *const ArrayData, i: usize) usize {
+    const run_ends = data.children[0];
+    const logical = data.offset + i;
+    var lo: usize = 0;
+    var hi: usize = run_ends.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        const end = switch (run_ends.type) {
+            .int16 => runEndAsUsize(offset_data.read(i16, run_ends.buffers[1].?, run_ends.offset + mid)),
+            .int32 => runEndAsUsize(offset_data.read(i32, run_ends.buffers[1].?, run_ends.offset + mid)),
+            .int64 => runEndAsUsize(offset_data.read(i64, run_ends.buffers[1].?, run_ends.offset + mid)),
+            else => unreachable,
+        };
+        if (end > logical) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    return lo;
+}
+
+fn runEndAsUsize(value: anytype) usize {
+    if (value < 0) unreachable;
+    return @intCast(value);
+}
+
+fn dictionarySlotIsLogicalNull(data: *const ArrayData, meta: datatype.DictionaryMeta, i: usize) bool {
+    if (physicalSlotIsNull(data, data.type, i)) return true;
+    const index = dictionaryIndexAt(data, meta.index_type.*, data.offset + i);
+    return data.dictionary.?.isNull(index);
+}
+
+fn dictionaryIndexAt(data: *const ArrayData, index_ty: datatype.DataType, slot: usize) usize {
+    const values = data.buffers[1].?;
+    return switch (index_ty) {
+        .int8 => indexAsUsize(offset_data.read(i8, values, slot)),
+        .int16 => indexAsUsize(offset_data.read(i16, values, slot)),
+        .int32 => indexAsUsize(offset_data.read(i32, values, slot)),
+        .int64 => indexAsUsize(offset_data.read(i64, values, slot)),
+        .uint8 => indexAsUsize(offset_data.read(u8, values, slot)),
+        .uint16 => indexAsUsize(offset_data.read(u16, values, slot)),
+        .uint32 => indexAsUsize(offset_data.read(u32, values, slot)),
+        .uint64 => indexAsUsize(offset_data.read(u64, values, slot)),
+        else => unreachable,
+    };
+}
+
+fn indexAsUsize(value: anytype) usize {
+    const T = @TypeOf(value);
+    const info = @typeInfo(T).int;
+    if (info.signedness == .signed and value < 0) unreachable;
+    return @intCast(value);
+}
+
+fn childIndexFor(meta: datatype.UnionMeta, code: i8) ?usize {
+    if (code < 0) return null;
+    for (meta.type_ids, 0..) |id, i| {
+        if (id == code) return i;
+    }
+    return null;
+}
 
 pub fn slicedNullCount(nc: ?usize, len: usize, off: usize, clamped: usize) ?usize {
     const known = nc orelse return null;
@@ -280,6 +414,47 @@ test "ArrayData init owns nested type metadata" {
     try std.testing.expect(data.type.list.child.type != &child_ty);
     try std.testing.expectEqualStrings("items", data.type.list.child.name);
     try data.validate();
+}
+
+test "ArrayData separates physical and logical dictionary nulls" {
+    const allocator = std.testing.allocator;
+
+    const dict_validity = try Buffer.allocate(allocator, 1);
+    errdefer dict_validity.deinit();
+    dict_validity.data[0] = 0b00000010;
+    dict_validity.freeze();
+
+    const dict_values = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
+    errdefer dict_values.deinit();
+    writeTestInt(i32, dict_values, 0, 0);
+    writeTestInt(i32, dict_values, 1, 10);
+    dict_values.freeze();
+
+    const dictionary = try ArrayData.initOwned(allocator, .int32, 2, 0, 1, &.{ dict_validity, dict_values }, &.{}, null);
+    errdefer dictionary.deinit();
+
+    const indices = try Buffer.allocate(allocator, 3 * @sizeOf(i8));
+    errdefer indices.deinit();
+    writeTestInt(i8, indices, 0, 0);
+    writeTestInt(i8, indices, 1, 1);
+    writeTestInt(i8, indices, 2, 0);
+    indices.freeze();
+
+    const index_ty: datatype.DataType = .int8;
+    const value_ty: datatype.DataType = .int32;
+    const dict_ty = datatype.DataType{ .dictionary = .{ .index_type = &index_ty, .value_type = &value_ty } };
+    const data = try ArrayData.initOwned(allocator, dict_ty, 3, 0, 0, &.{ null, indices }, &.{}, dictionary);
+    defer data.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), data.nullCount());
+    try std.testing.expectEqual(@as(usize, 2), data.logicalNullCount());
+    try std.testing.expect(data.isValid(0));
+    try std.testing.expect(data.isValid(2));
+
+    const sliced = try data.slice(1, 2);
+    defer sliced.deinit();
+    try std.testing.expectEqual(@as(usize, 0), sliced.nullCount());
+    try std.testing.expectEqual(@as(usize, 1), sliced.logicalNullCount());
 }
 
 test "ArrayData init retained retains buffers and children" {

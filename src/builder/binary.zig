@@ -75,7 +75,7 @@ pub fn VarBinaryBuilder(comptime kind: array_binary.VarBinaryKind) type {
         }
 
         pub fn appendBytes(self: *Self, bytes: []const u8) Error!void {
-            try self.appendUnchecked(bytes);
+            try self.append(bytes);
         }
 
         pub fn appendNull(self: *Self) Error!void {
@@ -218,7 +218,7 @@ fn BinaryViewBuilderType(comptime kind: BinaryViewKind) type {
         }
 
         pub fn appendBytes(self: *Self, bytes: []const u8) Error!void {
-            try self.appendUnchecked(bytes);
+            try self.append(bytes);
         }
 
         pub fn appendNull(self: *Self) Error!void {
@@ -516,13 +516,12 @@ test "Utf8ViewBuilder validates input" {
     try b.append("hello");
     const invalid = [_]u8{0xc0};
     try std.testing.expectError(error.InvalidUtf8, b.append(&invalid));
-    try b.appendBytes(&invalid);
+    try std.testing.expectError(error.InvalidUtf8, b.appendBytes(&invalid));
 
     const data = try b.finish();
     defer data.deinit();
     const arr = try array.Utf8ViewArray.fromData(data);
     try std.testing.expectEqualStrings("hello", arr.value(0));
-    try std.testing.expectEqual(@as(usize, 1), arr.valueBytes(1).len);
 }
 
 test "BinaryBuilder all valid and reuse" {
@@ -558,6 +557,7 @@ test "Utf8Builder validates input" {
     try b.append("hello");
     const invalid = [_]u8{0xc0};
     try std.testing.expectError(error.InvalidUtf8, b.append(&invalid));
+    try std.testing.expectError(error.InvalidUtf8, b.appendBytes(&invalid));
 
     const data = try b.finish();
     defer data.deinit();

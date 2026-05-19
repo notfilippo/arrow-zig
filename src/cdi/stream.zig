@@ -86,7 +86,7 @@ pub fn exportArrayStream(
     }
 
     for (arrays, 0..) |array_data, i| {
-        try array_data.validate();
+        try array_data.validateFull();
         if (!datatype.DataType.equals(ty, array_data.type)) return error.ArrayTypeMismatch;
         retained_arrays[i] = array_data.retain();
         retained_count += 1;

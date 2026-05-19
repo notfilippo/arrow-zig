@@ -53,18 +53,31 @@ pub const Error = error{
     NonNullableNulls,
     UnexpectedChild,
     UnexpectedDictionary,
+    InvalidUtf8,
+    InvalidDate64Value,
+    TimeValueOutOfBounds,
 };
 
+pub const Level = enum { quick, full };
+
 pub fn validate(data: anytype) (Error || checked.Error || datatype.ValidationError)!void {
-    try data.type.validate();
-    const total = try checked.add(data.offset, data.len);
-    try validateData(data, data.type, total);
+    try validateWithLevel(data, .quick);
 }
 
-fn validateData(data: anytype, ty: datatype.DataType, total: usize) (Error || checked.Error || datatype.ValidationError)!void {
+pub fn validateFull(data: anytype) (Error || checked.Error || datatype.ValidationError)!void {
+    try validateWithLevel(data, .full);
+}
+
+pub fn validateWithLevel(data: anytype, comptime level: Level) (Error || checked.Error || datatype.ValidationError)!void {
+    try data.type.validate();
+    const total = try checked.add(data.offset, data.len);
+    try validateData(data, data.type, total, level);
+}
+
+fn validateData(data: anytype, ty: datatype.DataType, total: usize, comptime level: Level) (Error || checked.Error || datatype.ValidationError)!void {
     const layout = ty.layout();
     try expectBufferCount(data, layout.buffers.len, layout.variadic_buffers);
-    try validateNulls(data, total, layout.null_layout);
+    try validateNulls(data, total, layout.null_layout, level);
     try validateChildCount(data, ty.childCount());
     if (layout.has_dictionary) {
         if (data.dictionary == null) return error.MissingDictionary;
@@ -73,24 +86,39 @@ fn validateData(data: anytype, ty: datatype.DataType, total: usize) (Error || ch
     }
 
     switch (ty) {
-        .bool, .int8, .int16, .int32, .int64, .uint8, .uint16, .uint32, .uint64, .float16, .float32, .float64, .date32, .date64, .time32, .time64, .timestamp, .duration, .month_interval, .day_time_interval, .month_day_nano_interval, .decimal32, .decimal64, .decimal128, .decimal256, .fixed_size_binary => {
+        .bool, .int8, .int16, .int32, .int64, .uint8, .uint16, .uint32, .uint64, .float16, .float32, .float64, .date32, .timestamp, .duration, .month_interval, .day_time_interval, .month_day_nano_interval, .decimal32, .decimal64, .decimal128, .decimal256, .fixed_size_binary => {
             try validateFixedWidth(data, total, ty);
         },
-        .binary, .utf8 => try validateBinaryLike(data, total, i32),
-        .large_binary, .large_utf8 => try validateBinaryLike(data, total, i64),
-        .binary_view, .utf8_view => try validateBinaryViewLike(data, total),
-        .list => |meta| try validateListLike(data, total, meta.child, i32),
-        .large_list => |meta| try validateListLike(data, total, meta.child, i64),
-        .list_view => |meta| try validateListViewLike(data, total, meta.child, i32),
-        .large_list_view => |meta| try validateListViewLike(data, total, meta.child, i64),
-        .fixed_size_list => |meta| try validateFixedSizeList(data, total, meta),
-        .map => |meta| try validateListLike(data, total, meta.entries, i32),
-        .struct_ => |meta| try validateStruct(data, total, meta),
-        .sparse_union => |meta| try validateUnion(data, total, meta, false),
-        .dense_union => |meta| try validateUnion(data, total, meta, true),
-        .run_end_encoded => |meta| try validateRunEndEncoded(data, total, meta),
-        .extension => |meta| try validateData(data, meta.storage_type.*, total),
-        .dictionary => |meta| try validateDictionary(data, total, meta),
+        .date64 => {
+            try validateFixedWidth(data, total, ty);
+            if (level == .full) try validateDate64(data);
+        },
+        .time32 => |unit| {
+            try validateFixedWidth(data, total, ty);
+            if (level == .full) try validateTime32(data, unit);
+        },
+        .time64 => |unit| {
+            try validateFixedWidth(data, total, ty);
+            if (level == .full) try validateTime64(data, unit);
+        },
+        .binary => try validateBinaryLike(data, total, i32, false, level),
+        .utf8 => try validateBinaryLike(data, total, i32, true, level),
+        .large_binary => try validateBinaryLike(data, total, i64, false, level),
+        .large_utf8 => try validateBinaryLike(data, total, i64, true, level),
+        .binary_view => try validateBinaryViewLike(data, total, false, level),
+        .utf8_view => try validateBinaryViewLike(data, total, true, level),
+        .list => |meta| try validateListLike(data, total, meta.child, i32, level),
+        .large_list => |meta| try validateListLike(data, total, meta.child, i64, level),
+        .list_view => |meta| try validateListViewLike(data, total, meta.child, i32, level),
+        .large_list_view => |meta| try validateListViewLike(data, total, meta.child, i64, level),
+        .fixed_size_list => |meta| try validateFixedSizeList(data, total, meta, level),
+        .map => |meta| try validateListLike(data, total, meta.entries, i32, level),
+        .struct_ => |meta| try validateStruct(data, total, meta, level),
+        .sparse_union => |meta| try validateUnion(data, total, meta, false, level),
+        .dense_union => |meta| try validateUnion(data, total, meta, true, level),
+        .run_end_encoded => |meta| try validateRunEndEncoded(data, total, meta, level),
+        .extension => |meta| try validateData(data, meta.storage_type.*, total, level),
+        .dictionary => |meta| try validateDictionary(data, total, meta, level),
         .null_ => {},
     }
 }
@@ -109,7 +137,7 @@ fn expectBufferCount(data: anytype, expected: usize, variadic: bool) Error!void 
     }
 }
 
-fn validateNulls(data: anytype, total: usize, layout: datatype.NullLayout) (Error || checked.Error)!void {
+fn validateNulls(data: anytype, total: usize, layout: datatype.NullLayout, comptime level: Level) (Error || checked.Error)!void {
     switch (layout) {
         .always_null => {
             if (data.null_count) |nc| if (nc != data.len) return error.NullCountMismatch;
@@ -123,10 +151,10 @@ fn validateNulls(data: anytype, total: usize, layout: datatype.NullLayout) (Erro
             if (data.buffers[0]) |validity_buf| {
                 const needed = if (data.len == 0) 0 else try bitmap.byteLenChecked(total);
                 if (validity_buf.size < needed) return error.ValidityBufferTooSmall;
-                if (data.null_count) |nc| {
+                if (level == .full) if (data.null_count) |nc| {
                     const actual = data.len - bitmap.countSetBits(validity_buf.dataSlice(), data.offset, data.len);
                     if (actual != nc) return error.NullCountMismatch;
-                }
+                };
             } else {
                 if (data.null_count) |nc| if (nc != 0) return error.NullCountWithoutValidity;
             }
@@ -150,19 +178,69 @@ fn validateFixedWidth(data: anytype, total: usize, ty: datatype.DataType) (Error
     }
 }
 
-fn validateBinaryLike(data: anytype, total: usize, comptime Offset: type) (Error || checked.Error)!void {
-    const values = data.buffers[2] orelse return error.MissingValuesBuffer;
-    const offsets = try validateOffsetsBuffer(data, total, Offset);
-    if (offsets) |offset_buf| try validateOffsets(data, offset_buf, values.size, Offset);
+fn validateDate64(data: anytype) Error!void {
+    const full_day_ms: i64 = 1000 * 60 * 60 * 24;
+    const values = data.buffers[1] orelse return error.MissingValuesBuffer;
+    for (0..data.len) |i| {
+        const slot = data.offset + i;
+        if (slotIsNull(data, slot)) continue;
+        const value = offset_data.read(i64, values, slot);
+        if (@mod(value, full_day_ms) != 0) return error.InvalidDate64Value;
+    }
 }
 
-fn validateBinaryViewLike(data: anytype, total: usize) (Error || checked.Error)!void {
+fn validateTime32(data: anytype, unit: datatype.TimeUnit) Error!void {
+    const limit: i32 = switch (unit) {
+        .second => 60 * 60 * 24,
+        .millisecond => 1000 * 60 * 60 * 24,
+        .microsecond, .nanosecond => unreachable,
+    };
+    const values = data.buffers[1] orelse return error.MissingValuesBuffer;
+    for (0..data.len) |i| {
+        const slot = data.offset + i;
+        if (slotIsNull(data, slot)) continue;
+        const value = offset_data.read(i32, values, slot);
+        if (value < 0 or value >= limit) return error.TimeValueOutOfBounds;
+    }
+}
+
+fn validateTime64(data: anytype, unit: datatype.TimeUnit) Error!void {
+    const limit: i64 = switch (unit) {
+        .microsecond => 1000000 * 60 * 60 * 24,
+        .nanosecond => 1000000000 * 60 * 60 * 24,
+        .second, .millisecond => unreachable,
+    };
+    const values = data.buffers[1] orelse return error.MissingValuesBuffer;
+    for (0..data.len) |i| {
+        const slot = data.offset + i;
+        if (slotIsNull(data, slot)) continue;
+        const value = offset_data.read(i64, values, slot);
+        if (value < 0 or value >= limit) return error.TimeValueOutOfBounds;
+    }
+}
+
+fn slotIsNull(data: anytype, slot: usize) bool {
+    const validity = if (data.buffers[0]) |buf| buf.dataSlice() else return false;
+    return !bitmap.getBit(validity, slot);
+}
+
+fn validateBinaryLike(data: anytype, total: usize, comptime Offset: type, comptime utf8: bool, comptime level: Level) (Error || checked.Error)!void {
+    const values = data.buffers[2] orelse return error.MissingValuesBuffer;
+    const offsets = try validateOffsetsBuffer(data, total, Offset);
+    if (level == .full) if (offsets) |offset_buf| {
+        try validateOffsets(data, offset_buf, values.size, Offset);
+        if (utf8) try validateUtf8Values(data, offset_buf, values, Offset);
+    };
+}
+
+fn validateBinaryViewLike(data: anytype, total: usize, comptime utf8: bool, comptime level: Level) (Error || checked.Error)!void {
     const views = data.buffers[1] orelse {
         if (data.len == 0) return;
         return error.MissingValuesBuffer;
     };
     const needed = if (data.len == 0) 0 else try checked.mul(total, 16);
     if (views.size < needed) return error.ValuesBufferTooSmall;
+    if (level == .quick) return;
 
     const validity = if (data.buffers[0]) |buf| buf.dataSlice() else null;
     for (0..data.len) |i| {
@@ -170,15 +248,16 @@ fn validateBinaryViewLike(data: anytype, total: usize) (Error || checked.Error)!
         if (validity) |bits| {
             if (!bitmap.getBit(bits, slot)) continue;
         }
-        try validateBinaryView(data, views, slot);
+        const bytes = try validateBinaryView(data, views, slot);
+        if (utf8 and !std.unicode.utf8ValidateSlice(bytes)) return error.InvalidUtf8;
     }
 }
 
-fn validateBinaryView(data: anytype, views: *const Buffer, slot: usize) (Error || checked.Error)!void {
+fn validateBinaryView(data: anytype, views: *const Buffer, slot: usize) (Error || checked.Error)![]const u8 {
     const view_start = try checked.mul(slot, 16);
     const len = readViewI32(views, view_start);
     if (len < 0) return error.NegativeViewLength;
-    if (len <= 12) return;
+    if (len <= 12) return views.dataSlice()[view_start + 4 ..][0..@intCast(len)];
 
     const buffer_index = readViewI32(views, view_start + 8);
     if (buffer_index < 0) return error.ViewBufferIndexOutOfBounds;
@@ -191,30 +270,32 @@ fn validateBinaryView(data: anytype, views: *const Buffer, slot: usize) (Error |
     const start: usize = @intCast(view_offset);
     const end = try checked.add(start, @as(usize, @intCast(len)));
     if (end > buf.size) return error.ViewBufferTooSmall;
+    return buf.dataSlice()[start..end];
 }
 
 fn readViewI32(views: *const Buffer, byte_offset: usize) i32 {
     return std.mem.readInt(i32, views.dataSlice()[byte_offset..][0..4], .little);
 }
 
-fn validateListLike(data: anytype, total: usize, child_field: *const datatype.Field, comptime Offset: type) (Error || checked.Error || datatype.ValidationError)!void {
+fn validateListLike(data: anytype, total: usize, child_field: *const datatype.Field, comptime Offset: type, comptime level: Level) (Error || checked.Error || datatype.ValidationError)!void {
     const child = data.children[0];
     if (!datatype.DataType.equals(child.type, child_field.type.*)) return error.ChildTypeMismatch;
-    try child.validate();
-    try validateNullable(child_field, child);
+    try validateWithLevel(child, level);
+    try validateNullable(child_field, child, level);
 
     const offsets = try validateOffsetsBuffer(data, total, Offset);
-    if (offsets) |offset_buf| try validateOffsets(data, offset_buf, child.len, Offset);
+    if (level == .full) if (offsets) |offset_buf| try validateOffsets(data, offset_buf, child.len, Offset);
 }
 
-fn validateListViewLike(data: anytype, total: usize, child_field: *const datatype.Field, comptime Offset: type) (Error || checked.Error || datatype.ValidationError)!void {
+fn validateListViewLike(data: anytype, total: usize, child_field: *const datatype.Field, comptime Offset: type, comptime level: Level) (Error || checked.Error || datatype.ValidationError)!void {
     const child = data.children[0];
     if (!datatype.DataType.equals(child.type, child_field.type.*)) return error.ChildTypeMismatch;
-    try child.validate();
-    try validateNullable(child_field, child);
+    try validateWithLevel(child, level);
+    try validateNullable(child_field, child, level);
 
     const offsets = try validateViewOffsetBuffer(data, total, Offset, 1);
     const sizes = try validateViewOffsetBuffer(data, total, Offset, 2);
+    if (level == .quick) return;
     if (offsets == null or sizes == null) return;
 
     const validity = if (data.buffers[0]) |buf| buf.dataSlice() else null;
@@ -233,28 +314,28 @@ fn validateListViewLike(data: anytype, total: usize, child_field: *const datatyp
     }
 }
 
-fn validateFixedSizeList(data: anytype, total: usize, meta: datatype.FixedSizeListMeta) (Error || checked.Error || datatype.ValidationError)!void {
+fn validateFixedSizeList(data: anytype, total: usize, meta: datatype.FixedSizeListMeta, comptime level: Level) (Error || checked.Error || datatype.ValidationError)!void {
     const child = data.children[0];
     if (!datatype.DataType.equals(child.type, meta.child.type.*)) return error.ChildTypeMismatch;
-    try child.validate();
-    try validateNullable(meta.child, child);
+    try validateWithLevel(child, level);
+    try validateNullable(meta.child, child, level);
 
     const needed = try checked.mul(total, meta.len);
     if (child.len < needed) return error.ChildLengthTooSmall;
 }
 
-fn validateStruct(data: anytype, total: usize, meta: datatype.StructMeta) (Error || checked.Error || datatype.ValidationError)!void {
+fn validateStruct(data: anytype, total: usize, meta: datatype.StructMeta, comptime level: Level) (Error || checked.Error || datatype.ValidationError)!void {
     for (data.children, meta.fields) |child, field| {
-        try child.validate();
+        try validateWithLevel(child, level);
         if (!datatype.DataType.equals(child.type, field.type.*)) return error.ChildTypeMismatch;
-        try validateNullable(field, child);
+        try validateNullable(field, child, level);
         if (child.len < total) return error.ChildLengthTooSmall;
     }
 }
 
-fn validateUnion(data: anytype, total: usize, meta: datatype.UnionMeta, comptime dense: bool) (Error || checked.Error || datatype.ValidationError)!void {
+fn validateUnion(data: anytype, total: usize, meta: datatype.UnionMeta, comptime dense: bool, comptime level: Level) (Error || checked.Error || datatype.ValidationError)!void {
     for (data.children, meta.fields) |child, field| {
-        try child.validate();
+        try validateWithLevel(child, level);
         if (!datatype.DataType.equals(child.type, field.type.*)) return error.ChildTypeMismatch;
         if (!dense and child.len < total) return error.ChildLengthTooSmall;
     }
@@ -269,6 +350,7 @@ fn validateUnion(data: anytype, total: usize, meta: datatype.UnionMeta, comptime
         if (buf.size < needed) return error.UnionOffsetsBufferTooSmall;
         break :blk buf;
     } else null;
+    if (level == .quick) return;
 
     var last_offsets = [_]usize{0} ** 128;
     for (0..data.len) |i| {
@@ -284,28 +366,29 @@ fn validateUnion(data: anytype, total: usize, meta: datatype.UnionMeta, comptime
     }
 }
 
-fn validateDictionary(data: anytype, total: usize, meta: datatype.DictionaryMeta) (Error || checked.Error || datatype.ValidationError)!void {
+fn validateDictionary(data: anytype, total: usize, meta: datatype.DictionaryMeta, comptime level: Level) (Error || checked.Error || datatype.ValidationError)!void {
     if (!meta.index_type.isInteger()) return error.InvalidDictionaryIndexType;
     try validateFixedWidth(data, total, meta.index_type.*);
 
     const dict = data.dictionary.?;
-    try dict.validate();
+    try validateWithLevel(dict, level);
     if (!datatype.DataType.equals(dict.type, meta.value_type.*)) return error.DictionaryTypeMismatch;
-    try validateDictionaryIndices(data, meta.index_type.*, dict.len);
+    if (level == .full) try validateDictionaryIndices(data, meta.index_type.*, dict.len);
 }
 
-fn validateRunEndEncoded(data: anytype, total: usize, meta: datatype.RunEndEncodedMeta) (Error || checked.Error || datatype.ValidationError)!void {
+fn validateRunEndEncoded(data: anytype, total: usize, meta: datatype.RunEndEncodedMeta, comptime level: Level) (Error || checked.Error || datatype.ValidationError)!void {
     const run_ends = data.children[0];
     const values = data.children[1];
 
-    try run_ends.validate();
-    try values.validate();
+    try validateWithLevel(run_ends, level);
+    try validateWithLevel(values, level);
     if (!datatype.DataType.equals(run_ends.type, meta.run_ends.type.*)) return error.ChildTypeMismatch;
     if (!datatype.DataType.equals(values.type, meta.values.type.*)) return error.ChildTypeMismatch;
-    try validateNullable(meta.run_ends, run_ends);
-    try validateNullable(meta.values, values);
+    try validateNullable(meta.run_ends, run_ends, level);
+    try validateNullable(meta.values, values, level);
     if (run_ends.len != values.len) return error.ChildLengthMismatch;
     if (run_ends.offset != values.offset) return error.ChildOffsetMismatch;
+    if (level == .quick) return;
     if (data.len == 0) return;
     if (run_ends.len == 0) return error.RunEndOutOfBounds;
 
@@ -314,6 +397,19 @@ fn validateRunEndEncoded(data: anytype, total: usize, meta: datatype.RunEndEncod
         .int32 => try validateRunEnds(i32, run_ends, data.offset, total),
         .int64 => try validateRunEnds(i64, run_ends, data.offset, total),
         else => return error.InvalidRunEndType,
+    }
+}
+
+fn validateUtf8Values(data: anytype, offsets: *const Buffer, values: *const Buffer, comptime Offset: type) Error!void {
+    const validity = if (data.buffers[0]) |buf| buf.dataSlice() else null;
+    for (0..data.len) |i| {
+        const slot = data.offset + i;
+        if (validity) |bits| {
+            if (!bitmap.getBit(bits, slot)) continue;
+        }
+        const range = offset_data.rangeAt(Offset, offsets, slot);
+        const bytes = values.dataSlice()[range.offset..][0..range.len];
+        if (!std.unicode.utf8ValidateSlice(bytes)) return error.InvalidUtf8;
     }
 }
 
@@ -404,9 +500,10 @@ fn validateOffsets(data: anytype, offsets: *const Buffer, limit: usize, comptime
     try offset_data.validateMonotonic(Offset, offsets, data.offset, data.len, limit);
 }
 
-fn validateNullable(field: *const datatype.Field, child: anytype) Error!void {
+fn validateNullable(field: *const datatype.Field, child: anytype, comptime level: Level) Error!void {
     if (field.nullable) return;
-    if (child.nullCount() != 0) return error.NonNullableNulls;
+    const null_count = if (level == .full) child.logicalNullCount() else child.nullCount();
+    if (null_count != 0) return error.NonNullableNulls;
 }
 
 fn childIndexFor(meta: datatype.UnionMeta, code: i8) ?usize {
@@ -453,6 +550,35 @@ test "validate fixed width storage" {
     const empty = try ArrayData.initOwned(allocator, .int32, 0, 10, 0, &.{ null, null }, &.{}, null);
     defer empty.deinit();
     try empty.validate();
+
+    const bad_date64_values = try Buffer.allocate(allocator, @sizeOf(i64));
+    errdefer bad_date64_values.deinit();
+    writeTestInt(i64, bad_date64_values, 0, 1);
+    bad_date64_values.freeze();
+    const bad_date64 = try ArrayData.initOwned(allocator, .date64, 1, 0, 0, &.{ null, bad_date64_values }, &.{}, null);
+    defer bad_date64.deinit();
+    try bad_date64.validate();
+    try std.testing.expectError(error.InvalidDate64Value, bad_date64.validateFull());
+
+    const bad_time32_values = try Buffer.allocate(allocator, @sizeOf(i32));
+    errdefer bad_time32_values.deinit();
+    writeTestInt(i32, bad_time32_values, 0, 60 * 60 * 24);
+    bad_time32_values.freeze();
+    const time32_ty = datatype.DataType{ .time32 = .second };
+    const bad_time32 = try ArrayData.initOwned(allocator, time32_ty, 1, 0, 0, &.{ null, bad_time32_values }, &.{}, null);
+    defer bad_time32.deinit();
+    try bad_time32.validate();
+    try std.testing.expectError(error.TimeValueOutOfBounds, bad_time32.validateFull());
+
+    const bad_time64_values = try Buffer.allocate(allocator, @sizeOf(i64));
+    errdefer bad_time64_values.deinit();
+    std.mem.writeInt(i64, bad_time64_values.data[0..@sizeOf(i64)], -1, .little);
+    bad_time64_values.freeze();
+    const time64_ty = datatype.DataType{ .time64 = .nanosecond };
+    const bad_time64 = try ArrayData.initOwned(allocator, time64_ty, 1, 0, 0, &.{ null, bad_time64_values }, &.{}, null);
+    defer bad_time64.deinit();
+    try bad_time64.validate();
+    try std.testing.expectError(error.TimeValueOutOfBounds, bad_time64.validateFull());
 }
 
 test "validate null count rules" {
@@ -470,7 +596,8 @@ test "validate null count rules" {
 
     const mismatch = try ArrayData.initOwned(allocator, .int32, 3, 0, 2, &.{ validity, values }, &.{}, null);
     defer mismatch.deinit();
-    try std.testing.expectError(error.NullCountMismatch, mismatch.validate());
+    try mismatch.validate();
+    try std.testing.expectError(error.NullCountMismatch, mismatch.validateFull());
 
     const values_without_validity = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
     errdefer values_without_validity.deinit();
@@ -521,7 +648,7 @@ test "validate null and binary storage" {
     try null_data.validate();
     try std.testing.expectEqual(@as(usize, 3), null_data.nullCount());
     null_data.null_count = 0;
-    try std.testing.expectError(error.NullCountMismatch, null_data.validate());
+    try std.testing.expectError(error.NullCountMismatch, null_data.validateFull());
 
     const offsets = try Buffer.allocate(allocator, 3 * @sizeOf(i32));
     errdefer offsets.deinit();
@@ -596,6 +723,22 @@ test "validate null and binary storage" {
     const invalid = try ArrayData.initOwned(allocator, .binary, 2, 0, 0, &.{ null, short_offsets, values.retain() }, &.{}, null);
     defer invalid.deinit();
     try std.testing.expectError(error.OffsetsBufferTooSmall, invalid.validate());
+
+    const utf8_offsets = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
+    errdefer utf8_offsets.deinit();
+    writeTestInt(i32, utf8_offsets, 0, 0);
+    writeTestInt(i32, utf8_offsets, 1, 1);
+    utf8_offsets.freeze();
+
+    const utf8_values = try Buffer.allocate(allocator, 1);
+    errdefer utf8_values.deinit();
+    utf8_values.data[0] = 0xc0;
+    utf8_values.freeze();
+
+    const bad_utf8 = try ArrayData.initOwned(allocator, .utf8, 1, 0, 0, &.{ null, utf8_offsets, utf8_values }, &.{}, null);
+    defer bad_utf8.deinit();
+    try bad_utf8.validate();
+    try std.testing.expectError(error.InvalidUtf8, bad_utf8.validateFull());
 }
 
 test "validate list and struct storage" {
@@ -727,7 +870,8 @@ test "validate run end encoded storage" {
     errdefer retained_values.deinit();
     const bad_data = try ArrayData.initOwned(allocator, ty, 7, 0, 0, &.{}, &.{ bad_run_ends, retained_values }, null);
     defer bad_data.deinit();
-    try std.testing.expectError(error.RunEndNotIncreasing, bad_data.validate());
+    try bad_data.validate();
+    try std.testing.expectError(error.RunEndNotIncreasing, bad_data.validateFull());
 }
 
 test "validate dictionary storage" {
@@ -766,7 +910,8 @@ test "validate dictionary storage" {
     defer bad_index_values.deinit();
     const bad_index = try ArrayData.initRetained(allocator, dict_ty, 1, 0, 0, &.{ null, bad_index_values }, &.{}, dict);
     defer bad_index.deinit();
-    try std.testing.expectError(error.DictionaryIndexOutOfBounds, bad_index.validate());
+    try bad_index.validate();
+    try std.testing.expectError(error.DictionaryIndexOutOfBounds, bad_index.validateFull());
 
     const empty = try ArrayData.initRetained(allocator, dict_ty, 0, 0, 0, &.{ null, null }, &.{}, dict);
     defer empty.deinit();
@@ -828,5 +973,6 @@ test "validate dense union storage" {
     defer bad_offsets.deinit();
     const invalid = try ArrayData.initRetained(allocator, union_ty, 3, 0, 0, &.{ type_ids, bad_offsets }, &.{ int_child, bool_child }, null);
     defer invalid.deinit();
-    try std.testing.expectError(error.UnionOffsetOutOfBounds, invalid.validate());
+    try invalid.validate();
+    try std.testing.expectError(error.UnionOffsetOutOfBounds, invalid.validateFull());
 }

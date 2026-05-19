@@ -20,7 +20,7 @@ const Buffer = buffer.Buffer;
 pub const Error = schema_export.Error || array_data.ValidateError || checked.Error;
 
 pub fn exportArray(allocator: Allocator, data: *ArrayData, out: *ArrowArray) Error!void {
-    try data.validate();
+    try data.validateFull();
 
     const length = try usizeToI64(data.len);
     const null_count: i64 = if (data.null_count) |nc| try usizeToI64(nc) else -1;

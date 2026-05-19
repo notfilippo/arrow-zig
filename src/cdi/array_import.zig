@@ -57,7 +57,7 @@ pub fn importArray(allocator: Allocator, ty: datatype.DataType, arr: *ArrowArray
     const data = try importArrayNode(allocator, ty, arr, &owner.handle);
     errdefer data.deinit();
 
-    try data.validate();
+    try data.validateFull();
 
     owner.moved = arr.*;
     owner.moved_valid = true;

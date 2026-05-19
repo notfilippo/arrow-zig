@@ -94,8 +94,8 @@ pub const RecordBatch = struct {
         data: *const ArrayData,
     ) Error!*RecordBatch {
         if (data.type.id() != .struct_) return error.NotStructArray;
-        try data.validate();
-        if (data.nullCount() != 0) return error.StructNullsUnsupported;
+        try data.validateFull();
+        if (data.logicalNullCount() != 0) return error.StructNullsUnsupported;
 
         const sliced_columns = try allocator.alloc(*ArrayData, data.children.len);
         defer allocator.free(sliced_columns);
@@ -177,10 +177,10 @@ fn validateColumns(batch_schema: *const Schema, columns: []const *ArrayData, len
     if (batch_schema.fieldCount() != columns.len) return error.FieldColumnCountMismatch;
 
     for (columns, 0..) |column_data, i| {
-        try column_data.validate();
+        try column_data.validateFull();
         const field_meta = batch_schema.field(i).?;
         if (!datatype.DataType.equals(field_meta.type.*, column_data.type)) return error.ColumnTypeMismatch;
-        if (!field_meta.nullable and column_data.nullCount() != 0) return error.NonNullableNulls;
+        if (!field_meta.nullable and column_data.logicalNullCount() != 0) return error.NonNullableNulls;
         if (column_data.len != len) return error.ColumnLengthMismatch;
     }
 }
@@ -384,6 +384,30 @@ test "RecordBatch rejects inconsistent inputs" {
         error.NonNullableNulls,
         RecordBatch.initFieldsRetained(allocator, &.{required_number_field}, 2, &.{numbers_with_null}),
     );
+
+    const builder = @import("builder.zig");
+    var dict_values_builder = builder.NumericBuilder(i32).init(allocator);
+    defer dict_values_builder.deinit();
+    try dict_values_builder.appendNull();
+    try dict_values_builder.append(10);
+    const dictionary = try dict_values_builder.finish();
+    defer dictionary.deinit();
+
+    var dict_builder = builder.DictionaryBuilder(i8).init(allocator, dictionary);
+    defer dict_builder.deinit();
+    try dict_builder.append(0);
+    try dict_builder.append(1);
+    const dict_data = try dict_builder.finish();
+    defer dict_data.deinit();
+    try std.testing.expectEqual(@as(usize, 1), dict_data.logicalNullCount());
+
+    const required_dict_field = try datatype.Field.create(allocator, "dict", &dict_data.type, false, &.{});
+    defer required_dict_field.deinit();
+    try std.testing.expectError(
+        error.NonNullableNulls,
+        RecordBatch.initFieldsRetained(allocator, &.{required_dict_field}, 2, &.{dict_data}),
+    );
+
     try std.testing.expectError(error.NotStructArray, RecordBatch.fromStructData(allocator, numbers));
 
     var validity_builder = bitmap.BitmapBuilder.init();
