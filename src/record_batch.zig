@@ -27,6 +27,7 @@ pub const Error = schema_mod.Error || checked.Error || array_data.ValidateError 
     StructNullsUnsupported,
     OffsetOutOfBounds,
 };
+pub const AccessError = schema_mod.AccessError;
 
 pub const RecordBatch = struct {
     allocator: Allocator,
@@ -130,6 +131,108 @@ pub const RecordBatch = struct {
         );
     }
 
+    pub fn cloneRetained(self: *const RecordBatch) Error!*RecordBatch {
+        return initRetained(self.allocator, self.schema, self.len, self.columns);
+    }
+
+    pub fn slice(self: *const RecordBatch, off: usize, length: usize) Error!*RecordBatch {
+        return self.sliceChecked(off, length);
+    }
+
+    pub fn sliceChecked(self: *const RecordBatch, off: usize, length: usize) Error!*RecordBatch {
+        if (off > self.len) return error.OffsetOutOfBounds;
+        const clamped = @min(length, self.len - off);
+        const sliced_columns = try self.allocator.alloc(*ArrayData, self.columns.len);
+        defer self.allocator.free(sliced_columns);
+
+        var sliced: usize = 0;
+        errdefer {
+            for (sliced_columns[0..sliced]) |column_data| column_data.deinit();
+        }
+        for (self.columns, 0..) |column_data, i| {
+            sliced_columns[i] = try column_data.sliceChecked(off, clamped);
+            sliced += 1;
+        }
+
+        const batch = try initRetained(self.allocator, self.schema, clamped, sliced_columns);
+        for (sliced_columns) |column_data| column_data.deinit();
+        return batch;
+    }
+
+    pub fn replaceSchemaMetadata(self: *const RecordBatch, schema_metadata: []const datatype.MetadataEntry) Error!*RecordBatch {
+        const new_schema = try self.schema.replaceMetadata(schema_metadata);
+        defer new_schema.deinit();
+        return initRetained(self.allocator, new_schema, self.len, self.columns);
+    }
+
+    pub fn removeSchemaMetadata(self: *const RecordBatch) Error!*RecordBatch {
+        return self.replaceSchemaMetadata(&.{});
+    }
+
+    pub fn addColumn(
+        self: *const RecordBatch,
+        index: usize,
+        field_meta: *const datatype.Field,
+        column_data: *ArrayData,
+    ) (Error || AccessError)!*RecordBatch {
+        if (column_data.len != self.len) return error.ColumnLengthMismatch;
+        const new_schema = try self.schema.addField(index, field_meta);
+        defer new_schema.deinit();
+
+        const new_columns = try self.allocator.alloc(*ArrayData, self.columns.len + 1);
+        defer self.allocator.free(new_columns);
+        @memcpy(new_columns[0..index], self.columns[0..index]);
+        new_columns[index] = column_data;
+        @memcpy(new_columns[index + 1 ..], self.columns[index..]);
+        return initRetained(self.allocator, new_schema, self.len, new_columns);
+    }
+
+    pub fn setColumn(
+        self: *const RecordBatch,
+        index: usize,
+        field_meta: *const datatype.Field,
+        column_data: *ArrayData,
+    ) (Error || AccessError)!*RecordBatch {
+        if (index >= self.columns.len) return error.IndexOutOfBounds;
+        if (column_data.len != self.len) return error.ColumnLengthMismatch;
+        const new_schema = try self.schema.setField(index, field_meta);
+        defer new_schema.deinit();
+
+        const new_columns = try self.allocator.alloc(*ArrayData, self.columns.len);
+        defer self.allocator.free(new_columns);
+        @memcpy(new_columns, self.columns);
+        new_columns[index] = column_data;
+        return initRetained(self.allocator, new_schema, self.len, new_columns);
+    }
+
+    pub fn removeColumn(self: *const RecordBatch, index: usize) (Error || AccessError)!*RecordBatch {
+        if (index >= self.columns.len) return error.IndexOutOfBounds;
+        const new_schema = try self.schema.removeField(index);
+        defer new_schema.deinit();
+
+        const new_columns = try self.allocator.alloc(*ArrayData, self.columns.len - 1);
+        defer self.allocator.free(new_columns);
+        @memcpy(new_columns[0..index], self.columns[0..index]);
+        @memcpy(new_columns[index..], self.columns[index + 1 ..]);
+        return initRetained(self.allocator, new_schema, self.len, new_columns);
+    }
+
+    pub fn selectColumns(self: *const RecordBatch, indices: []const usize) (Error || AccessError)!*RecordBatch {
+        const new_schema = try self.schema.selectFields(indices);
+        defer new_schema.deinit();
+
+        const new_columns = try self.allocator.alloc(*ArrayData, indices.len);
+        defer self.allocator.free(new_columns);
+        for (indices, 0..) |index, i| {
+            new_columns[i] = @constCast(try self.columnChecked(index));
+        }
+        return initRetained(self.allocator, new_schema, self.len, new_columns);
+    }
+
+    pub fn validateFull(self: *const RecordBatch) Error!void {
+        try validateColumns(self.schema, self.columns, self.len);
+    }
+
     pub fn fieldCount(self: *const RecordBatch) usize {
         return self.schema.fieldCount();
     }
@@ -142,16 +245,31 @@ pub const RecordBatch = struct {
         return self.schema.field(index);
     }
 
+    pub fn fieldChecked(self: *const RecordBatch, index: usize) AccessError!*const datatype.Field {
+        return self.schema.fieldChecked(index);
+    }
+
     pub fn column(self: *const RecordBatch, index: usize) ?*const ArrayData {
         if (index >= self.columns.len) return null;
         return self.columns[index];
     }
 
+    pub fn columnChecked(self: *const RecordBatch, index: usize) AccessError!*const ArrayData {
+        if (index >= self.columns.len) return error.IndexOutOfBounds;
+        return self.columns[index];
+    }
+
+    pub fn columnIndex(self: *const RecordBatch, name: []const u8) ?usize {
+        return self.schema.fieldIndex(name);
+    }
+
     pub fn columnNamed(self: *const RecordBatch, name: []const u8) ?*const ArrayData {
-        for (self.fields(), 0..) |field_meta, i| {
-            if (std.mem.eql(u8, field_meta.name, name)) return self.columns[i];
-        }
-        return null;
+        const index = self.columnIndex(name) orelse return null;
+        return self.columns[index];
+    }
+
+    pub fn columnNamedChecked(self: *const RecordBatch, name: []const u8) AccessError!*const ArrayData {
+        return self.columnNamed(name) orelse error.FieldNotFound;
     }
 
     pub fn retain(self: *RecordBatch) *RecordBatch {
@@ -259,10 +377,28 @@ test "RecordBatch retains schema and columns" {
         try std.testing.expectEqual(@as(usize, 2), flags.refCount());
         try std.testing.expect(batch.fields()[0].type != &number_ty);
         try std.testing.expectEqualStrings("number", batch.field(0).?.name);
+        try std.testing.expectEqualStrings("number", (try batch.fieldChecked(0)).name);
+        try std.testing.expectError(error.IndexOutOfBounds, batch.fieldChecked(9));
         try std.testing.expect(!batch.field(1).?.nullable);
         try std.testing.expect(batch.column(3) == null);
+        try std.testing.expectError(error.IndexOutOfBounds, batch.columnChecked(3));
+        try std.testing.expectEqual(@as(?usize, 1), batch.columnIndex("flag"));
         try std.testing.expect(batch.columnNamed("flag") != null);
+        try std.testing.expect(try batch.columnNamedChecked("flag") == flags);
         try std.testing.expect(batch.columnNamed("missing") == null);
+        try std.testing.expectError(error.FieldNotFound, batch.columnNamedChecked("missing"));
+
+        const clone = try batch.cloneRetained();
+        defer clone.deinit();
+        try std.testing.expectEqual(@as(usize, 3), clone.len);
+        try std.testing.expectEqual(@as(usize, 3), batch_schema.refCount());
+
+        const sliced = try batch.sliceChecked(1, 9);
+        defer sliced.deinit();
+        try std.testing.expectEqual(@as(usize, 2), sliced.len);
+        const sliced_numbers = try @import("array.zig").NumericArray(i32).fromData(try sliced.columnChecked(0));
+        try std.testing.expectEqual(@as(i32, 20), sliced_numbers.value(0));
+        try std.testing.expectError(error.OffsetOutOfBounds, batch.sliceChecked(4, 1));
 
         _ = batch.retain();
         try std.testing.expectEqual(@as(usize, 2), batch.refCount());
@@ -270,6 +406,64 @@ test "RecordBatch retains schema and columns" {
         try std.testing.expectEqual(@as(usize, 1), batch.refCount());
     }
     try std.testing.expectEqual(@as(usize, 1), batch_schema.refCount());
+}
+
+test "RecordBatch returns transformed batches" {
+    const allocator = std.testing.allocator;
+    const numbers = try numberArray(allocator, &.{ 10, 20, 30 });
+    defer numbers.deinit();
+    const flags = try boolArray(allocator, &.{ true, false, true });
+    defer flags.deinit();
+    const scores = try numberArray(allocator, &.{ 1, 2, 3 });
+    defer scores.deinit();
+
+    const number_ty: datatype.DataType = .int32;
+    const flag_ty: datatype.DataType = .bool;
+    const number_field = try datatype.Field.create(allocator, "number", &number_ty, true, &.{});
+    defer number_field.deinit();
+    const flag_field = try datatype.Field.create(allocator, "flag", &flag_ty, true, &.{});
+    defer flag_field.deinit();
+    const score_field = try datatype.Field.create(allocator, "score", &number_ty, true, &.{});
+    defer score_field.deinit();
+
+    const metadata = [_]datatype.MetadataEntry{.{ .key = "source", .value = "test" }};
+    const batch_schema = try Schema.init(allocator, &.{ number_field, flag_field }, &metadata);
+    defer batch_schema.deinit();
+    const batch = try RecordBatch.initRetained(allocator, batch_schema, 3, &.{ numbers, flags });
+    defer batch.deinit();
+
+    const added = try batch.addColumn(1, score_field, scores);
+    defer added.deinit();
+    try std.testing.expectEqual(@as(usize, 3), added.fieldCount());
+    try std.testing.expectEqualStrings("score", added.field(1).?.name);
+
+    const set = try added.setColumn(2, score_field, scores);
+    defer set.deinit();
+    try std.testing.expectEqualStrings("score", set.field(2).?.name);
+
+    const selected = try added.selectColumns(&.{ 2, 0 });
+    defer selected.deinit();
+    try std.testing.expectEqual(@as(usize, 2), selected.fieldCount());
+    try std.testing.expectEqualStrings("flag", selected.field(0).?.name);
+    try std.testing.expectEqualStrings("number", selected.field(1).?.name);
+
+    const removed = try added.removeColumn(1);
+    defer removed.deinit();
+    try std.testing.expectEqual(@as(usize, 2), removed.fieldCount());
+    try std.testing.expectEqualStrings("flag", removed.field(1).?.name);
+
+    const no_metadata = try batch.removeSchemaMetadata();
+    defer no_metadata.deinit();
+    try std.testing.expectEqual(@as(usize, 0), no_metadata.schema.metadata().len);
+    const replaced = try no_metadata.replaceSchemaMetadata(&metadata);
+    defer replaced.deinit();
+    try std.testing.expectEqualStrings("test", replaced.schema.metadataValue("source").?);
+
+    const short = try numberArray(allocator, &.{1});
+    defer short.deinit();
+    try std.testing.expectError(error.ColumnLengthMismatch, batch.addColumn(1, score_field, short));
+    try std.testing.expectError(error.IndexOutOfBounds, batch.removeColumn(9));
+    try std.testing.expectError(error.IndexOutOfBounds, batch.selectColumns(&.{9}));
 }
 
 test "RecordBatch converts to struct data" {

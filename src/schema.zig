@@ -14,6 +14,7 @@ const RefCount = @import("refcount.zig").RefCount;
 
 pub const MetadataEntry = datatype.MetadataEntry;
 pub const Error = Allocator.Error || datatype.ValidationError;
+pub const AccessError = error{ IndexOutOfBounds, FieldNotFound };
 
 pub const Schema = struct {
     allocator: Allocator,
@@ -57,6 +58,10 @@ pub const Schema = struct {
         return self;
     }
 
+    pub fn cloneRetained(self: *const Schema) Error!*Schema {
+        return Schema.init(self.allocator, self.field_meta, self.schema_metadata);
+    }
+
     pub fn deinit(self: *Schema) void {
         if (self.ref_count.fetchSub(1, .acq_rel) != 1) return;
         const allocator = self.allocator;
@@ -92,11 +97,24 @@ pub const Schema = struct {
         return self.field_meta[index];
     }
 
-    pub fn fieldNamed(self: *const Schema, name: []const u8) ?*const datatype.Field {
-        for (self.field_meta) |f| {
-            if (std.mem.eql(u8, f.name, name)) return f;
+    pub fn fieldChecked(self: *const Schema, index: usize) AccessError!*const datatype.Field {
+        return self.field(index) orelse error.IndexOutOfBounds;
+    }
+
+    pub fn fieldIndex(self: *const Schema, name: []const u8) ?usize {
+        for (self.field_meta, 0..) |f, i| {
+            if (std.mem.eql(u8, f.name, name)) return i;
         }
         return null;
+    }
+
+    pub fn fieldNamed(self: *const Schema, name: []const u8) ?*const datatype.Field {
+        const index = self.fieldIndex(name) orelse return null;
+        return self.field_meta[index];
+    }
+
+    pub fn fieldNamedChecked(self: *const Schema, name: []const u8) AccessError!*const datatype.Field {
+        return self.fieldNamed(name) orelse error.FieldNotFound;
     }
 
     pub fn metadata(self: *const Schema) []const MetadataEntry {
@@ -108,6 +126,54 @@ pub const Schema = struct {
             if (std.mem.eql(u8, entry.key, key)) return entry.value;
         }
         return null;
+    }
+
+    pub fn replaceMetadata(self: *const Schema, schema_metadata: []const MetadataEntry) Error!*Schema {
+        return Schema.init(self.allocator, self.field_meta, schema_metadata);
+    }
+
+    pub fn removeMetadata(self: *const Schema) Error!*Schema {
+        return self.replaceMetadata(&.{});
+    }
+
+    pub fn addField(self: *const Schema, index: usize, field_meta: *const datatype.Field) (Error || AccessError)!*Schema {
+        if (index > self.field_meta.len) return error.IndexOutOfBounds;
+
+        const new_fields = try self.allocator.alloc(*const datatype.Field, self.field_meta.len + 1);
+        defer self.allocator.free(new_fields);
+        @memcpy(new_fields[0..index], self.field_meta[0..index]);
+        new_fields[index] = field_meta;
+        @memcpy(new_fields[index + 1 ..], self.field_meta[index..]);
+        return Schema.init(self.allocator, new_fields, self.schema_metadata);
+    }
+
+    pub fn setField(self: *const Schema, index: usize, field_meta: *const datatype.Field) (Error || AccessError)!*Schema {
+        if (index >= self.field_meta.len) return error.IndexOutOfBounds;
+
+        const new_fields = try self.allocator.alloc(*const datatype.Field, self.field_meta.len);
+        defer self.allocator.free(new_fields);
+        @memcpy(new_fields, self.field_meta);
+        new_fields[index] = field_meta;
+        return Schema.init(self.allocator, new_fields, self.schema_metadata);
+    }
+
+    pub fn removeField(self: *const Schema, index: usize) (Error || AccessError)!*Schema {
+        if (index >= self.field_meta.len) return error.IndexOutOfBounds;
+
+        const new_fields = try self.allocator.alloc(*const datatype.Field, self.field_meta.len - 1);
+        defer self.allocator.free(new_fields);
+        @memcpy(new_fields[0..index], self.field_meta[0..index]);
+        @memcpy(new_fields[index..], self.field_meta[index + 1 ..]);
+        return Schema.init(self.allocator, new_fields, self.schema_metadata);
+    }
+
+    pub fn selectFields(self: *const Schema, indices: []const usize) (Error || AccessError)!*Schema {
+        const new_fields = try self.allocator.alloc(*const datatype.Field, indices.len);
+        defer self.allocator.free(new_fields);
+        for (indices, 0..) |index, i| {
+            new_fields[i] = try self.fieldChecked(index);
+        }
+        return Schema.init(self.allocator, new_fields, self.schema_metadata);
     }
 };
 
@@ -151,13 +217,49 @@ test "Schema owns fields metadata and ref count" {
 
     try std.testing.expectEqual(@as(usize, 1), s.fieldCount());
     try std.testing.expectEqualStrings("number", s.field(0).?.name);
+    try std.testing.expectEqualStrings("number", (try s.fieldChecked(0)).name);
     try std.testing.expect(s.field(0).?.type != &int_ty);
     try std.testing.expectEqualStrings("ms", s.field(0).?.metadata[0].value);
     try std.testing.expect(s.field(9) == null);
+    try std.testing.expectError(error.IndexOutOfBounds, s.fieldChecked(9));
+    try std.testing.expectEqual(@as(?usize, 0), s.fieldIndex("number"));
     try std.testing.expect(s.fieldNamed("number") != null);
+    try std.testing.expectEqualStrings("number", (try s.fieldNamedChecked("number")).name);
     try std.testing.expect(s.fieldNamed("missing") == null);
+    try std.testing.expectError(error.FieldNotFound, s.fieldNamedChecked("missing"));
     try std.testing.expectEqualStrings("test", s.metadataValue("source").?);
     try std.testing.expect(s.metadataValue("missing") == null);
+
+    const clone = try s.cloneRetained();
+    defer clone.deinit();
+    try std.testing.expect(Schema.equals(s, clone));
+
+    const no_metadata = try s.removeMetadata();
+    defer no_metadata.deinit();
+    try std.testing.expectEqual(@as(usize, 0), no_metadata.metadata().len);
+
+    const bool_ty: datatype.DataType = .bool;
+    const flag_field = try datatype.Field.create(allocator, "flag", &bool_ty, false, &.{});
+    defer flag_field.deinit();
+
+    const added = try s.addField(1, flag_field);
+    defer added.deinit();
+    try std.testing.expectEqual(@as(usize, 2), added.fieldCount());
+    try std.testing.expectEqualStrings("flag", added.field(1).?.name);
+
+    const set = try added.setField(0, flag_field);
+    defer set.deinit();
+    try std.testing.expectEqualStrings("flag", set.field(0).?.name);
+
+    const selected = try added.selectFields(&.{1});
+    defer selected.deinit();
+    try std.testing.expectEqual(@as(usize, 1), selected.fieldCount());
+    try std.testing.expectEqualStrings("flag", selected.field(0).?.name);
+
+    const removed = try added.removeField(0);
+    defer removed.deinit();
+    try std.testing.expectEqualStrings("flag", removed.field(0).?.name);
+    try std.testing.expectError(error.IndexOutOfBounds, added.removeField(9));
 }
 
 test "Schema equality includes ordered metadata" {

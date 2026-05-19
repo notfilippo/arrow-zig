@@ -176,6 +176,10 @@ pub const ArrayData = struct {
     }
 
     pub fn slice(self: *const ArrayData, off: usize, length: usize) DataSliceError!*ArrayData {
+        return self.sliceChecked(off, length);
+    }
+
+    pub fn sliceChecked(self: *const ArrayData, off: usize, length: usize) DataSliceError!*ArrayData {
         if (off > self.len) return error.OffsetOutOfBounds;
         const clamped = @min(length, self.len - off);
         const abs_offset = try checked.add(self.offset, off);
@@ -592,6 +596,10 @@ test "ArrayData slice retains buffers and adjusts metadata" {
     try std.testing.expectEqual(@as(usize, 1), sliced.nullCount());
     try std.testing.expectEqual(@as(usize, 2), validity.refCount());
     try std.testing.expectEqual(@as(usize, 2), values.refCount());
+
+    const checked_slice = try data.sliceChecked(0, 1);
+    defer checked_slice.deinit();
+    try std.testing.expectEqual(@as(usize, 1), checked_slice.len);
 }
 
 test "ArrayData slice clamps length and rejects bad offset" {
