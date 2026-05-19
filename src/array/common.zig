@@ -134,11 +134,11 @@ pub fn ValidityView(comptime nulls: enum { bitmap, none, all }) type {
         }
 
         pub fn sliceChecked(self: Self, off: usize, length: usize) SliceError!Self {
-            const base = try self.base.sliceChecked(off, length);
+            const sliced = try self.base.sliceChecked(off, length);
             return .{
-                .base = base,
+                .base = sliced,
                 .null_count = if (nulls == .bitmap)
-                    array_data.slicedNullCount(self.null_count, self.base.len, off, base.len)
+                    array_data.slicedNullCount(self.null_count, self.base.len, off, sliced.len)
                 else {},
             };
         }

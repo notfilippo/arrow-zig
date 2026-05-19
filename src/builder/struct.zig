@@ -6,11 +6,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("../checked.zig");
-const bitmap = @import("../bitmap.zig");
 const datatype = @import("../datatype.zig");
 const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
-const Buffer = @import("../buffer.zig").Buffer;
 const common = @import("common.zig");
 
 pub const FieldOptions = struct {
@@ -35,8 +33,7 @@ pub fn StructBuilder(comptime ChildBuilders: type) type {
 
         allocator: Allocator,
         children: ChildBuilders,
-        validity: bitmap.BitmapBuilder,
-        len: usize,
+        slots: common.Slots,
         field_names: [field_count][]const u8,
         owned_field_names: [field_count]?[]u8,
         field_nullable: [field_count]bool,
@@ -45,8 +42,7 @@ pub fn StructBuilder(comptime ChildBuilders: type) type {
             return .{
                 .allocator = allocator,
                 .children = initChildBuilders(ChildBuilders, allocator),
-                .validity = bitmap.BitmapBuilder.init(),
-                .len = 0,
+                .slots = common.Slots.init(),
                 .field_names = defaultStructFieldNames(ChildBuilders),
                 .owned_field_names = [_]?[]u8{null} ** field_count,
                 .field_nullable = [_]bool{true} ** field_count,
@@ -92,14 +88,13 @@ pub fn StructBuilder(comptime ChildBuilders: type) type {
 
         pub fn reserve(self: *Self, additional: usize) Error!void {
             if (additional == 0) return;
-            try self.validity.ensureCapacityForBits(self.allocator, @max(additional, common.kMinBuilderCapacity));
+            try self.slots.reserve(self.allocator, @max(additional, common.kMinBuilderCapacity));
         }
 
         pub fn append(self: *Self) Error!void {
-            try self.expectChildLengths(try checked.add(self.len, 1));
+            try self.expectChildLengths(try checked.add(self.slots.len, 1));
             try self.reserve(1);
-            self.validity.unsafeAppend(true);
-            self.len = try checked.add(self.len, 1);
+            try self.slots.unsafeAppendN(true, 1);
         }
 
         pub fn appendNull(self: *Self) Error!void {
@@ -108,11 +103,10 @@ pub fn StructBuilder(comptime ChildBuilders: type) type {
 
         pub fn appendNulls(self: *Self, n: usize) Error!void {
             if (n == 0) return;
-            try self.expectChildLengths(self.len);
+            try self.expectChildLengths(self.slots.len);
             try self.reserve(n);
             try self.appendChildEmptyValues(n);
-            self.validity.unsafeAppendN(false, n);
-            self.len = try checked.add(self.len, n);
+            try self.slots.unsafeAppendN(false, n);
         }
 
         pub fn appendEmptyValue(self: *Self) Error!void {
@@ -121,25 +115,22 @@ pub fn StructBuilder(comptime ChildBuilders: type) type {
 
         pub fn appendEmptyValues(self: *Self, n: usize) Error!void {
             if (n == 0) return;
-            try self.expectChildLengths(self.len);
+            try self.expectChildLengths(self.slots.len);
             try self.reserve(n);
             try self.appendChildEmptyValues(n);
-            self.validity.unsafeAppendN(true, n);
-            self.len = try checked.add(self.len, n);
+            try self.slots.unsafeAppendN(true, n);
         }
 
         pub fn length(self: Self) usize {
-            return self.len;
+            return self.slots.length();
         }
 
         pub fn finish(self: *Self) Error!*ArrayData {
-            try self.expectChildLengths(self.len);
+            try self.expectChildLengths(self.slots.len);
 
-            const n = self.len;
-            const null_count = self.validity.false_count;
             var consumed = false;
             errdefer if (consumed) {
-                self.len = 0;
+                self.slots.len = 0;
             };
 
             var child_data: [field_count]*ArrayData = undefined;
@@ -171,13 +162,12 @@ pub fn StructBuilder(comptime ChildBuilders: type) type {
                 created_fields += 1;
             }
 
-            const validity_buf: ?*Buffer = try self.validity.finishNullable(self.allocator);
-            errdefer if (validity_buf) |buf| buf.deinit();
+            const slots = try self.slots.finish(self.allocator);
+            errdefer if (slots.validity) |buf| buf.deinit();
 
             const ty = datatype.DataType{ .struct_ = .{ .fields = &field_meta } };
-            const data = try ArrayData.initOwned(self.allocator, ty, n, 0, null_count, &.{validity_buf}, child_data[0..], null);
+            const data = try ArrayData.initOwned(self.allocator, ty, slots.len, 0, slots.null_count, &.{slots.validity}, child_data[0..], null);
             for (field_meta[0..created_fields]) |field_ptr| field_ptr.deinit();
-            self.len = 0;
             return data;
         }
 
@@ -204,7 +194,7 @@ pub fn StructBuilder(comptime ChildBuilders: type) type {
         }
 
         fn clearStructState(self: *Self, comptime clear_field_options: bool) void {
-            self.validity.deinit();
+            self.slots.deinit();
             if (clear_field_options) {
                 inline for (0..field_count) |i| {
                     if (self.owned_field_names[i]) |name| self.allocator.free(name);
@@ -213,7 +203,6 @@ pub fn StructBuilder(comptime ChildBuilders: type) type {
                     self.field_nullable[i] = true;
                 }
             }
-            self.len = 0;
         }
     };
 }

@@ -6,11 +6,11 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("../checked.zig");
-const bitmap = @import("../bitmap.zig");
 const datatype = @import("../datatype.zig");
 const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
 const Buffer = @import("../buffer.zig").Buffer;
+const common = @import("common.zig");
 
 pub const IntervalBuilderError = Allocator.Error || checked.Error || error{InvalidByteWidth};
 
@@ -42,15 +42,13 @@ pub fn IntervalBuilder(comptime kind: array.IntervalKind) type {
 
         allocator: Allocator,
         values: ?*Buffer,
-        validity: bitmap.BitmapBuilder,
-        len: usize,
+        slots: common.Slots,
 
         pub fn init(allocator: Allocator) Self {
             return .{
                 .allocator = allocator,
                 .values = null,
-                .validity = bitmap.BitmapBuilder.init(),
-                .len = 0,
+                .slots = common.Slots.init(),
             };
         }
 
@@ -61,8 +59,7 @@ pub fn IntervalBuilder(comptime kind: array.IntervalKind) type {
         pub fn reset(self: *Self) void {
             if (self.values) |buf| buf.deinit();
             self.values = null;
-            self.validity.deinit();
-            self.len = 0;
+            self.slots.deinit();
         }
 
         pub fn reserve(self: *Self, additional: usize) Error!void {
@@ -70,7 +67,7 @@ pub fn IntervalBuilder(comptime kind: array.IntervalKind) type {
             const values = try self.ensureValues();
             const byte_len = try checked.mul(additional, width);
             try values.reserve(try checked.add(values.size, byte_len));
-            try self.validity.ensureCapacityForBits(self.allocator, additional);
+            try self.slots.reserve(self.allocator, additional);
         }
 
         pub fn append(self: *Self, value: Value) Error!void {
@@ -78,8 +75,7 @@ pub fn IntervalBuilder(comptime kind: array.IntervalKind) type {
             const values = self.values.?;
             writeValue(kind, values.data[values.size..][0..width], value);
             values.size = try checked.add(values.size, width);
-            self.validity.unsafeAppend(true);
-            self.len += 1;
+            self.slots.unsafeAppend(true);
         }
 
         pub fn appendBytes(self: *Self, bytes: []const u8) Error!void {
@@ -88,8 +84,7 @@ pub fn IntervalBuilder(comptime kind: array.IntervalKind) type {
             const values = self.values.?;
             @memcpy(values.data[values.size..][0..width], bytes);
             values.size = try checked.add(values.size, width);
-            self.validity.unsafeAppend(true);
-            self.len += 1;
+            self.slots.unsafeAppend(true);
         }
 
         pub fn appendNull(self: *Self) Error!void {
@@ -111,20 +106,16 @@ pub fn IntervalBuilder(comptime kind: array.IntervalKind) type {
         }
 
         pub fn length(self: Self) usize {
-            return self.len;
+            return self.slots.length();
         }
 
         pub fn finish(self: *Self) Error!*ArrayData {
-            const n = self.len;
-            const null_count = self.validity.false_count;
-            self.len = 0;
-
             const values_buf = try self.finishValues();
             errdefer values_buf.deinit();
-            const validity_buf = try self.validity.finishNullable(self.allocator);
-            errdefer if (validity_buf) |buf| buf.deinit();
+            const slots = try self.slots.finish(self.allocator);
+            errdefer if (slots.validity) |buf| buf.deinit();
 
-            return ArrayData.initOwned(self.allocator, dataTypeForKind(kind), n, 0, null_count, &.{ validity_buf, values_buf }, &.{}, null);
+            return ArrayData.initOwned(self.allocator, dataTypeForKind(kind), slots.len, 0, slots.null_count, &.{ slots.validity, values_buf }, &.{}, null);
         }
 
         fn appendZeroes(self: *Self, n: usize, valid: bool) Error!void {
@@ -134,8 +125,7 @@ pub fn IntervalBuilder(comptime kind: array.IntervalKind) type {
             const end = try checked.add(values.size, byte_len);
             if (byte_len != 0) @memset(values.data[values.size..end], 0);
             values.size = end;
-            self.validity.unsafeAppendN(valid, n);
-            self.len = try checked.add(self.len, n);
+            try self.slots.unsafeAppendN(valid, n);
         }
 
         fn ensureValues(self: *Self) Error!*Buffer {

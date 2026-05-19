@@ -6,12 +6,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("../checked.zig");
-const bitmap = @import("../bitmap.zig");
 const datatype = @import("../datatype.zig");
 const offset_data = @import("../offsets.zig");
 const array = @import("../array.zig");
 const ArrayData = array.ArrayData;
-const Buffer = @import("../buffer.zig").Buffer;
 const common = @import("common.zig");
 
 pub const MapOptions = struct {
@@ -38,8 +36,7 @@ pub fn MapBuilder(comptime KeyBuilder: type, comptime ValueBuilder: type) type {
         key_builder: KeyBuilder,
         value_builder: ValueBuilder,
         offsets: offset_data.Builder(i32),
-        validity: bitmap.BitmapBuilder,
-        len: usize,
+        slots: common.Slots,
         last_entry_len: usize,
         entries_name: []const u8,
         key_name: []const u8,
@@ -56,8 +53,7 @@ pub fn MapBuilder(comptime KeyBuilder: type, comptime ValueBuilder: type) type {
                 .key_builder = KeyBuilder.init(allocator),
                 .value_builder = ValueBuilder.init(allocator),
                 .offsets = offset_data.Builder(i32).init(),
-                .validity = bitmap.BitmapBuilder.init(),
-                .len = 0,
+                .slots = common.Slots.init(),
                 .last_entry_len = 0,
                 .entries_name = "entries",
                 .key_name = "key",
@@ -112,10 +108,10 @@ pub fn MapBuilder(comptime KeyBuilder: type, comptime ValueBuilder: type) type {
 
         pub fn reserve(self: *Self, additional: usize) Error!void {
             if (additional == 0) return;
-            const new_len = try checked.add(self.len, additional);
+            const new_len = try checked.add(self.slots.len, additional);
             const capped_len = @max(new_len, common.kMinBuilderCapacity);
             try self.offsets.reserveSlots(self.allocator, try checked.add(capped_len, 1));
-            try self.validity.ensureCapacityForBits(self.allocator, additional);
+            try self.slots.reserve(self.allocator, additional);
         }
 
         pub fn append(self: *Self) Error!void {
@@ -138,8 +134,7 @@ pub fn MapBuilder(comptime KeyBuilder: type, comptime ValueBuilder: type) type {
             try self.ensureNoPending();
             try self.reserve(n);
             try self.offsets.appendRepeat(self.allocator, n, self.last_entry_len);
-            self.validity.unsafeAppendN(false, n);
-            self.len = try checked.add(self.len, n);
+            try self.slots.unsafeAppendN(false, n);
         }
 
         pub fn appendEmptyValue(self: *Self) Error!void {
@@ -153,23 +148,20 @@ pub fn MapBuilder(comptime KeyBuilder: type, comptime ValueBuilder: type) type {
             try self.ensureNoPending();
             try self.reserve(n);
             try self.offsets.appendRepeat(self.allocator, n, self.last_entry_len);
-            self.validity.unsafeAppendN(true, n);
-            self.len = try checked.add(self.len, n);
+            try self.slots.unsafeAppendN(true, n);
         }
 
         pub fn length(self: Self) usize {
-            return self.len;
+            return self.slots.length();
         }
 
         pub fn finish(self: *Self) Error!*ArrayData {
             const entry_len = try self.entryLength();
             if (entry_len != self.last_entry_len) return error.UnclosedMapEntries;
 
-            const n = self.len;
-            const null_count = self.validity.false_count;
             var consumed = false;
             errdefer if (consumed) {
-                self.len = 0;
+                self.slots.len = 0;
                 self.last_entry_len = 0;
             };
 
@@ -203,8 +195,8 @@ pub fn MapBuilder(comptime KeyBuilder: type, comptime ValueBuilder: type) type {
             value_field.deinit();
             value_field_owned = false;
 
-            const validity_buf: ?*Buffer = try self.validity.finishNullable(self.allocator);
-            errdefer if (validity_buf) |buf| buf.deinit();
+            const slots = try self.slots.finish(self.allocator);
+            errdefer if (slots.validity) |buf| buf.deinit();
 
             const entries_field = try datatype.Field.create(self.allocator, self.entries_name, &entries_data.type, false, &.{});
             errdefer entries_field.deinit();
@@ -212,17 +204,15 @@ pub fn MapBuilder(comptime KeyBuilder: type, comptime ValueBuilder: type) type {
                 .entries = entries_field,
                 .keys_sorted = self.keys_sorted,
             } };
-            const data = try ArrayData.initOwned(self.allocator, ty, n, 0, null_count, &.{ validity_buf, offsets_buf }, &.{entries_data}, null);
+            const data = try ArrayData.initOwned(self.allocator, ty, slots.len, 0, slots.null_count, &.{ slots.validity, offsets_buf }, &.{entries_data}, null);
             entries_field.deinit();
-            self.len = 0;
             self.last_entry_len = 0;
             return data;
         }
 
         fn appendOffset(self: *Self, entry_len: usize, valid: bool) Error!void {
             try self.offsets.append(self.allocator, entry_len);
-            self.validity.unsafeAppend(valid);
-            self.len += 1;
+            self.slots.unsafeAppend(valid);
             self.last_entry_len = entry_len;
         }
 
@@ -239,7 +229,7 @@ pub fn MapBuilder(comptime KeyBuilder: type, comptime ValueBuilder: type) type {
 
         fn clearMapState(self: *Self, comptime clear_field_options: bool) void {
             self.offsets.deinit();
-            self.validity.deinit();
+            self.slots.deinit();
             if (clear_field_options) {
                 if (self.owned_entries_name) |name| self.allocator.free(name);
                 if (self.owned_key_name) |name| self.allocator.free(name);
@@ -253,7 +243,6 @@ pub fn MapBuilder(comptime KeyBuilder: type, comptime ValueBuilder: type) type {
                 self.value_nullable = true;
                 self.keys_sorted = false;
             }
-            self.len = 0;
             self.last_entry_len = 0;
         }
     };

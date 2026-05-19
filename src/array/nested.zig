@@ -9,7 +9,7 @@
 const std = @import("std");
 const datatype = @import("../datatype.zig");
 const array_data = @import("data.zig");
-const common = @import("base.zig");
+const common = @import("common.zig");
 const Buffer = @import("../buffer.zig").Buffer;
 const ArrayData = array_data.ArrayData;
 

@@ -9,7 +9,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("../checked.zig");
-const bitmap = @import("../bitmap.zig");
 const datatype = @import("../datatype.zig");
 const offset_data = @import("../offsets.zig");
 const array = @import("../array.zig");
@@ -33,16 +32,14 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
         allocator: Allocator,
         offsets: offset_data.Builder(Offset),
         values: ?*Buffer,
-        validity: bitmap.BitmapBuilder,
-        len: usize,
+        slots: common.Slots,
 
         pub fn init(allocator: Allocator) Self {
             return .{
                 .allocator = allocator,
                 .offsets = offset_data.Builder(Offset).init(),
                 .values = null,
-                .validity = bitmap.BitmapBuilder.init(),
-                .len = 0,
+                .slots = common.Slots.init(),
             };
         }
 
@@ -55,19 +52,18 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             self.offsets.deinit();
             if (self.values) |buf| buf.deinit();
             self.values = null;
-            self.validity.deinit();
-            self.len = 0;
+            self.slots.deinit();
         }
 
         pub fn reserve(self: *Self, additional: usize, additional_bytes: usize) Error!void {
             if (additional == 0 and additional_bytes == 0) return;
-            const new_len = try checked.add(self.len, additional);
+            const new_len = try checked.add(self.slots.len, additional);
             const capped_len = @max(new_len, common.kMinBuilderCapacity);
             try self.offsets.reserveSlots(self.allocator, try checked.add(capped_len, 1));
 
             const values = try self.ensureValues();
             try values.reserve(try checked.add(values.size, additional_bytes));
-            try self.validity.ensureCapacityForBits(self.allocator, additional);
+            try self.slots.reserve(self.allocator, additional);
         }
 
         pub fn append(self: *Self, bytes: []const u8) Error!void {
@@ -85,8 +81,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             try self.reserve(1, 0);
             const values = self.values.?;
             try self.offsets.append(self.allocator, values.size);
-            self.validity.unsafeAppend(false);
-            self.len += 1;
+            self.slots.unsafeAppend(false);
         }
 
         pub fn appendNulls(self: *Self, n: usize) Error!void {
@@ -94,8 +89,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             try self.reserve(n, 0);
             const values = self.values.?;
             try self.offsets.appendRepeat(self.allocator, n, values.size);
-            self.validity.unsafeAppendN(false, n);
-            self.len = try checked.add(self.len, n);
+            try self.slots.unsafeAppendN(false, n);
         }
 
         /// Append a valid empty-bytes slot.
@@ -109,29 +103,24 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             try self.reserve(n, 0);
             const values = self.values.?;
             try self.offsets.appendRepeat(self.allocator, n, values.size);
-            self.validity.unsafeAppendN(true, n);
-            self.len = try checked.add(self.len, n);
+            try self.slots.unsafeAppendN(true, n);
         }
 
         pub fn length(self: Self) usize {
-            return self.len;
+            return self.slots.length();
         }
 
         /// Finish the builder and transfer the result to the caller.
         /// Caller owns the returned data and must call `deinit`.
         pub fn finish(self: *Self) Error!*ArrayData {
-            const n = self.len;
-            const null_count = self.validity.false_count;
-            self.len = 0;
-
             const offsets_buf = try self.offsets.finish(self.allocator);
             errdefer offsets_buf.deinit();
             const values_buf = try self.finishValues();
             errdefer values_buf.deinit();
-            const validity_buf = try self.validity.finishNullable(self.allocator);
-            errdefer if (validity_buf) |buf| buf.deinit();
+            const slots = try self.slots.finish(self.allocator);
+            errdefer if (slots.validity) |buf| buf.deinit();
 
-            return ArrayData.initOwned(self.allocator, dataTypeForKind(kind), n, 0, null_count, &.{ validity_buf, offsets_buf, values_buf }, &.{}, null);
+            return ArrayData.initOwned(self.allocator, dataTypeForKind(kind), slots.len, 0, slots.null_count, &.{ slots.validity, offsets_buf, values_buf }, &.{}, null);
         }
 
         fn appendUnchecked(self: *Self, bytes: []const u8) Error!void {
@@ -143,8 +132,7 @@ pub fn VarBinaryBuilder(comptime kind: array.VarBinaryKind) type {
             values.size = end;
 
             try self.offsets.append(self.allocator, end);
-            self.validity.unsafeAppend(true);
-            self.len += 1;
+            self.slots.unsafeAppend(true);
         }
 
         fn ensureValues(self: *Self) Error!*Buffer {
@@ -175,16 +163,14 @@ pub const FixedSizeBinaryBuilder = struct {
     allocator: Allocator,
     byte_width: usize,
     values: ?*Buffer,
-    validity: bitmap.BitmapBuilder,
-    len: usize,
+    slots: common.Slots,
 
     pub fn init(allocator: Allocator, byte_width: usize) FixedSizeBinaryBuilder {
         return .{
             .allocator = allocator,
             .byte_width = byte_width,
             .values = null,
-            .validity = bitmap.BitmapBuilder.init(),
-            .len = 0,
+            .slots = common.Slots.init(),
         };
     }
 
@@ -195,8 +181,7 @@ pub const FixedSizeBinaryBuilder = struct {
     pub fn reset(self: *FixedSizeBinaryBuilder) void {
         if (self.values) |buf| buf.deinit();
         self.values = null;
-        self.validity.deinit();
-        self.len = 0;
+        self.slots.deinit();
     }
 
     pub fn reserve(self: *FixedSizeBinaryBuilder, additional: usize) Error!void {
@@ -204,7 +189,7 @@ pub const FixedSizeBinaryBuilder = struct {
         const values = try self.ensureValues();
         const byte_len = try checked.mul(additional, self.byte_width);
         try values.reserve(try checked.add(values.size, byte_len));
-        try self.validity.ensureCapacityForBits(self.allocator, additional);
+        try self.slots.reserve(self.allocator, additional);
     }
 
     pub fn append(self: *FixedSizeBinaryBuilder, bytes: []const u8) Error!void {
@@ -228,8 +213,7 @@ pub const FixedSizeBinaryBuilder = struct {
         const end = try checked.add(values.size, byte_len);
         if (byte_len != 0) @memset(values.data[values.size..end], 0);
         values.size = end;
-        self.validity.unsafeAppendN(false, n);
-        self.len = try checked.add(self.len, n);
+        try self.slots.unsafeAppendN(false, n);
     }
 
     pub fn appendEmptyValue(self: *FixedSizeBinaryBuilder) Error!void {
@@ -244,26 +228,21 @@ pub const FixedSizeBinaryBuilder = struct {
         const end = try checked.add(values.size, byte_len);
         if (byte_len != 0) @memset(values.data[values.size..end], 0);
         values.size = end;
-        self.validity.unsafeAppendN(true, n);
-        self.len = try checked.add(self.len, n);
+        try self.slots.unsafeAppendN(true, n);
     }
 
     pub fn length(self: FixedSizeBinaryBuilder) usize {
-        return self.len;
+        return self.slots.length();
     }
 
     pub fn finish(self: *FixedSizeBinaryBuilder) Error!*ArrayData {
-        const n = self.len;
-        const null_count = self.validity.false_count;
-        self.len = 0;
-
         const values_buf = try self.finishValues();
         errdefer values_buf.deinit();
-        const validity_buf = try self.validity.finishNullable(self.allocator);
-        errdefer if (validity_buf) |buf| buf.deinit();
+        const slots = try self.slots.finish(self.allocator);
+        errdefer if (slots.validity) |buf| buf.deinit();
 
         const ty = datatype.DataType{ .fixed_size_binary = .{ .byte_width = self.byte_width } };
-        return ArrayData.initOwned(self.allocator, ty, n, 0, null_count, &.{ validity_buf, values_buf }, &.{}, null);
+        return ArrayData.initOwned(self.allocator, ty, slots.len, 0, slots.null_count, &.{ slots.validity, values_buf }, &.{}, null);
     }
 
     fn appendUnchecked(self: *FixedSizeBinaryBuilder, bytes: []const u8) Error!void {
@@ -272,8 +251,7 @@ pub const FixedSizeBinaryBuilder = struct {
         const end = try checked.add(values.size, bytes.len);
         if (bytes.len != 0) @memcpy(values.data[values.size..end], bytes);
         values.size = end;
-        self.validity.unsafeAppend(true);
-        self.len += 1;
+        self.slots.unsafeAppend(true);
     }
 
     fn ensureValues(self: *FixedSizeBinaryBuilder) Error!*Buffer {

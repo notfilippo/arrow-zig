@@ -9,7 +9,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const checked = @import("../checked.zig");
-const bitmap = @import("../bitmap.zig");
 const datatype = @import("../datatype.zig");
 const offset_data = @import("../offsets.zig");
 const array = @import("../array.zig");
@@ -41,8 +40,7 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
         allocator: Allocator,
         child: ChildBuilder,
         offsets: offset_data.Builder(Offset),
-        validity: bitmap.BitmapBuilder,
-        len: usize,
+        slots: common.Slots,
         last_child_len: usize,
         child_name: []const u8,
         owned_child_name: ?[]u8,
@@ -53,8 +51,7 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
                 .allocator = allocator,
                 .child = ChildBuilder.init(allocator),
                 .offsets = offset_data.Builder(Offset).init(),
-                .validity = bitmap.BitmapBuilder.init(),
-                .len = 0,
+                .slots = common.Slots.init(),
                 .last_child_len = 0,
                 .child_name = "item",
                 .owned_child_name = null,
@@ -92,10 +89,10 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
 
         pub fn reserve(self: *Self, additional: usize) Error!void {
             if (additional == 0) return;
-            const new_len = try checked.add(self.len, additional);
+            const new_len = try checked.add(self.slots.len, additional);
             const capped_len = @max(new_len, common.kMinBuilderCapacity);
             try self.offsets.reserveSlots(self.allocator, try checked.add(capped_len, 1));
-            try self.validity.ensureCapacityForBits(self.allocator, additional);
+            try self.slots.reserve(self.allocator, additional);
         }
 
         pub fn append(self: *Self) Error!void {
@@ -118,8 +115,7 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
             if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
             try self.reserve(n);
             try self.offsets.appendRepeat(self.allocator, n, self.last_child_len);
-            self.validity.unsafeAppendN(false, n);
-            self.len = try checked.add(self.len, n);
+            try self.slots.unsafeAppendN(false, n);
         }
 
         /// Append a valid empty list slot with no pending child values.
@@ -135,12 +131,11 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
             if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
             try self.reserve(n);
             try self.offsets.appendRepeat(self.allocator, n, self.last_child_len);
-            self.validity.unsafeAppendN(true, n);
-            self.len = try checked.add(self.len, n);
+            try self.slots.unsafeAppendN(true, n);
         }
 
         pub fn length(self: Self) usize {
-            return self.len;
+            return self.slots.length();
         }
 
         /// Finish the builder and transfer the result to the caller.
@@ -148,11 +143,9 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
         pub fn finish(self: *Self) Error!*ArrayData {
             if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
 
-            const n = self.len;
-            const null_count = self.validity.false_count;
             var consumed = false;
             errdefer if (consumed) {
-                self.len = 0;
+                self.slots.len = 0;
                 self.last_child_len = 0;
             };
 
@@ -163,23 +156,21 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
             const child_data = try self.child.finish();
             errdefer child_data.deinit();
 
-            const validity_buf: ?*Buffer = try self.validity.finishNullable(self.allocator);
-            errdefer if (validity_buf) |buf| buf.deinit();
+            const slots = try self.slots.finish(self.allocator);
+            errdefer if (slots.validity) |buf| buf.deinit();
 
             const child_field = try datatype.Field.create(self.allocator, self.child_name, &child_data.type, self.child_nullable, &.{});
             errdefer child_field.deinit();
             const ty = dataTypeForKind(kind, child_field);
-            const data = try ArrayData.initOwned(self.allocator, ty, n, 0, null_count, &.{ validity_buf, offsets_buf }, &.{child_data}, null);
+            const data = try ArrayData.initOwned(self.allocator, ty, slots.len, 0, slots.null_count, &.{ slots.validity, offsets_buf }, &.{child_data}, null);
             child_field.deinit();
-            self.len = 0;
             self.last_child_len = 0;
             return data;
         }
 
         fn appendOffset(self: *Self, child_len: usize, valid: bool) Error!void {
             try self.offsets.append(self.allocator, child_len);
-            self.validity.unsafeAppend(valid);
-            self.len += 1;
+            self.slots.unsafeAppend(valid);
             self.last_child_len = child_len;
         }
 
@@ -189,14 +180,13 @@ pub fn VarListBuilder(comptime kind: array.ListKind, comptime ChildBuilder: type
 
         fn clearListState(self: *Self, comptime clear_field_options: bool) void {
             self.offsets.deinit();
-            self.validity.deinit();
+            self.slots.deinit();
             if (clear_field_options) {
                 if (self.owned_child_name) |name| self.allocator.free(name);
                 self.child_name = "item";
                 self.owned_child_name = null;
                 self.child_nullable = true;
             }
-            self.len = 0;
             self.last_child_len = 0;
         }
     };
@@ -219,8 +209,7 @@ pub fn FixedSizeListBuilder(comptime ChildBuilder: type) type {
 
         allocator: Allocator,
         child: ChildBuilder,
-        validity: bitmap.BitmapBuilder,
-        len: usize,
+        slots: common.Slots,
         last_child_len: usize,
         list_size: usize,
         child_name: []const u8,
@@ -231,8 +220,7 @@ pub fn FixedSizeListBuilder(comptime ChildBuilder: type) type {
             return .{
                 .allocator = allocator,
                 .child = ChildBuilder.init(allocator),
-                .validity = bitmap.BitmapBuilder.init(),
-                .len = 0,
+                .slots = common.Slots.init(),
                 .last_child_len = 0,
                 .list_size = list_size,
                 .child_name = "item",
@@ -270,7 +258,7 @@ pub fn FixedSizeListBuilder(comptime ChildBuilder: type) type {
 
         pub fn reserve(self: *Self, additional: usize) Error!void {
             if (additional == 0) return;
-            try self.validity.ensureCapacityForBits(self.allocator, @max(additional, common.kMinBuilderCapacity));
+            try self.slots.reserve(self.allocator, @max(additional, common.kMinBuilderCapacity));
         }
 
         pub fn append(self: *Self) Error!void {
@@ -284,8 +272,7 @@ pub fn FixedSizeListBuilder(comptime ChildBuilder: type) type {
             try self.ensureNoPending();
             try self.reserve(1);
             try self.appendChildEmptyValues(self.list_size);
-            self.validity.unsafeAppend(false);
-            self.len = try checked.add(self.len, 1);
+            try self.slots.unsafeAppendN(false, 1);
             self.last_child_len = self.child.length();
         }
 
@@ -294,8 +281,7 @@ pub fn FixedSizeListBuilder(comptime ChildBuilder: type) type {
             try self.ensureNoPending();
             try self.reserve(n);
             try self.appendChildEmptyValues(try checked.mul(n, self.list_size));
-            self.validity.unsafeAppendN(false, n);
-            self.len = try checked.add(self.len, n);
+            try self.slots.unsafeAppendN(false, n);
             self.last_child_len = self.child.length();
         }
 
@@ -303,8 +289,7 @@ pub fn FixedSizeListBuilder(comptime ChildBuilder: type) type {
             try self.ensureNoPending();
             try self.reserve(1);
             try self.appendChildEmptyValues(self.list_size);
-            self.validity.unsafeAppend(true);
-            self.len = try checked.add(self.len, 1);
+            try self.slots.unsafeAppendN(true, 1);
             self.last_child_len = self.child.length();
         }
 
@@ -313,24 +298,21 @@ pub fn FixedSizeListBuilder(comptime ChildBuilder: type) type {
             try self.ensureNoPending();
             try self.reserve(n);
             try self.appendChildEmptyValues(try checked.mul(n, self.list_size));
-            self.validity.unsafeAppendN(true, n);
-            self.len = try checked.add(self.len, n);
+            try self.slots.unsafeAppendN(true, n);
             self.last_child_len = self.child.length();
         }
 
         pub fn length(self: Self) usize {
-            return self.len;
+            return self.slots.length();
         }
 
         pub fn finish(self: *Self) Error!*ArrayData {
-            const expected_child_len = try checked.mul(self.len, self.list_size);
+            const expected_child_len = try checked.mul(self.slots.len, self.list_size);
             if (self.child.length() != expected_child_len) return error.UnclosedListValues;
 
-            const n = self.len;
-            const null_count = self.validity.false_count;
             var consumed = false;
             errdefer if (consumed) {
-                self.len = 0;
+                self.slots.len = 0;
                 self.last_child_len = 0;
             };
 
@@ -338,23 +320,21 @@ pub fn FixedSizeListBuilder(comptime ChildBuilder: type) type {
             consumed = true;
             errdefer child_data.deinit();
 
-            const validity_buf: ?*Buffer = try self.validity.finishNullable(self.allocator);
-            errdefer if (validity_buf) |buf| buf.deinit();
+            const slots = try self.slots.finish(self.allocator);
+            errdefer if (slots.validity) |buf| buf.deinit();
 
             const child_field = try datatype.Field.create(self.allocator, self.child_name, &child_data.type, self.child_nullable, &.{});
             errdefer child_field.deinit();
             const ty = datatype.DataType{ .fixed_size_list = .{ .child = child_field, .len = self.list_size } };
-            const data = try ArrayData.initOwned(self.allocator, ty, n, 0, null_count, &.{validity_buf}, &.{child_data}, null);
+            const data = try ArrayData.initOwned(self.allocator, ty, slots.len, 0, slots.null_count, &.{slots.validity}, &.{child_data}, null);
             child_field.deinit();
-            self.len = 0;
             self.last_child_len = 0;
             return data;
         }
 
         fn appendSlot(self: *Self, child_len: usize, valid: bool) Error!void {
             try self.reserve(1);
-            self.validity.unsafeAppend(valid);
-            self.len = try checked.add(self.len, 1);
+            try self.slots.unsafeAppendN(valid, 1);
             self.last_child_len = child_len;
         }
 
@@ -375,14 +355,13 @@ pub fn FixedSizeListBuilder(comptime ChildBuilder: type) type {
         }
 
         fn clearListState(self: *Self, comptime clear_field_options: bool) void {
-            self.validity.deinit();
+            self.slots.deinit();
             if (clear_field_options) {
                 if (self.owned_child_name) |name| self.allocator.free(name);
                 self.child_name = "item";
                 self.owned_child_name = null;
                 self.child_nullable = true;
             }
-            self.len = 0;
             self.last_child_len = 0;
         }
     };

@@ -68,7 +68,7 @@ test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
 
-    _ = @import("array/base.zig");
+    _ = @import("array/common.zig");
     _ = @import("array/binary.zig");
     _ = @import("array/data.zig");
     _ = @import("array/decimal.zig");

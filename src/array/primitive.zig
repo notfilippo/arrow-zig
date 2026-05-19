@@ -10,7 +10,7 @@ const std = @import("std");
 const datatype = @import("../datatype.zig");
 const bitmap = @import("../bitmap.zig");
 const array_data = @import("data.zig");
-const common = @import("base.zig");
+const common = @import("common.zig");
 const ArrayData = array_data.ArrayData;
 
 pub const FixedWidthKind = common.FixedWidthKind;

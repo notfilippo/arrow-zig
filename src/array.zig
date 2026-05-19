@@ -7,7 +7,7 @@
 //! `BinaryArray`, and `ListArray` are small structs over retained storage.
 
 const array_data = @import("array/data.zig");
-const base = @import("array/base.zig");
+const common = @import("array/common.zig");
 const prim = @import("array/primitive.zig");
 const null_array = @import("array/null.zig");
 const binary = @import("array/binary.zig");
@@ -33,13 +33,13 @@ pub const InitError = array_data.InitError;
 pub const ValidateError = array_data.ValidateError;
 
 /// Compile time kind for fixed width arrays.
-pub const FixedWidthKind = base.FixedWidthKind;
+pub const FixedWidthKind = common.FixedWidthKind;
 
 /// Compile time kind for list arrays.
 pub const ListKind = list.ListKind;
 
 /// Error set for non owning array slices.
-pub const SliceError = base.SliceError;
+pub const SliceError = common.SliceError;
 
 /// Offset and length pair for list values.
 pub const ValueRange = list.ValueRange;
@@ -54,7 +54,7 @@ pub const DecimalKind = decimal.DecimalKind;
 pub const IntervalKind = interval.IntervalKind;
 
 /// Error set for creating typed arrays from storage.
-pub const ViewError = base.ViewError;
+pub const ViewError = common.ViewError;
 
 pub const NullArray = null_array.NullArray;
 pub const BooleanArray = prim.BooleanArray;
@@ -85,7 +85,7 @@ pub const SparseUnionArray = union_array.SparseUnionArray;
 pub const DenseUnionArray = union_array.DenseUnionArray;
 pub const RunEndEncodedArray = run_end.RunEndEncodedArray;
 
-pub const dataTypeAcceptsZigType = base.dataTypeAcceptsZigType;
+pub const dataTypeAcceptsZigType = common.dataTypeAcceptsZigType;
 pub const FixedWidthArray = prim.FixedWidthArray;
 pub const DecimalArray = decimal.DecimalArray;
 pub const IntervalArray = interval.IntervalArray;
@@ -101,5 +101,5 @@ pub fn NumericArray(comptime T: type) type {
 }
 
 pub fn typeIdFor(comptime T: type) @import("datatype.zig").TypeId {
-    return base.typeIdFor(T);
+    return common.typeIdFor(T);
 }
