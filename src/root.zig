@@ -73,6 +73,7 @@ test {
     _ = @import("array/data.zig");
     _ = @import("array/decimal.zig");
     _ = @import("array/dictionary.zig");
+    _ = @import("array/extension.zig");
     _ = @import("array/interval.zig");
     _ = @import("array/list.zig");
     _ = @import("array/map.zig");

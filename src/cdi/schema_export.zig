@@ -15,6 +15,9 @@ const Schema = schema_mod.Schema;
 
 pub const Error = cdi_metadata.ExportError || datatype.ValidationError;
 
+const extension_name_key = "ARROW:extension:name";
+const extension_metadata_key = "ARROW:extension:metadata";
+
 pub fn exportType(allocator: Allocator, ty: datatype.DataType, out: *ArrowSchema) Error!void {
     try exportSchemaNode(allocator, ty, null, true, &.{}, out);
 }
@@ -70,16 +73,26 @@ fn exportSchemaNode(
     out: *ArrowSchema,
 ) Error!void {
     try ty.validate();
-    const format = try formatForType(allocator, ty);
+    const storage_ty = storageType(ty);
+    const format = try formatForType(allocator, storage_ty);
     errdefer allocator.free(format);
 
     const owned_name = if (field) |f| try allocator.dupeZ(u8, f.name) else null;
     errdefer if (owned_name) |name| allocator.free(name);
 
-    const owned_metadata = try cdi_metadata.exportOwned(allocator, metadata);
+    var merged_metadata: ?[]datatype.MetadataEntry = null;
+    defer if (merged_metadata) |entries| allocator.free(entries);
+
+    const export_metadata = if (ty == .extension) blk: {
+        const entries = try metadataWithExtension(allocator, ty.extension, metadata);
+        merged_metadata = entries;
+        break :blk entries;
+    } else metadata;
+
+    const owned_metadata = try cdi_metadata.exportOwned(allocator, export_metadata);
     errdefer if (owned_metadata) |data| allocator.free(data);
 
-    const child_count = ty.childCount();
+    const child_count = storage_ty.childCount();
     const n_children = try usizeToI64(child_count);
     const children_storage = try allocator.alloc(ArrowSchema, child_count);
     errdefer allocator.free(children_storage);
@@ -91,7 +104,7 @@ fn exportSchemaNode(
     errdefer releaseSchemas(children_storage[0..exported_children]);
 
     for (0..child_count) |i| {
-        const child_field = ty.childField(i).?;
+        const child_field = storage_ty.childField(i).?;
         try exportField(allocator, child_field, &children_storage[i]);
         child_ptrs[i] = &children_storage[i];
         exported_children += 1;
@@ -105,7 +118,7 @@ fn exportSchemaNode(
     };
 
     var flags: i64 = if (nullable) cdi_types.schema_flag_nullable else 0;
-    switch (ty) {
+    switch (storage_ty) {
         .dictionary => |meta| {
             if (meta.ordered) flags |= cdi_types.schema_flag_dictionary_ordered;
             dictionary = try allocator.create(ArrowSchema);
@@ -224,8 +237,44 @@ fn formatForType(allocator: Allocator, ty: datatype.DataType) Error![:0]u8 {
         .sparse_union => |meta| unionFormat(allocator, "s", meta.type_ids),
         .dense_union => |meta| unionFormat(allocator, "d", meta.type_ids),
         .run_end_encoded => allocator.dupeZ(u8, "+r"),
+        .extension => |meta| formatForType(allocator, meta.storage_type.*),
         .dictionary => |meta| formatForType(allocator, meta.index_type.*),
     };
+}
+
+fn storageType(ty: datatype.DataType) datatype.DataType {
+    return switch (ty) {
+        .extension => |meta| storageType(meta.storage_type.*),
+        else => ty,
+    };
+}
+
+fn metadataWithExtension(
+    allocator: Allocator,
+    meta: datatype.ExtensionMeta,
+    metadata: []const datatype.MetadataEntry,
+) Allocator.Error![]datatype.MetadataEntry {
+    const needs_name = !metadataContains(metadata, extension_name_key);
+    const needs_metadata = !metadataContains(metadata, extension_metadata_key);
+    const extra: usize = @as(usize, @intFromBool(needs_name)) + @as(usize, @intFromBool(needs_metadata));
+    const entries = try allocator.alloc(datatype.MetadataEntry, metadata.len + extra);
+    @memcpy(entries[0..metadata.len], metadata);
+    var index = metadata.len;
+    if (needs_name) {
+        entries[index] = .{ .key = extension_name_key, .value = meta.name };
+        index += 1;
+    }
+    if (needs_metadata) {
+        entries[index] = .{ .key = extension_metadata_key, .value = meta.metadata };
+    }
+    return entries;
+}
+
+fn metadataContains(metadata: []const datatype.MetadataEntry, key: []const u8) bool {
+    for (metadata) |entry| {
+        if (std.mem.eql(u8, entry.key, key)) return true;
+    }
+    return false;
 }
 
 fn unionFormat(allocator: Allocator, comptime mode: []const u8, type_ids: []const i8) Allocator.Error![:0]u8 {

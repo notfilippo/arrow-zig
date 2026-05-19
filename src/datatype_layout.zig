@@ -127,6 +127,7 @@ pub fn layout(ty: anytype) Layout {
         .sparse_union => .{ .buffers = &sparse_union_buffers, .null_layout = .none },
         .dense_union => .{ .buffers = &dense_union_buffers, .null_layout = .none },
         .run_end_encoded => .{ .buffers = &no_buffers, .null_layout = .none },
+        .extension => |meta| layout(meta.storage_type.*),
         .dictionary => |meta| blk: {
             var child_layout = layout(meta.index_type.*);
             child_layout.has_dictionary = true;
@@ -144,6 +145,7 @@ test "layout describes buffers" {
     defer item_field.deinit();
     const list_view_ty = datatype.DataType{ .list_view = .{ .child = item_field } };
     const large_list_view_ty = datatype.DataType{ .large_list_view = .{ .child = item_field } };
+    const extension_ty = datatype.DataType{ .extension = .{ .storage_type = &binary_ty, .name = "example.binary" } };
 
     try std.testing.expectEqual(@as(usize, 0), (@as(datatype.DataType, .null_)).layout().buffers.len);
     try std.testing.expectEqual(@as(usize, 2), int32_ty.layout().buffers.len);
@@ -158,6 +160,7 @@ test "layout describes buffers" {
     try std.testing.expectEqual(@as(usize, 16), (@as(datatype.DataType, .month_day_nano_interval)).layout().buffers[1].byte_width);
     try std.testing.expectEqual(@as(usize, 2), (datatype.DataType{ .fixed_size_binary = .{ .byte_width = 16 } }).layout().buffers.len);
     try std.testing.expectEqual(@as(usize, 3), binary_ty.layout().buffers.len);
+    try std.testing.expectEqual(@as(usize, 3), extension_ty.layout().buffers.len);
     try std.testing.expectEqual(BufferKind.offsets, binary_ty.layout().buffers[1].kind);
     try std.testing.expectEqual(@as(usize, 2), (@as(datatype.DataType, .binary_view)).layout().buffers.len);
     try std.testing.expect((@as(datatype.DataType, .binary_view)).layout().variadic_buffers);

@@ -189,6 +189,45 @@ test "importArray imports exported decimal64 array" {
     try std.testing.expectEqual(@as(i64, -67890), view.value(2));
 }
 
+test "importArrayFromSchema imports exported extension array" {
+    const allocator = std.testing.allocator;
+    var b = builder.NumericBuilder(i32).init(allocator);
+    defer b.deinit();
+    try b.appendSlice(&.{ 10, 20, 30 });
+    const storage = try b.finish();
+    defer storage.deinit();
+
+    const storage_ty: datatype.DataType = .int32;
+    const extension_ty = datatype.DataType{ .extension = .{
+        .storage_type = &storage_ty,
+        .name = "example.int32",
+        .metadata = "v1",
+    } };
+    const source = try ArrayData.initRetained(allocator, extension_ty, storage.len, storage.offset, storage.null_count, storage.buffers, storage.children, storage.dictionary);
+    defer source.deinit();
+    try source.validate();
+
+    var schema: ArrowSchema = undefined;
+    try exportType(allocator, source.type, &schema);
+    defer schema.release.?(&schema);
+
+    var exported: ArrowArray = undefined;
+    try exportArray(allocator, source, &exported);
+
+    const imported = try importArrayFromSchema(allocator, &schema, &exported);
+    defer imported.deinit();
+    try imported.validate();
+
+    const extension = try array.ExtensionArray.fromData(imported);
+    try std.testing.expectEqualStrings("example.int32", extension.name());
+    try std.testing.expectEqualStrings("v1", extension.metadata());
+
+    const imported_storage = try extension.storageOwned();
+    defer imported_storage.deinit();
+    const ints = try array.NumericArray(i32).fromData(imported_storage);
+    try std.testing.expectEqual(@as(i32, 20), ints.value(1));
+}
+
 test "importArray imports exported binary view array" {
     const allocator = std.testing.allocator;
     var b = builder.BinaryViewBuilder.init(allocator);

@@ -89,6 +89,7 @@ fn validateData(data: anytype, ty: datatype.DataType, total: usize) (Error || ch
         .sparse_union => |meta| try validateUnion(data, total, meta, false),
         .dense_union => |meta| try validateUnion(data, total, meta, true),
         .run_end_encoded => |meta| try validateRunEndEncoded(data, total, meta),
+        .extension => |meta| try validateData(data, meta.storage_type.*, total),
         .dictionary => |meta| try validateDictionary(data, total, meta),
         .null_ => {},
     }
@@ -569,6 +570,18 @@ test "validate null and binary storage" {
     const decimal64 = try ArrayData.initOwned(allocator, decimal64_ty, 2, 0, 0, &.{ null, decimal64_values }, &.{}, null);
     defer decimal64.deinit();
     try decimal64.validate();
+
+    const extension_values = try Buffer.allocate(allocator, 2 * @sizeOf(i32));
+    errdefer extension_values.deinit();
+    extension_values.freeze();
+    const extension_storage_ty: datatype.DataType = .int32;
+    const extension_ty = datatype.DataType{ .extension = .{
+        .storage_type = &extension_storage_ty,
+        .name = "example.int32",
+    } };
+    const extension = try ArrayData.initOwned(allocator, extension_ty, 2, 0, 0, &.{ null, extension_values }, &.{}, null);
+    defer extension.deinit();
+    try extension.validate();
 
     const short_fixed_values = try Buffer.allocate(allocator, 5);
     errdefer short_fixed_values.deinit();

@@ -55,6 +55,7 @@ pub const TypeId = enum(u8) {
     sparse_union,
     dense_union,
     run_end_encoded,
+    extension,
     dictionary,
 };
 
@@ -202,6 +203,12 @@ pub const DictionaryMeta = struct {
     ordered: bool = false,
 };
 
+pub const ExtensionMeta = struct {
+    storage_type: *const DataType,
+    name: []const u8,
+    metadata: []const u8 = "",
+};
+
 pub const NullLayout = datatype_layout.NullLayout;
 pub const BufferKind = datatype_layout.BufferKind;
 pub const BufferSpec = datatype_layout.BufferSpec;
@@ -215,6 +222,7 @@ pub const ValidationError = error{
     NullableMapEntries,
     NullableMapKey,
     InvalidDecimalPrecision,
+    InvalidExtensionName,
     InvalidRunEndType,
     NullableRunEnds,
 };
@@ -244,6 +252,7 @@ pub fn cloneOwned(allocator: Allocator, ty: DataType) Allocator.Error!DataType {
             .run_ends = meta.run_ends.retain(),
             .values = meta.values.retain(),
         } },
+        .extension => |meta| .{ .extension = try cloneExtensionMeta(allocator, meta) },
         .dictionary => |meta| .{ .dictionary = try cloneDictionaryMeta(allocator, meta) },
         else => ty,
     };
@@ -267,6 +276,11 @@ pub fn deinitOwned(allocator: Allocator, ty: *DataType) void {
         .run_end_encoded => |meta| {
             meta.run_ends.deinit();
             meta.values.deinit();
+        },
+        .extension => |meta| {
+            deinitTypePtr(allocator, meta.storage_type);
+            allocator.free(meta.name);
+            allocator.free(meta.metadata);
         },
         .dictionary => |meta| {
             deinitTypePtr(allocator, meta.index_type);
@@ -342,6 +356,7 @@ pub const DataType = union(TypeId) {
     sparse_union: UnionMeta,
     dense_union: UnionMeta,
     run_end_encoded: RunEndEncodedMeta,
+    extension: ExtensionMeta,
     dictionary: DictionaryMeta,
 
     /// Return the TypeId tag without the payload.
@@ -360,6 +375,7 @@ pub const DataType = union(TypeId) {
             .int64, .uint64, .float64, .date64, .time64, .timestamp, .duration, .day_time_interval, .decimal64 => 64,
             .decimal128, .month_day_nano_interval => 128,
             .decimal256 => 256,
+            .extension => |meta| meta.storage_type.bitWidth(),
             .fixed_size_binary => |meta| if (meta.byte_width > std.math.maxInt(u16) / 8) 0 else @intCast(meta.byte_width * 8),
             .binary, .utf8, .large_binary, .large_utf8, .binary_view, .utf8_view, .list, .large_list, .list_view, .large_list_view, .fixed_size_list, .map, .struct_, .sparse_union, .dense_union, .run_end_encoded => 0,
             .dictionary => |meta| meta.index_type.bitWidth(),
@@ -412,6 +428,7 @@ pub const DataType = union(TypeId) {
             .sparse_union => "sparse_union",
             .dense_union => "dense_union",
             .run_end_encoded => "run_end_encoded",
+            .extension => "extension",
             .dictionary => "dictionary",
         };
     }
@@ -442,6 +459,7 @@ pub const DataType = union(TypeId) {
             .sparse_union => |meta| try validateUnionMeta(meta),
             .dense_union => |meta| try validateUnionMeta(meta),
             .run_end_encoded => |meta| try validateRunEndEncodedMeta(meta),
+            .extension => |meta| try validateExtensionMeta(meta),
             .dictionary => |meta| {
                 try meta.index_type.validate();
                 try meta.value_type.validate();
@@ -466,6 +484,7 @@ pub const DataType = union(TypeId) {
             .struct_ => |meta| meta.fields.len,
             .sparse_union, .dense_union => |meta| meta.fields.len,
             .run_end_encoded => 2,
+            .extension => |meta| meta.storage_type.childCount(),
             else => 0,
         };
     }
@@ -486,6 +505,7 @@ pub const DataType = union(TypeId) {
                 1 => meta.values,
                 else => null,
             },
+            .extension => |meta| meta.storage_type.childField(index),
             else => null,
         };
     }
@@ -521,6 +541,9 @@ pub const DataType = union(TypeId) {
             .dense_union => unionEqual(a.dense_union, b.dense_union),
             .run_end_encoded => Field.equals(a.run_end_encoded.run_ends, b.run_end_encoded.run_ends) and
                 Field.equals(a.run_end_encoded.values, b.run_end_encoded.values),
+            .extension => std.mem.eql(u8, a.extension.name, b.extension.name) and
+                std.mem.eql(u8, a.extension.metadata, b.extension.metadata) and
+                DataType.equals(a.extension.storage_type.*, b.extension.storage_type.*),
             .dictionary => DataType.equals(a.dictionary.index_type.*, b.dictionary.index_type.*) and
                 DataType.equals(a.dictionary.value_type.*, b.dictionary.value_type.*) and
                 a.dictionary.ordered == b.dictionary.ordered,
@@ -561,6 +584,21 @@ fn cloneDictionaryMeta(allocator: Allocator, meta: DictionaryMeta) Allocator.Err
         .index_type = index_type,
         .value_type = value_type,
         .ordered = meta.ordered,
+    };
+}
+
+fn cloneExtensionMeta(allocator: Allocator, meta: ExtensionMeta) Allocator.Error!ExtensionMeta {
+    const storage_type = try cloneTypePtr(allocator, meta.storage_type.*);
+    errdefer deinitTypePtr(allocator, storage_type);
+
+    const name = try allocator.dupe(u8, meta.name);
+    errdefer allocator.free(name);
+
+    const metadata = try allocator.dupe(u8, meta.metadata);
+    return .{
+        .storage_type = storage_type,
+        .name = name,
+        .metadata = metadata,
     };
 }
 
@@ -620,6 +658,11 @@ fn validateRunEndEncodedMeta(meta: RunEndEncodedMeta) ValidationError!void {
     }
     try meta.run_ends.type.validate();
     try meta.values.type.validate();
+}
+
+fn validateExtensionMeta(meta: ExtensionMeta) ValidationError!void {
+    if (meta.name.len == 0) return error.InvalidExtensionName;
+    try meta.storage_type.validate();
 }
 
 fn validateDecimalMeta(meta: DecimalMeta, max_precision: u8) ValidationError!void {
@@ -690,6 +733,23 @@ test "DataType.equals" {
         .{ .decimal256 = .{ .precision = 40, .scale = 2 } },
         .{ .decimal256 = .{ .precision = 40, .scale = -2 } },
     ));
+    const extension_a = DataType{ .extension = .{
+        .storage_type = &value_ty,
+        .name = "example.int32",
+        .metadata = "v1",
+    } };
+    const extension_b = DataType{ .extension = .{
+        .storage_type = &value_ty,
+        .name = "example.int32",
+        .metadata = "v1",
+    } };
+    const extension_c = DataType{ .extension = .{
+        .storage_type = &value_ty,
+        .name = "example.int32",
+        .metadata = "v2",
+    } };
+    try std.testing.expect(DataType.equals(extension_a, extension_b));
+    try std.testing.expect(!DataType.equals(extension_a, extension_c));
 
     const key_field = try Field.create(allocator, "key", &value_ty, false, &.{});
     defer key_field.deinit();
@@ -714,6 +774,8 @@ test "DataType.bitWidth" {
     try std.testing.expectEqual(@as(u16, 64), DataType.bitWidth(.{ .decimal64 = .{ .precision = 18, .scale = 0 } }));
     try std.testing.expectEqual(@as(u16, 128), DataType.bitWidth(.{ .decimal128 = .{ .precision = 38, .scale = 0 } }));
     try std.testing.expectEqual(@as(u16, 256), DataType.bitWidth(.{ .decimal256 = .{ .precision = 76, .scale = 0 } }));
+    const extension_storage: DataType = .int64;
+    try std.testing.expectEqual(@as(u16, 64), DataType.bitWidth(.{ .extension = .{ .storage_type = &extension_storage, .name = "example.i64" } }));
     try std.testing.expectEqual(@as(u16, 32), DataType.bitWidth(.month_interval));
     try std.testing.expectEqual(@as(u16, 64), DataType.bitWidth(.day_time_interval));
     try std.testing.expectEqual(@as(u16, 128), DataType.bitWidth(.month_day_nano_interval));
@@ -749,6 +811,8 @@ test "DataType.validate" {
     try std.testing.expectError(error.InvalidDecimalPrecision, DataType.validate(.{ .decimal64 = .{ .precision = 19, .scale = 0 } }));
     try std.testing.expectError(error.InvalidDecimalPrecision, DataType.validate(.{ .decimal128 = .{ .precision = 39, .scale = 0 } }));
     try std.testing.expectError(error.InvalidDecimalPrecision, DataType.validate(.{ .decimal256 = .{ .precision = 0, .scale = 0 } }));
+    try DataType.validate(.{ .extension = .{ .storage_type = &value_ty, .name = "example.int32" } });
+    try std.testing.expectError(error.InvalidExtensionName, DataType.validate(.{ .extension = .{ .storage_type = &value_ty, .name = "" } }));
 
     const run_end_ty: DataType = .int32;
     const bad_run_end_ty: DataType = .uint32;

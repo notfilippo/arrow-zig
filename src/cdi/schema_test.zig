@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const cdi = @import("../cdi.zig");
+const cdi_metadata = @import("metadata.zig");
 const datatype = @import("../datatype.zig");
 const schema_mod = @import("../schema.zig");
 
@@ -18,6 +19,9 @@ const importType = cdi.importType;
 const schemaIsReleased = cdi.schemaIsReleased;
 const schema_flag_dictionary_ordered = cdi.schema_flag_dictionary_ordered;
 const schema_flag_map_keys_sorted = cdi.schema_flag_map_keys_sorted;
+
+const extension_name_key = "ARROW:extension:name";
+const extension_metadata_key = "ARROW:extension:metadata";
 
 test "exportType primitive schema" {
     const allocator = std.testing.allocator;
@@ -91,6 +95,27 @@ test "exportType dictionary schema" {
     try std.testing.expect(schema.flags & schema_flag_dictionary_ordered != 0);
     try std.testing.expect(schema.dictionary != null);
     try std.testing.expectEqualStrings("u", std.mem.span(schema.dictionary.?.format.?));
+}
+
+test "exportType extension schema uses storage format and metadata" {
+    const allocator = std.testing.allocator;
+    const storage_ty: datatype.DataType = .int32;
+    const extension_ty = datatype.DataType{ .extension = .{
+        .storage_type = &storage_ty,
+        .name = "example.int32",
+        .metadata = "v1",
+    } };
+
+    var schema: ArrowSchema = undefined;
+    try exportType(allocator, extension_ty, &schema);
+    defer schema.release.?(&schema);
+
+    try std.testing.expectEqualStrings("i", std.mem.span(schema.format.?));
+    try std.testing.expect(schema.metadata != null);
+    const metadata = try cdi_metadata.importOwned(allocator, schema.metadata);
+    defer datatype.deinitOwnedMetadata(allocator, metadata);
+    try std.testing.expectEqualStrings("example.int32", metadataValue(metadata, extension_name_key).?);
+    try std.testing.expectEqualStrings("v1", metadataValue(metadata, extension_metadata_key).?);
 }
 
 test "importType round trips scalar schemas" {
@@ -352,6 +377,36 @@ test "importType round trips nested and dictionary schemas" {
         .values = values_field,
     } };
     try expectImportTypeRoundTrip(allocator, ree_ty);
+
+    const extension_ty = datatype.DataType{ .extension = .{
+        .storage_type = &struct_ty,
+        .name = "example.struct",
+        .metadata = "payload",
+    } };
+    try expectImportTypeRoundTrip(allocator, extension_ty);
+}
+
+test "importField round trips extension schema and strips CDI extension metadata" {
+    const allocator = std.testing.allocator;
+    const storage_ty: datatype.DataType = .int32;
+    const extension_ty = datatype.DataType{ .extension = .{
+        .storage_type = &storage_ty,
+        .name = "example.int32",
+        .metadata = "v1",
+    } };
+    const field = try datatype.Field.create(allocator, "value", &extension_ty, true, &.{.{ .key = "user", .value = "kept" }});
+    defer field.deinit();
+
+    var schema: ArrowSchema = undefined;
+    try exportField(allocator, field, &schema);
+    defer schema.release.?(&schema);
+
+    const imported = try importField(allocator, &schema);
+    defer imported.deinit();
+
+    try std.testing.expect(datatype.Field.equals(field, imported));
+    try std.testing.expectEqual(@as(usize, 1), imported.metadata.len);
+    try std.testing.expectEqualStrings("kept", imported.metadata[0].value);
 }
 
 test "importType rejects invalid schemas" {
@@ -446,4 +501,11 @@ fn expectImportTypeRoundTrip(allocator: std.mem.Allocator, ty: datatype.DataType
 
     try std.testing.expect(datatype.DataType.equals(ty, imported));
     try std.testing.expect(!schemaIsReleased(&schema));
+}
+
+fn metadataValue(metadata: []const datatype.MetadataEntry, key: []const u8) ?[]const u8 {
+    for (metadata) |entry| {
+        if (std.mem.eql(u8, entry.key, key)) return entry.value;
+    }
+    return null;
 }

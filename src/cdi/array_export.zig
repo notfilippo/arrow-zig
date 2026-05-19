@@ -25,7 +25,7 @@ pub fn exportArray(allocator: Allocator, data: *ArrayData, out: *ArrowArray) Err
     const length = try usizeToI64(data.len);
     const null_count: i64 = if (data.null_count) |nc| try usizeToI64(nc) else -1;
     const offset = try usizeToI64(data.offset);
-    const exports_binary_view = isBinaryViewLike(data.type);
+    const exports_binary_view = isBinaryViewLike(storageType(data.type));
     const exported_buffer_count = if (exports_binary_view) try checked.add(data.buffers.len, 1) else data.buffers.len;
     const n_buffers = try usizeToI64(exported_buffer_count);
     const n_children = try usizeToI64(data.children.len);
@@ -166,6 +166,13 @@ fn bufferPointer(buf: *const Buffer) ?*const anyopaque {
 
 fn isBinaryViewLike(ty: datatype.DataType) bool {
     return ty == .binary_view or ty == .utf8_view;
+}
+
+fn storageType(ty: datatype.DataType) datatype.DataType {
+    return switch (ty) {
+        .extension => |meta| storageType(meta.storage_type.*),
+        else => ty,
+    };
 }
 
 fn usizeToI64(value: usize) Error!i64 {

@@ -15,6 +15,9 @@ const schema_flag_dictionary_ordered = cdi_types.schema_flag_dictionary_ordered;
 const schema_flag_map_keys_sorted = cdi_types.schema_flag_map_keys_sorted;
 const schema_flag_nullable = cdi_types.schema_flag_nullable;
 
+const extension_name_key = "ARROW:extension:name";
+const extension_metadata_key = "ARROW:extension:metadata";
+
 pub const Error =
     cdi_metadata.ImportError ||
     datatype.ValidationError ||
@@ -64,6 +67,17 @@ pub fn importSchema(allocator: Allocator, schema: *const ArrowSchema) Error!*sch
 }
 
 fn importTypeNode(allocator: Allocator, schema: *const ArrowSchema) Error!datatype.DataType {
+    const imported = try importTypeNodeWithMetadata(allocator, schema);
+    defer datatype.deinitOwnedMetadata(allocator, imported.metadata);
+    return imported.ty;
+}
+
+const ImportedTypeNode = struct {
+    ty: datatype.DataType,
+    metadata: []datatype.MetadataEntry,
+};
+
+fn importTypeNodeWithMetadata(allocator: Allocator, schema: *const ArrowSchema) Error!ImportedTypeNode {
     if (schema.release == null) return error.ReleasedSchema;
     const format_ptr = schema.format orelse return error.MissingFormat;
     var ty = try importFormatType(allocator, schema, std.mem.span(format_ptr));
@@ -76,10 +90,11 @@ fn importTypeNode(allocator: Allocator, schema: *const ArrowSchema) Error!dataty
         const index_type = try allocator.create(datatype.DataType);
         index_type.* = ty;
         ty_owned = false;
-        errdefer {
+        var index_type_owned = true;
+        errdefer if (index_type_owned) {
             datatype.deinitOwned(allocator, index_type);
             allocator.destroy(index_type);
-        }
+        };
 
         var value_ty = try importTypeNode(allocator, dictionary_schema);
         var value_owned = true;
@@ -88,20 +103,52 @@ fn importTypeNode(allocator: Allocator, schema: *const ArrowSchema) Error!dataty
         const value_type = try allocator.create(datatype.DataType);
         value_type.* = value_ty;
         value_owned = false;
-        errdefer {
+        var value_type_owned = true;
+        errdefer if (value_type_owned) {
             datatype.deinitOwned(allocator, value_type);
             allocator.destroy(value_type);
-        }
+        };
 
-        return .{ .dictionary = .{
+        ty = .{ .dictionary = .{
             .index_type = index_type,
             .value_type = value_type,
             .ordered = schema.flags & schema_flag_dictionary_ordered != 0,
         } };
+        index_type_owned = false;
+        value_type_owned = false;
+        ty_owned = true;
+    }
+
+    var metadata = try cdi_metadata.importOwned(allocator, schema.metadata);
+    var metadata_owned = true;
+    errdefer if (metadata_owned) datatype.deinitOwnedMetadata(allocator, metadata);
+
+    var extension = try extractExtensionMetadataOwned(allocator, metadata);
+    metadata = extension.entries;
+    errdefer {
+        if (extension.name) |name| allocator.free(name);
+        if (extension.serialized) |serialized| allocator.free(serialized);
+    }
+
+    if (extension.name) |name| {
+        const storage_type = try allocator.create(datatype.DataType);
+        errdefer allocator.destroy(storage_type);
+        storage_type.* = ty;
+        ty_owned = false;
+
+        ty = .{ .extension = .{
+            .storage_type = storage_type,
+            .name = name,
+            .metadata = extension.serialized.?,
+        } };
+        extension.name = null;
+        extension.serialized = null;
+        ty_owned = true;
     }
 
     ty_owned = false;
-    return ty;
+    metadata_owned = false;
+    return .{ .ty = ty, .metadata = metadata };
 }
 
 fn importFormatType(
@@ -256,9 +303,13 @@ fn importSchemaFields(allocator: Allocator, schema: *const ArrowSchema) Error![]
 }
 
 fn importFieldNode(allocator: Allocator, schema: *const ArrowSchema) Error!*const datatype.Field {
-    var ty = try importTypeNode(allocator, schema);
+    const imported = try importTypeNodeWithMetadata(allocator, schema);
+    var ty = imported.ty;
     var ty_owned = true;
     errdefer if (ty_owned) datatype.deinitOwned(allocator, &ty);
+    const metadata = imported.metadata;
+    var metadata_owned = true;
+    errdefer if (metadata_owned) datatype.deinitOwnedMetadata(allocator, metadata);
 
     const name_src = if (schema.name) |name| std.mem.span(name) else "";
     const name = try allocator.dupe(u8, name_src);
@@ -274,9 +325,6 @@ fn importFieldNode(allocator: Allocator, schema: *const ArrowSchema) Error!*cons
     ty_owned = false;
     type_ptr_valid = true;
 
-    const metadata = try cdi_metadata.importOwned(allocator, schema.metadata);
-    errdefer datatype.deinitOwnedMetadata(allocator, metadata);
-
     const field = try datatype.Field.initOwned(
         allocator,
         name,
@@ -284,8 +332,63 @@ fn importFieldNode(allocator: Allocator, schema: *const ArrowSchema) Error!*cons
         schema.flags & schema_flag_nullable != 0,
         metadata,
     );
+    metadata_owned = false;
     type_ptr_valid = false;
     return field;
+}
+
+const ExtractedExtensionMetadata = struct {
+    entries: []datatype.MetadataEntry,
+    name: ?[]u8,
+    serialized: ?[]u8,
+};
+
+fn extractExtensionMetadataOwned(allocator: Allocator, metadata: []datatype.MetadataEntry) Error!ExtractedExtensionMetadata {
+    const name_src = extensionMetadataValue(metadata, extension_name_key) orelse {
+        return .{ .entries = metadata, .name = null, .serialized = null };
+    };
+    if (name_src.len == 0) return .{ .entries = metadata, .name = null, .serialized = null };
+
+    const serialized_src = extensionMetadataValue(metadata, extension_metadata_key) orelse "";
+    const name = try allocator.dupe(u8, name_src);
+    errdefer allocator.free(name);
+    const serialized = try allocator.dupe(u8, serialized_src);
+    errdefer allocator.free(serialized);
+
+    var keep_count: usize = 0;
+    for (metadata) |entry| {
+        if (!isExtensionMetadataKey(entry.key)) keep_count += 1;
+    }
+
+    const entries = try allocator.alloc(datatype.MetadataEntry, keep_count);
+    errdefer allocator.free(entries);
+
+    var index: usize = 0;
+    for (metadata) |entry| {
+        if (isExtensionMetadataKey(entry.key)) {
+            allocator.free(entry.key);
+            allocator.free(entry.value);
+        } else {
+            entries[index] = entry;
+            index += 1;
+        }
+    }
+    allocator.free(metadata);
+
+    return .{ .entries = entries, .name = name, .serialized = serialized };
+}
+
+fn extensionMetadataValue(metadata: []const datatype.MetadataEntry, key: []const u8) ?[]const u8 {
+    var value: ?[]const u8 = null;
+    for (metadata) |entry| {
+        if (std.mem.eql(u8, entry.key, key)) value = entry.value;
+    }
+    return value;
+}
+
+fn isExtensionMetadataKey(key: []const u8) bool {
+    return std.mem.eql(u8, key, extension_name_key) or
+        std.mem.eql(u8, key, extension_metadata_key);
 }
 
 fn importUnionType(

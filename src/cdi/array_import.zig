@@ -80,22 +80,23 @@ fn importArrayNode(
 ) Error!*ArrayData {
     if (isReleased(arr)) return error.ReleasedArray;
 
+    const storage_ty = storageType(ty);
     const len = try importLength(arr.length);
     const offset = try importOffset(arr.offset);
-    const null_count = try importNullCount(ty, arr.null_count, len);
+    const null_count = try importNullCount(storage_ty, arr.null_count, len);
 
-    if (isBinaryViewLike(ty)) {
+    if (isBinaryViewLike(storage_ty)) {
         return importBinaryViewArrayNode(allocator, ty, arr, owner, len, offset, null_count);
     }
 
-    const layout = ty.layout();
+    const layout = storage_ty.layout();
 
     if (arr.n_buffers < 0) return error.InvalidBufferCount;
     const n_buffers = try i64ToUsize(arr.n_buffers);
     if (n_buffers != layout.buffers.len) return error.InvalidBufferCount;
     if (layout.buffers.len > 0 and arr.buffers == null) return error.InvalidBufferCount;
 
-    const child_count = ty.childCount();
+    const child_count = storage_ty.childCount();
     if (arr.n_children < 0) return error.InvalidChildCount;
     const n_children = try i64ToUsize(arr.n_children);
     if (n_children != child_count) return error.InvalidChildCount;
@@ -131,7 +132,7 @@ fn importArrayNode(
     };
 
     for (0..child_count) |i| {
-        const child_ty = ty.childField(i).?.type.*;
+        const child_ty = storage_ty.childField(i).?.type.*;
         children[i] = try importArrayNode(allocator, child_ty, arr.children.?[i], owner);
         imported_children += 1;
     }
@@ -142,7 +143,7 @@ fn importArrayNode(
     };
 
     if (layout.has_dictionary) {
-        const dict_ty = ty.dictionary.value_type.*;
+        const dict_ty = storage_ty.dictionary.value_type.*;
         dictionary = try importArrayNode(allocator, dict_ty, arr.dictionary.?, owner);
     }
 
@@ -297,6 +298,13 @@ fn wrapImportedBuffer(
 
 fn isBinaryViewLike(ty: datatype.DataType) bool {
     return ty == .binary_view or ty == .utf8_view;
+}
+
+fn storageType(ty: datatype.DataType) datatype.DataType {
+    return switch (ty) {
+        .extension => |meta| storageType(meta.storage_type.*),
+        else => ty,
+    };
 }
 
 fn visibleBufferSize(
