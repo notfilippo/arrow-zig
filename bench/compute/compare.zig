@@ -155,7 +155,7 @@ fn compareI32LessEqual(
     left: *const arrow.array.ArrayData,
     right: *const arrow.array.ArrayData,
 ) !*arrow.array.ArrayData {
-    return arrow.compute.compare.numeric(i32, allocator, .less_equal, left, right);
+    return arrow.compute.compare.lessEqual(allocator, left, right);
 }
 
 fn compareBoolNotEqual(
@@ -163,7 +163,7 @@ fn compareBoolNotEqual(
     left: *const arrow.array.ArrayData,
     right: *const arrow.array.ArrayData,
 ) !*arrow.array.ArrayData {
-    return arrow.compute.compare.boolean(allocator, .not_equal, left, right);
+    return arrow.compute.compare.notEqual(allocator, left, right);
 }
 
 fn compareUtf8Less(
@@ -171,7 +171,7 @@ fn compareUtf8Less(
     left: *const arrow.array.ArrayData,
     right: *const arrow.array.ArrayData,
 ) !*arrow.array.ArrayData {
-    return arrow.compute.compare.utf8(allocator, .less, left, right);
+    return arrow.compute.compare.less(allocator, left, right);
 }
 
 fn consumeBooleanResult(result_data: *const arrow.array.ArrayData) usize {
