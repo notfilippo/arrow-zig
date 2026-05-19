@@ -114,6 +114,9 @@ test {
     _ = @import("config.zig");
     _ = @import("compute.zig");
     _ = @import("compute/compare.zig");
+    _ = @import("compute/compare/binary.zig");
+    _ = @import("compute/compare/boolean.zig");
+    _ = @import("compute/compare/numeric.zig");
     _ = @import("datatype.zig");
     _ = @import("datatype_layout.zig");
     _ = @import("offsets.zig");
