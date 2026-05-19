@@ -30,11 +30,25 @@ pub fn build(b: *std.Build) void {
     license_step.dependOn(&b.addRunArtifact(license_tests).step);
     license_step.dependOn(&b.addRunArtifact(license_check).step);
 
+    const test_imports_mod = b.createModule(.{
+        .root_source_file = b.path("tools/check_test_imports.zig"),
+        .target = b.graph.host,
+    });
+    const test_imports_check = b.addExecutable(.{
+        .name = "check_test_imports",
+        .root_module = test_imports_mod,
+    });
+    const test_imports_tests = b.addTest(.{ .root_module = test_imports_mod });
+    const test_imports_step = b.step("test-imports", "Check root test imports");
+    test_imports_step.dependOn(&b.addRunArtifact(test_imports_tests).step);
+    test_imports_step.dependOn(&b.addRunArtifact(test_imports_check).step);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(addRootTest(b, target, single_threaded, "test"));
 
     const ci_step = b.step("ci", "Run CI checks");
     ci_step.dependOn(license_step);
+    ci_step.dependOn(test_imports_step);
     ci_step.dependOn(addDocsCheck(b, target));
     ci_step.dependOn(addRootTest(b, target, false, "test_default"));
     ci_step.dependOn(addRootTest(b, target, true, "test_single_threaded"));
