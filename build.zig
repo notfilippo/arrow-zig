@@ -5,6 +5,11 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
+    const bench_optimize = b.option(
+        std.builtin.OptimizeMode,
+        "bench_optimize",
+        "Optimization mode for the benchmark executable. Default: ReleaseFast.",
+    ) orelse .ReleaseFast;
 
     const single_threaded = b.option(
         bool,
@@ -46,6 +51,9 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(addRootTest(b, target, single_threaded, "test"));
 
+    const bench_step = b.step("bench", "Run benchmarks");
+    bench_step.dependOn(addBench(b, target, single_threaded, bench_optimize));
+
     const ci_step = b.step("ci", "Run CI checks");
     ci_step.dependOn(license_step);
     ci_step.dependOn(test_imports_step);
@@ -82,6 +90,21 @@ fn addArrowModule(b: *std.Build, target: std.Build.ResolvedTarget, single_thread
     return mod;
 }
 
+fn addArrowModuleOptimized(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    single_threaded: bool,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
+    const mod = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    addBuildOptions(b, mod, single_threaded);
+    return mod;
+}
+
 fn addRootTest(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -92,6 +115,30 @@ fn addRootTest(
         .name = name,
         .root_module = addArrowModule(b, target, single_threaded),
     })).step;
+}
+
+fn addBench(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    single_threaded: bool,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Step {
+    const bench_mod = b.createModule(.{
+        .root_source_file = b.path("bench/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    bench_mod.addImport("arrow", addArrowModuleOptimized(b, target, single_threaded, optimize));
+
+    const bench_exe = b.addExecutable(.{
+        .name = "arrow_bench",
+        .root_module = bench_mod,
+    });
+    const run = b.addRunArtifact(bench_exe);
+    if (b.args) |args| {
+        run.addArgs(args);
+    }
+    return &run.step;
 }
 
 fn addDocsCheck(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step {
