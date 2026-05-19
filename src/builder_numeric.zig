@@ -221,7 +221,7 @@ test "NumericBuilder basic append and reuse" {
     defer data1.deinit();
     const arr1 = try array.NumericArray(i32).fromData(data1);
     try std.testing.expectEqual(@as(i32, 10), arr1.value(0));
-    try std.testing.expect(arr1.isNull(1));
+    try std.testing.expect(arr1.view.isNull(1));
     try std.testing.expectEqual(@as(i32, 30), arr1.value(2));
 
     try b.append(40);
@@ -243,9 +243,9 @@ test "NumericBuilder append slices nulls and all valid" {
     defer data.deinit();
     const arr = try array.NumericArray(u8).fromData(data);
 
-    try std.testing.expectEqual(@as(usize, 6), arr.len);
-    try std.testing.expectEqual(@as(usize, 2), arr.null_count);
-    try std.testing.expect(arr.isNull(3));
+    try std.testing.expectEqual(@as(usize, 6), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 2), arr.view.null_count);
+    try std.testing.expect(arr.view.isNull(3));
     try std.testing.expectEqual(@as(u8, 6), arr.value(5));
 
     var all_valid = NumericBuilder(f64).init(allocator);
@@ -286,11 +286,11 @@ test "NumericBuilder append values with validity bytes" {
     defer data.deinit();
     const arr = try array.NumericArray(i32).fromData(data);
 
-    try std.testing.expectEqual(@as(usize, 2), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, 2), arr.view.nullCount());
     try std.testing.expectEqual(@as(i32, 10), arr.value(0));
-    try std.testing.expect(arr.isNull(1));
+    try std.testing.expect(arr.view.isNull(1));
     try std.testing.expectEqual(@as(i32, 30), arr.value(2));
-    try std.testing.expect(arr.isNull(3));
+    try std.testing.expect(arr.view.isNull(3));
 }
 
 test "NumericBuilder append values with bitmap" {
@@ -305,10 +305,10 @@ test "NumericBuilder append values with bitmap" {
     defer data.deinit();
     const arr = try array.NumericArray(i32).fromData(data);
 
-    try std.testing.expect(arr.isValid(0));
-    try std.testing.expect(arr.isNull(1));
-    try std.testing.expect(arr.isValid(2));
-    try std.testing.expect(arr.isNull(3));
+    try std.testing.expect(arr.view.isValid(0));
+    try std.testing.expect(arr.view.isNull(1));
+    try std.testing.expect(arr.view.isValid(2));
+    try std.testing.expect(arr.view.isNull(3));
 }
 
 test "NumericBuilder rejects short validity inputs" {
@@ -335,10 +335,10 @@ test "NumericBuilder append values with multi byte bitmap" {
     defer data.deinit();
     const arr = try array.NumericArray(i32).fromData(data);
 
-    try std.testing.expectEqual(@as(usize, n / 2), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, n / 2), arr.view.nullCount());
     for (0..n) |i| {
         const expect_valid = i % 2 == 0;
-        try std.testing.expectEqual(expect_valid, arr.isValid(i));
+        try std.testing.expectEqual(expect_valid, arr.view.isValid(i));
         if (expect_valid) try std.testing.expectEqual(@as(i32, @intCast(i)), arr.value(i));
     }
 }
@@ -357,7 +357,7 @@ test "NumericBuilder reset reuses builder" {
     const data = try b.finish();
     defer data.deinit();
     const arr = try array.NumericArray(i32).fromData(data);
-    try std.testing.expectEqual(@as(usize, 1), arr.len);
+    try std.testing.expectEqual(@as(usize, 1), arr.view.base.len);
     try std.testing.expectEqual(@as(i32, 99), arr.value(0));
 }
 
@@ -373,8 +373,8 @@ test "NumericBuilder appendEmptyValue and appendEmptyValues" {
     defer data.deinit();
     const arr = try array.NumericArray(i32).fromData(data);
 
-    try std.testing.expectEqual(@as(usize, 4), arr.len);
-    try std.testing.expectEqual(@as(usize, 0), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, 4), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 0), arr.view.nullCount());
     try std.testing.expectEqual(@as(i32, 0), arr.value(0));
     try std.testing.expectEqual(@as(i32, 7), arr.value(1));
     try std.testing.expectEqual(@as(i32, 0), arr.value(2));

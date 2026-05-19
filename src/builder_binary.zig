@@ -313,10 +313,10 @@ test "BinaryBuilder basic nulls and slices" {
     try data.validate();
 
     const arr = try array.BinaryArray.fromData(data);
-    try std.testing.expectEqual(@as(usize, 3), arr.len);
-    try std.testing.expectEqual(@as(usize, 1), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, 3), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
     try std.testing.expectEqualStrings("ab", arr.valueBytes(0));
-    try std.testing.expect(arr.isNull(1));
+    try std.testing.expect(arr.view.isNull(1));
     try std.testing.expectEqualStrings("cde", arr.value(2));
 }
 
@@ -333,7 +333,8 @@ test "BinaryBuilder all valid and reuse" {
     const arr1 = try array.BinaryArray.fromData(data1);
     try std.testing.expect(data1.buffers[0] == null);
     try std.testing.expectEqualStrings("", arr1.valueBytes(1));
-    try std.testing.expectEqualStrings("bc", arr1.slice(1, 99).valueBytes(1));
+    const arr1_sliced = @TypeOf(arr1){ .view = arr1.view.slice(1, 99) };
+    try std.testing.expectEqualStrings("bc", arr1_sliced.valueBytes(1));
 
     try b.append("two");
     try b.append("three");
@@ -372,7 +373,7 @@ test "LargeBinaryBuilder uses large offsets" {
     try data.validate();
 
     const arr = try array.LargeBinaryArray.fromData(data);
-    try std.testing.expectEqual(.large_binary, arr.dataType());
+    try std.testing.expectEqual(.large_binary, arr.view.base.dataType());
     try std.testing.expectEqualStrings("alpha", arr.valueBytes(0));
     try std.testing.expectEqualStrings("beta", arr.valueBytes(1));
     try std.testing.expectEqual(@as(usize, 3 * @sizeOf(i64)), data.buffers[1].?.size);
@@ -392,10 +393,10 @@ test "FixedSizeBinaryBuilder builds fixed width bytes" {
     try data.validate();
 
     const arr = try array.FixedSizeBinaryArray.fromData(data);
-    try std.testing.expectEqual(@as(usize, 4), arr.len);
-    try std.testing.expectEqual(@as(usize, 1), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, 4), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
     try std.testing.expectEqualStrings("abc", arr.valueBytes(0));
-    try std.testing.expect(arr.isNull(1));
+    try std.testing.expect(arr.view.isNull(1));
     try std.testing.expectEqualStrings("ghi", arr.value(2));
     try std.testing.expectEqualStrings(&[_]u8{ 0, 0, 0 }, arr.valueBytes(3));
 }

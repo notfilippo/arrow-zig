@@ -413,15 +413,15 @@ test "ListBuilder builds numeric child lists" {
     try data.validate();
 
     const arr = try array.ListArray.fromData(data);
-    try std.testing.expectEqual(@as(usize, 4), arr.len);
-    try std.testing.expectEqual(@as(usize, 1), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, 4), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
     try std.testing.expectEqual(@as(usize, 0), arr.valueRange(0).offset);
     try std.testing.expectEqual(@as(usize, 2), arr.valueRange(0).len);
     try std.testing.expectEqual(@as(usize, 0), arr.valueRange(1).len);
-    try std.testing.expect(arr.isNull(3));
+    try std.testing.expect(arr.view.isNull(3));
 
     const child = try array.NumericArray(i32).fromData(arr.childBaseData());
-    try std.testing.expectEqual(@as(usize, 3), child.len);
+    try std.testing.expectEqual(@as(usize, 3), child.view.base.len);
     try std.testing.expectEqual(@as(i32, 3), child.value(2));
 }
 
@@ -499,8 +499,8 @@ test "ListBuilder deinit supports child builders without reset" {
     defer data.deinit();
 
     const arr = try array.ListArray.fromData(data);
-    try std.testing.expectEqual(@as(usize, 1), arr.len);
-    try std.testing.expectEqual(@as(usize, 0), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, 1), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 0), arr.view.nullCount());
 }
 
 test "ListBuilder reset preserves field options" {
@@ -538,16 +538,16 @@ test "FixedSizeListBuilder builds numeric child lists" {
     try data.validate();
 
     const arr = try array.FixedSizeListArray.fromData(data);
-    try std.testing.expectEqual(@as(usize, 3), arr.len);
+    try std.testing.expectEqual(@as(usize, 3), arr.view.base.len);
     try std.testing.expectEqual(@as(usize, 2), arr.listSize());
-    try std.testing.expectEqual(@as(usize, 1), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
     try std.testing.expectEqual(@as(usize, 0), arr.valueRange(0).offset);
     try std.testing.expectEqual(@as(usize, 2), arr.valueRange(1).offset);
     try std.testing.expectEqual(@as(usize, 4), arr.valueRange(2).offset);
-    try std.testing.expect(arr.isNull(1));
+    try std.testing.expect(arr.view.isNull(1));
 
     const child = try array.NumericArray(i32).fromData(arr.childBaseData());
-    try std.testing.expectEqual(@as(usize, 6), child.len);
+    try std.testing.expectEqual(@as(usize, 6), child.view.base.len);
     try std.testing.expectEqual(@as(i32, 1), child.value(0));
     try std.testing.expectEqual(@as(i32, 2), child.value(1));
     try std.testing.expectEqual(@as(i32, 0), child.value(2));
@@ -591,6 +591,6 @@ test "FixedSizeListBuilder reset and field options" {
     try std.testing.expectEqualStrings("coords", data.type.fixed_size_list.child.name);
     try std.testing.expect(!data.type.fixed_size_list.child.nullable);
     const child = try array.NumericArray(i32).fromData(data.children[0]);
-    try std.testing.expectEqual(@as(usize, 3), child.len);
-    try std.testing.expectEqual(@as(usize, 0), child.nullCount());
+    try std.testing.expectEqual(@as(usize, 3), child.view.base.len);
+    try std.testing.expectEqual(@as(usize, 0), child.view.nullCount());
 }

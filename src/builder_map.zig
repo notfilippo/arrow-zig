@@ -282,16 +282,16 @@ test "MapBuilder builds maps" {
 
     const arr = try array.MapArray.fromData(data);
     try std.testing.expect(arr.keysSorted());
-    try std.testing.expectEqual(@as(usize, 4), arr.len);
-    try std.testing.expectEqual(@as(usize, 1), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, 4), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
     try std.testing.expectEqual(@as(usize, 2), arr.entryRange(0).len);
     try std.testing.expectEqual(@as(usize, 0), arr.entryRange(1).len);
-    try std.testing.expect(arr.isNull(2));
+    try std.testing.expect(arr.view.isNull(2));
     try std.testing.expectEqualStrings("entries", data.type.map.entries.name);
     try std.testing.expect(!data.type.map.entries.nullable);
 
     const keys = try array.NumericArray(i32).fromData(arr.keysBaseData());
-    try std.testing.expectEqual(@as(usize, 3), keys.len);
+    try std.testing.expectEqual(@as(usize, 3), keys.view.base.len);
     try std.testing.expectEqual(@as(i32, 3), keys.value(2));
 
     const values = try array.Utf8Array.fromData(arr.valuesBaseData());

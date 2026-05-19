@@ -43,79 +43,27 @@ pub fn VarListArray(comptime kind: ListKind) type {
     return struct {
         const Self = @This();
 
-        data: *const ArrayData,
-        offset: usize,
-        len: usize,
-        null_count: ?usize,
+        view: common.NullableView,
 
         pub fn fromData(data: *const ArrayData) common.ViewError!Self {
             if (!dataTypeMatches(kind, data.type)) return error.TypeMismatch;
             if (data.buffers.len < 2 or data.children.len != 1) return error.InvalidBufferLayout;
             if (data.len > 0 and data.buffers[1] == null) return error.InvalidBufferLayout;
-            return .{
-                .data = data,
-                .offset = data.offset,
-                .len = data.len,
-                .null_count = data.null_count,
-            };
-        }
-
-        pub fn dataType(self: Self) datatype.DataType {
-            return self.data.type;
-        }
-
-        pub fn baseData(self: Self) *const ArrayData {
-            return self.data;
+            return .{ .view = common.NullableView.init(data) };
         }
 
         pub fn childBaseData(self: Self) *const ArrayData {
-            return self.data.children[0];
+            return self.view.base.data.children[0];
         }
 
         pub fn valueRange(self: Self, i: usize) ValueRange {
-            const offsets = self.data.buffers[1].?;
-            return offset_data.rangeAt(Offset, offsets, self.offset + i);
+            const offsets = self.view.base.data.buffers[1].?;
+            return offset_data.rangeAt(Offset, offsets, self.view.base.offset + i);
         }
 
         pub fn valueOwned(self: Self, i: usize) array_data.DataSliceError!*ArrayData {
             const range = self.valueRange(i);
-            return self.data.children[0].slice(range.offset, range.len);
-        }
-
-        pub fn isValid(self: Self, i: usize) bool {
-            return common.slotIsValid(self.data, self.offset, i);
-        }
-
-        pub fn isNull(self: Self, i: usize) bool {
-            return !self.isValid(i);
-        }
-
-        pub fn nullCount(self: Self) usize {
-            return common.viewNullCount(self.data, self.offset, self.len, self.null_count);
-        }
-
-        pub fn slice(self: Self, off: usize, length: usize) Self {
-            return self.sliceChecked(off, length) catch unreachable;
-        }
-
-        pub fn sliceChecked(self: Self, off: usize, length: usize) common.SliceError!Self {
-            const clamped = try common.clampedLen(self.len, off, length);
-            return .{
-                .data = self.data,
-                .offset = self.offset + off,
-                .len = clamped,
-                .null_count = array_data.slicedNullCount(self.null_count, self.len, off, clamped),
-            };
-        }
-
-        pub fn sliceOwned(self: Self, off: usize, length: usize) array_data.DataSliceError!*ArrayData {
-            const clamped = try common.clampedLen(self.len, off, length);
-            const data_off = try common.dataRelativeOffset(self.data.offset, self.offset, off);
-            return self.data.slice(data_off, clamped);
-        }
-
-        pub fn cloneRetained(self: Self) array_data.DataSliceError!*ArrayData {
-            return self.sliceOwned(0, self.len);
+            return self.view.base.data.children[0].slice(range.offset, range.len);
         }
     };
 }
@@ -124,40 +72,24 @@ pub const ListArray = VarListArray(.list);
 pub const LargeListArray = VarListArray(.large_list);
 
 pub const FixedSizeListArray = struct {
-    data: *const ArrayData,
-    offset: usize,
-    len: usize,
-    null_count: ?usize,
+    view: common.NullableView,
 
     pub fn fromData(data: *const ArrayData) common.ViewError!FixedSizeListArray {
         if (data.type.id() != .fixed_size_list) return error.TypeMismatch;
         if (data.buffers.len != 1 or data.children.len != 1) return error.InvalidBufferLayout;
-        return .{
-            .data = data,
-            .offset = data.offset,
-            .len = data.len,
-            .null_count = data.null_count,
-        };
-    }
-
-    pub fn dataType(self: FixedSizeListArray) datatype.DataType {
-        return self.data.type;
-    }
-
-    pub fn baseData(self: FixedSizeListArray) *const ArrayData {
-        return self.data;
+        return .{ .view = common.NullableView.init(data) };
     }
 
     pub fn childBaseData(self: FixedSizeListArray) *const ArrayData {
-        return self.data.children[0];
+        return self.view.base.data.children[0];
     }
 
     pub fn listSize(self: FixedSizeListArray) usize {
-        return self.data.type.fixed_size_list.len;
+        return self.view.base.data.type.fixed_size_list.len;
     }
 
     pub fn valueRange(self: FixedSizeListArray, i: usize) ValueRange {
-        const slot = checked.add(self.offset, i) catch unreachable;
+        const slot = checked.add(self.view.base.offset, i) catch unreachable;
         return .{
             .offset = checked.mul(slot, self.listSize()) catch unreachable,
             .len = self.listSize(),
@@ -166,43 +98,7 @@ pub const FixedSizeListArray = struct {
 
     pub fn valueOwned(self: FixedSizeListArray, i: usize) array_data.DataSliceError!*ArrayData {
         const range = self.valueRange(i);
-        return self.data.children[0].slice(range.offset, range.len);
-    }
-
-    pub fn isValid(self: FixedSizeListArray, i: usize) bool {
-        return common.slotIsValid(self.data, self.offset, i);
-    }
-
-    pub fn isNull(self: FixedSizeListArray, i: usize) bool {
-        return !self.isValid(i);
-    }
-
-    pub fn nullCount(self: FixedSizeListArray) usize {
-        return common.viewNullCount(self.data, self.offset, self.len, self.null_count);
-    }
-
-    pub fn slice(self: FixedSizeListArray, off: usize, length: usize) FixedSizeListArray {
-        return self.sliceChecked(off, length) catch unreachable;
-    }
-
-    pub fn sliceChecked(self: FixedSizeListArray, off: usize, length: usize) common.SliceError!FixedSizeListArray {
-        const clamped = try common.clampedLen(self.len, off, length);
-        return .{
-            .data = self.data,
-            .offset = self.offset + off,
-            .len = clamped,
-            .null_count = array_data.slicedNullCount(self.null_count, self.len, off, clamped),
-        };
-    }
-
-    pub fn sliceOwned(self: FixedSizeListArray, off: usize, length: usize) array_data.DataSliceError!*ArrayData {
-        const clamped = try common.clampedLen(self.len, off, length);
-        const data_off = try common.dataRelativeOffset(self.data.offset, self.offset, off);
-        return self.data.slice(data_off, clamped);
-    }
-
-    pub fn cloneRetained(self: FixedSizeListArray) array_data.DataSliceError!*ArrayData {
-        return self.sliceOwned(0, self.len);
+        return self.view.base.data.children[0].slice(range.offset, range.len);
     }
 };
 
@@ -232,8 +128,8 @@ test "ListArray value ranges and owned values" {
     try data.validate();
 
     const arr = try ListArray.fromData(data);
-    try std.testing.expectEqual(@as(usize, 3), arr.len);
-    try std.testing.expectEqual(@as(usize, 0), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, 3), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 0), arr.view.nullCount());
     try std.testing.expectEqual(@as(usize, 0), arr.valueRange(0).offset);
     try std.testing.expectEqual(@as(usize, 2), arr.valueRange(0).len);
     try std.testing.expectEqual(@as(usize, 0), arr.valueRange(1).len);
@@ -241,20 +137,21 @@ test "ListArray value ranges and owned values" {
     const values = try arr.valueOwned(2);
     defer values.deinit();
     const values_arr = try primitive.NumericArray(i32).fromData(values);
-    try std.testing.expectEqual(@as(usize, 3), values_arr.len);
+    try std.testing.expectEqual(@as(usize, 3), values_arr.view.base.len);
 
-    const sliced_owned = try arr.slice(1, 2).sliceOwned(0, 2);
+    const view_slice = arr.view.slice(1, 2);
+    const sliced_owned = try view_slice.base.sliceOwned(0, 2);
     defer sliced_owned.deinit();
     const sliced_owned_arr = try ListArray.fromData(sliced_owned);
     try std.testing.expectEqual(@as(usize, 0), sliced_owned_arr.valueRange(0).len);
     try std.testing.expectEqual(@as(usize, 3), sliced_owned_arr.valueRange(1).len);
 
-    const sliced_clone = try arr.slice(1, 2).cloneRetained();
+    const sliced_clone = try view_slice.base.cloneRetained();
     defer sliced_clone.deinit();
     const sliced_clone_arr = try ListArray.fromData(sliced_clone);
     try std.testing.expectEqual(@as(usize, 0), sliced_clone_arr.valueRange(0).len);
 
-    try std.testing.expectError(error.OffsetOutOfBounds, arr.sliceChecked(4, 1));
+    try std.testing.expectError(error.OffsetOutOfBounds, arr.view.sliceChecked(4, 1));
 }
 
 test "LargeListArray uses large offsets" {
@@ -284,7 +181,7 @@ test "LargeListArray uses large offsets" {
     const arr = try LargeListArray.fromData(data);
     try std.testing.expectEqual(@as(usize, 1), arr.valueRange(1).offset);
     try std.testing.expectEqual(@as(usize, 1), arr.valueRange(1).len);
-    try std.testing.expectEqual(.large_list, arr.dataType().id());
+    try std.testing.expectEqual(.large_list, arr.view.base.dataType().id());
 }
 
 test "FixedSizeListArray value ranges and owned values" {
@@ -315,29 +212,29 @@ test "FixedSizeListArray value ranges and owned values" {
     try std.testing.expectEqual(@as(usize, 0), arr.valueRange(0).offset);
     try std.testing.expectEqual(@as(usize, 2), arr.valueRange(1).offset);
     try std.testing.expectEqual(@as(usize, 2), arr.valueRange(1).len);
-    try std.testing.expect(arr.isNull(1));
+    try std.testing.expect(arr.view.isNull(1));
 
     const values = try arr.valueOwned(2);
     defer values.deinit();
     const values_arr = try primitive.NumericArray(i32).fromData(values);
-    try std.testing.expectEqual(@as(usize, 2), values_arr.len);
+    try std.testing.expectEqual(@as(usize, 2), values_arr.view.base.len);
     try std.testing.expectEqual(@as(i32, 5), values_arr.value(0));
     try std.testing.expectEqual(@as(i32, 6), values_arr.value(1));
 
-    const sliced = arr.slice(1, 2);
+    const sliced = FixedSizeListArray{ .view = arr.view.slice(1, 2) };
     try std.testing.expectEqual(@as(usize, 2), sliced.valueRange(0).offset);
     try std.testing.expectEqual(@as(usize, 4), sliced.valueRange(1).offset);
-    try std.testing.expectEqual(@as(usize, 1), sliced.nullCount());
+    try std.testing.expectEqual(@as(usize, 1), sliced.view.nullCount());
 
-    const sliced_owned = try sliced.sliceOwned(0, 2);
+    const sliced_owned = try sliced.view.base.sliceOwned(0, 2);
     defer sliced_owned.deinit();
     const sliced_owned_arr = try FixedSizeListArray.fromData(sliced_owned);
     try std.testing.expectEqual(@as(usize, 2), sliced_owned_arr.valueRange(0).offset);
 
-    const sliced_clone = try sliced.cloneRetained();
+    const sliced_clone = try sliced.view.base.cloneRetained();
     defer sliced_clone.deinit();
     const sliced_clone_arr = try FixedSizeListArray.fromData(sliced_clone);
     try std.testing.expectEqual(@as(usize, 4), sliced_clone_arr.valueRange(1).offset);
 
-    try std.testing.expectError(error.OffsetOutOfBounds, arr.sliceChecked(4, 1));
+    try std.testing.expectError(error.OffsetOutOfBounds, arr.view.sliceChecked(4, 1));
 }

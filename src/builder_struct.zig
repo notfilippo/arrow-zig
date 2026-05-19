@@ -276,14 +276,14 @@ test "StructBuilder builds rows from child builders" {
     try data.validate();
 
     const arr = try array.StructArray.fromData(data);
-    try std.testing.expectEqual(@as(usize, 3), arr.len);
-    try std.testing.expectEqual(@as(usize, 1), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, 3), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
     try std.testing.expectEqualStrings("number", arr.fieldName(0).?);
     try std.testing.expectEqualStrings("flag", arr.fieldName(1).?);
-    try std.testing.expect(arr.isNull(1));
+    try std.testing.expect(arr.view.isNull(1));
 
     const numbers = try array.NumericArray(i32).fromData(arr.fieldBaseNamed("number").?);
-    try std.testing.expectEqual(@as(usize, 3), numbers.len);
+    try std.testing.expectEqual(@as(usize, 3), numbers.view.base.len);
     try std.testing.expectEqual(@as(i32, 10), numbers.value(0));
     try std.testing.expectEqual(@as(i32, 0), numbers.value(1));
     try std.testing.expectEqual(@as(i32, 30), numbers.value(2));
@@ -342,8 +342,8 @@ test "StructBuilder reset and field options" {
     try data.validate();
 
     const arr = try array.StructArray.fromData(data);
-    try std.testing.expectEqual(@as(usize, 1), arr.len);
-    try std.testing.expect(arr.isNull(0));
+    try std.testing.expectEqual(@as(usize, 1), arr.view.base.len);
+    try std.testing.expect(arr.view.isNull(0));
     try std.testing.expectEqualStrings("id", arr.fieldName(0).?);
     try std.testing.expectEqualStrings("enabled", arr.fieldName(1).?);
     try std.testing.expect(!data.type.struct_.fields[0].nullable);
@@ -351,6 +351,6 @@ test "StructBuilder reset and field options" {
 
     const numbers = try array.NumericArray(i32).fromData(arr.fieldBaseNamed("id").?);
     const flags = try array.BooleanArray.fromData(arr.fieldBaseNamed("enabled").?);
-    try std.testing.expectEqual(@as(usize, 0), numbers.nullCount());
-    try std.testing.expectEqual(@as(usize, 0), flags.nullCount());
+    try std.testing.expectEqual(@as(usize, 0), numbers.view.nullCount());
+    try std.testing.expectEqual(@as(usize, 0), flags.view.nullCount());
 }

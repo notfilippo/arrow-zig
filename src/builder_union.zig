@@ -341,7 +341,7 @@ fn IntBuffer(comptime T: type) type {
             buf.size = try checked.mul(self.len, @sizeOf(T));
         }
 
-        fn finish(self: *Self, allocator: Allocator) Allocator.Error!*Buffer {
+        fn finish(self: *Self, allocator: Allocator) (Allocator.Error || checked.Error)!*Buffer {
             const buf = if (self.buffer) |b| blk: {
                 self.buffer = null;
                 break :blk b;
@@ -351,7 +351,7 @@ fn IntBuffer(comptime T: type) type {
             return buf;
         }
 
-        fn ensureBuffer(self: *Self, allocator: Allocator) Allocator.Error!*Buffer {
+        fn ensureBuffer(self: *Self, allocator: Allocator) (Allocator.Error || checked.Error)!*Buffer {
             if (self.buffer == null) self.buffer = try Buffer.allocate(allocator, 0);
             return self.buffer.?;
         }
@@ -438,7 +438,7 @@ test "DenseUnionBuilder builds offset based union arrays" {
     try data.validate();
 
     const arr = try array.DenseUnionArray.fromData(data);
-    try std.testing.expectEqual(@as(usize, 4), arr.len);
+    try std.testing.expectEqual(@as(usize, 4), arr.view.base.len);
     try std.testing.expectEqual(@as(i8, 7), arr.typeId(0));
     try std.testing.expectEqual(@as(i8, 8), arr.typeId(1));
     try std.testing.expectEqual(@as(usize, 1), arr.valueOffset(2));
@@ -474,7 +474,7 @@ test "SparseUnionBuilder builds row aligned union arrays" {
     try data.validate();
 
     const arr = try array.SparseUnionArray.fromData(data);
-    try std.testing.expectEqual(@as(usize, 3), arr.len);
+    try std.testing.expectEqual(@as(usize, 3), arr.view.base.len);
     try std.testing.expectEqual(@as(i8, 7), arr.typeId(0));
     try std.testing.expectEqual(@as(i8, 8), arr.typeId(1));
     try std.testing.expectEqual(@as(usize, 3), data.children[0].len);

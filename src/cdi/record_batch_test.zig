@@ -62,13 +62,13 @@ test "exportRecordBatch and importRecordBatch round trip schema and columns" {
 
     const imported_numbers = try array.NumericArray(i32).fromData(imported.columnNamed("number").?);
     try std.testing.expectEqual(@as(i32, 10), imported_numbers.value(0));
-    try std.testing.expect(imported_numbers.isNull(1));
+    try std.testing.expect(imported_numbers.view.isNull(1));
     try std.testing.expectEqual(@as(i32, 30), imported_numbers.value(2));
 
     const imported_text = try array.Utf8Array.fromData(imported.columnNamed("text").?);
     try std.testing.expectEqualStrings("alpha", imported_text.value(0));
     try std.testing.expectEqualStrings("beta", imported_text.value(1));
-    try std.testing.expect(imported_text.isNull(2));
+    try std.testing.expect(imported_text.view.isNull(2));
 }
 
 test "record batch CDI round trips zero column batch" {

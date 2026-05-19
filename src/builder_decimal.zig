@@ -193,12 +193,12 @@ test "Decimal128Builder builds decimal arrays" {
     try data.validate();
 
     const arr = try array.Decimal128Array.fromData(data);
-    try std.testing.expectEqual(@as(usize, 4), arr.len);
+    try std.testing.expectEqual(@as(usize, 4), arr.view.base.len);
     try std.testing.expectEqual(@as(u8, 12), arr.precision());
     try std.testing.expectEqual(@as(i32, 2), arr.scale());
-    try std.testing.expectEqual(@as(usize, 1), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
     try std.testing.expectEqual(@as(i128, 12345), arr.value(0));
-    try std.testing.expect(arr.isNull(1));
+    try std.testing.expect(arr.view.isNull(1));
     try std.testing.expectEqual(@as(i128, -67890), arr.value(2));
     try std.testing.expectEqual(@as(i128, 0), arr.value(3));
 }
@@ -219,7 +219,7 @@ test "Decimal256Builder builds decimal arrays" {
     try std.testing.expectEqual(@as(u8, 40), arr.precision());
     try std.testing.expectEqual(@as(i32, -2), arr.scale());
     try std.testing.expectEqual(@as(i256, 12345), arr.value(0));
-    try std.testing.expect(arr.isNull(1));
+    try std.testing.expect(arr.view.isNull(1));
     try std.testing.expectEqual(@as(i256, -67890), arr.value(2));
 }
 
@@ -235,5 +235,5 @@ test "DecimalBuilder validates metadata and byte width" {
     defer data.deinit();
     try data.validate();
     const arr = try array.Decimal256Array.fromData(data);
-    try std.testing.expectEqual(@as(usize, 2), arr.len);
+    try std.testing.expectEqual(@as(usize, 2), arr.view.base.len);
 }

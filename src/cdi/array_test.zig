@@ -107,7 +107,7 @@ test "importArrayFromSchema imports exported array" {
 
     const view = try array.BinaryArray.fromData(imported);
     try std.testing.expectEqualStrings("abc", view.valueBytes(0));
-    try std.testing.expect(view.isNull(1));
+    try std.testing.expect(view.view.isNull(1));
     try std.testing.expectEqualStrings("def", view.valueBytes(2));
 }
 
@@ -131,10 +131,10 @@ test "importArray imports exported primitive array" {
     try std.testing.expectEqual(@as(usize, 2), source.refCount());
 
     const view = try array.NumericArray(i32).fromData(imported);
-    try std.testing.expectEqual(@as(usize, 3), view.len);
-    try std.testing.expectEqual(@as(usize, 1), view.nullCount());
+    try std.testing.expectEqual(@as(usize, 3), view.view.base.len);
+    try std.testing.expectEqual(@as(usize, 1), view.view.nullCount());
     try std.testing.expectEqual(@as(i32, 10), view.value(0));
-    try std.testing.expect(view.isNull(1));
+    try std.testing.expect(view.view.isNull(1));
     try std.testing.expectEqual(@as(i32, 30), view.value(2));
 
     imported.deinit();
@@ -162,7 +162,7 @@ test "importArray imports exported list array" {
     try imported.validate();
 
     const view = try array.ListArray.fromData(imported);
-    try std.testing.expectEqual(@as(usize, 3), view.len);
+    try std.testing.expectEqual(@as(usize, 3), view.view.base.len);
     try std.testing.expectEqual(@as(usize, 2), view.valueRange(0).len);
     try std.testing.expectEqual(@as(usize, 0), view.valueRange(1).len);
     const child = try array.NumericArray(i32).fromData(view.childBaseData());
@@ -327,7 +327,7 @@ test "importArray imports exported run end encoded array" {
     try imported.validate();
 
     const view = try array.RunEndEncodedArray(i32).fromData(imported);
-    try std.testing.expectEqual(@as(usize, 5), view.len);
+    try std.testing.expectEqual(@as(usize, 5), view.view.base.len);
     try std.testing.expectEqual(@as(usize, 2), view.runCount());
     try std.testing.expectEqual(@as(i32, 5), view.runEnd(1));
     try std.testing.expectEqual(@as(usize, 1), view.runIndex(3));
@@ -614,6 +614,6 @@ test "importArray accepts unaligned validity buffer" {
     defer imported.deinit();
 
     const view = try array.NumericArray(i32).fromData(imported);
-    try std.testing.expectEqual(@as(usize, 1), view.nullCount());
-    try std.testing.expect(view.isNull(3));
+    try std.testing.expectEqual(@as(usize, 1), view.view.nullCount());
+    try std.testing.expect(view.view.isNull(3));
 }

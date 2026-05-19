@@ -80,10 +80,10 @@ test "NullBuilder builds null arrays and reuses state" {
     defer data.deinit();
     try data.validate();
     const arr = try array.NullArray.fromData(data);
-    try std.testing.expectEqual(@as(usize, 5), arr.len);
-    try std.testing.expectEqual(@as(usize, 5), arr.nullCount());
-    try std.testing.expect(arr.isNull(4));
-    try std.testing.expect(!arr.isValid(4));
+    try std.testing.expectEqual(@as(usize, 5), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 5), arr.view.nullCount());
+    try std.testing.expect(arr.view.isNull(4));
+    try std.testing.expect(!arr.view.isValid(4));
 
     try std.testing.expectEqual(@as(usize, 0), b.length());
     try b.appendNulls(2);

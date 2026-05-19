@@ -82,7 +82,7 @@ pub fn DictionaryBuilder(comptime Index: type) type {
             const index_data = try self.indices.finish();
             defer index_data.deinit();
 
-            const index_ty = indexDataType();
+            const index_ty = indexDataType(Index);
             const value_ty = self.dictionary.type;
             const dict_ty = datatype.DataType{ .dictionary = .{
                 .index_type = &index_ty,
@@ -145,12 +145,12 @@ test "DictionaryBuilder builds dictionary arrays" {
     try data.validate();
 
     const arr = try array.DictionaryArray(i8).fromData(data);
-    try std.testing.expect(arr.dataType().dictionary.ordered);
-    try std.testing.expectEqual(@as(usize, 5), arr.len);
-    try std.testing.expectEqual(@as(usize, 1), arr.nullCount());
+    try std.testing.expect(arr.view.base.dataType().dictionary.ordered);
+    try std.testing.expectEqual(@as(usize, 5), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
     try std.testing.expectEqual(@as(i8, 1), arr.indexValue(1));
     try std.testing.expectEqual(@as(i8, 0), arr.indexValue(4));
-    try std.testing.expect(arr.isNull(2));
+    try std.testing.expect(arr.view.isNull(2));
     try std.testing.expectEqual(datatype.TypeId.utf8, arr.dictionaryBaseData().type.id());
 }
 

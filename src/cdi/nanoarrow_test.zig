@@ -34,10 +34,10 @@ test "importArrayFromSchema imports nanoarrow bool array" {
     defer imported.deinit();
 
     const view = try array.BooleanArray.fromData(imported);
-    try std.testing.expectEqual(@as(usize, 3), view.len);
-    try std.testing.expectEqual(@as(usize, 1), view.nullCount());
+    try std.testing.expectEqual(@as(usize, 3), view.view.base.len);
+    try std.testing.expectEqual(@as(usize, 1), view.view.nullCount());
     try std.testing.expect(view.value(0));
-    try std.testing.expect(view.isNull(1));
+    try std.testing.expect(view.view.isNull(1));
     try std.testing.expect(!view.value(2));
 }
 
@@ -46,10 +46,10 @@ test "importArrayFromSchema imports nanoarrow int32 array" {
     defer imported.deinit();
 
     const view = try array.NumericArray(i32).fromData(imported);
-    try std.testing.expectEqual(@as(usize, 3), view.len);
-    try std.testing.expectEqual(@as(usize, 1), view.nullCount());
+    try std.testing.expectEqual(@as(usize, 3), view.view.base.len);
+    try std.testing.expectEqual(@as(usize, 1), view.view.nullCount());
     try std.testing.expectEqual(@as(i32, 11), view.value(0));
-    try std.testing.expect(view.isNull(1));
+    try std.testing.expect(view.view.isNull(1));
     try std.testing.expectEqual(@as(i32, 33), view.value(2));
 }
 
@@ -58,10 +58,10 @@ test "importArrayFromSchema imports nanoarrow string array" {
     defer imported.deinit();
 
     const view = try array.Utf8Array.fromData(imported);
-    try std.testing.expectEqual(@as(usize, 3), view.len);
-    try std.testing.expectEqual(@as(usize, 1), view.nullCount());
+    try std.testing.expectEqual(@as(usize, 3), view.view.base.len);
+    try std.testing.expectEqual(@as(usize, 1), view.view.nullCount());
     try std.testing.expectEqualStrings("aa", view.value(0));
-    try std.testing.expect(view.isNull(1));
+    try std.testing.expect(view.view.isNull(1));
     try std.testing.expectEqualStrings("bbb", view.value(2));
 }
 
@@ -70,11 +70,11 @@ test "importArrayFromSchema imports nanoarrow list array" {
     defer imported.deinit();
 
     const view = try array.ListArray.fromData(imported);
-    try std.testing.expectEqual(@as(usize, 4), view.len);
-    try std.testing.expectEqual(@as(usize, 1), view.nullCount());
+    try std.testing.expectEqual(@as(usize, 4), view.view.base.len);
+    try std.testing.expectEqual(@as(usize, 1), view.view.nullCount());
     try std.testing.expectEqual(@as(usize, 2), view.valueRange(0).len);
     try std.testing.expectEqual(@as(usize, 0), view.valueRange(1).len);
-    try std.testing.expect(view.isNull(2));
+    try std.testing.expect(view.view.isNull(2));
     try std.testing.expectEqual(@as(usize, 1), view.valueRange(3).len);
 
     const child = try array.NumericArray(i32).fromData(view.childBaseData());
@@ -88,7 +88,7 @@ test "importArrayFromSchema imports nanoarrow struct array" {
     defer imported.deinit();
 
     const view = try StructArray.fromData(imported);
-    try std.testing.expectEqual(@as(usize, 2), view.len);
+    try std.testing.expectEqual(@as(usize, 2), view.view.base.len);
     try std.testing.expectEqual(@as(usize, 2), view.fieldCount());
     try std.testing.expectEqualStrings("number", view.fieldName(0).?);
     try std.testing.expectEqualStrings("word", view.fieldName(1).?);

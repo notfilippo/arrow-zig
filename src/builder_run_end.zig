@@ -216,12 +216,12 @@ test "RunEndEncodedBuilder builds run encoded arrays" {
     try data.validate();
 
     const arr = try array.RunEndEncodedArray(i32).fromData(data);
-    try std.testing.expectEqual(@as(usize, 7), arr.len);
+    try std.testing.expectEqual(@as(usize, 7), arr.view.base.len);
     try std.testing.expectEqual(@as(usize, 3), arr.runCount());
     try std.testing.expectEqual(@as(i32, 2), arr.runEnd(0));
     try std.testing.expectEqual(@as(i32, 5), arr.runEnd(1));
-    try std.testing.expect(arr.isNull(5));
-    try std.testing.expectEqual(@as(usize, 2), arr.nullCount());
+    try std.testing.expect(arr.view.isNull(5));
+    try std.testing.expectEqual(@as(usize, 2), arr.view.nullCount());
 }
 
 test "RunEndEncodedBuilder rejects incomplete and non increasing runs" {

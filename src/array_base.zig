@@ -9,6 +9,8 @@
 const datatype = @import("datatype.zig");
 const bitmap = @import("bitmap.zig");
 const checked = @import("checked.zig");
+const array_data = @import("array_data.zig");
+const ArrayData = array_data.ArrayData;
 
 pub const ViewError = error{ TypeMismatch, InvalidBufferLayout };
 pub const SliceError = error{OffsetOutOfBounds};
@@ -62,6 +64,128 @@ pub const FixedWidthKind = union(enum) {
     time64,
     timestamp,
     duration,
+};
+
+pub const View = struct {
+    data: *const ArrayData,
+    offset: usize,
+    len: usize,
+
+    pub fn init(data: *const ArrayData) View {
+        return .{ .data = data, .offset = data.offset, .len = data.len };
+    }
+
+    pub fn dataType(self: View) datatype.DataType {
+        return self.data.type;
+    }
+
+    pub fn baseData(self: View) *const ArrayData {
+        return self.data;
+    }
+
+    pub fn slice(self: View, off: usize, length: usize) View {
+        return self.sliceChecked(off, length) catch unreachable;
+    }
+
+    pub fn sliceChecked(self: View, off: usize, length: usize) SliceError!View {
+        const clamped = try clampedLen(self.len, off, length);
+        return .{ .data = self.data, .offset = self.offset + off, .len = clamped };
+    }
+
+    pub fn sliceOwned(self: View, off: usize, length: usize) array_data.DataSliceError!*ArrayData {
+        const clamped = try clampedLen(self.len, off, length);
+        const data_off = try dataRelativeOffset(self.data.offset, self.offset, off);
+        return self.data.slice(data_off, clamped);
+    }
+
+    pub fn cloneRetained(self: View) array_data.DataSliceError!*ArrayData {
+        return self.sliceOwned(0, self.len);
+    }
+};
+
+pub const NullableView = struct {
+    base: View,
+    null_count: ?usize,
+
+    pub fn init(data: *const ArrayData) NullableView {
+        return .{
+            .base = View.init(data),
+            .null_count = data.null_count,
+        };
+    }
+
+    pub fn isValid(self: NullableView, i: usize) bool {
+        return slotIsValid(self.base.data, self.base.offset, i);
+    }
+
+    pub fn isNull(self: NullableView, i: usize) bool {
+        return !self.isValid(i);
+    }
+
+    pub fn nullCount(self: NullableView) usize {
+        return viewNullCount(self.base.data, self.base.offset, self.base.len, self.null_count);
+    }
+
+    pub fn slice(self: NullableView, off: usize, length: usize) NullableView {
+        return self.sliceChecked(off, length) catch unreachable;
+    }
+
+    pub fn sliceChecked(self: NullableView, off: usize, length: usize) SliceError!NullableView {
+        const base = try self.base.sliceChecked(off, length);
+        return .{
+            .base = base,
+            .null_count = array_data.slicedNullCount(self.null_count, self.base.len, off, base.len),
+        };
+    }
+};
+
+pub const NoNullView = struct {
+    base: View,
+
+    pub fn init(data: *const ArrayData) NoNullView {
+        return .{ .base = View.init(data) };
+    }
+
+    pub fn isValid(self: NoNullView, i: usize) bool {
+        _ = self;
+        _ = i;
+        return true;
+    }
+
+    pub fn isNull(self: NoNullView, i: usize) bool {
+        _ = self;
+        _ = i;
+        return false;
+    }
+
+    pub fn nullCount(self: NoNullView) usize {
+        _ = self;
+        return 0;
+    }
+};
+
+pub const AlwaysNullView = struct {
+    base: View,
+
+    pub fn init(data: *const ArrayData) AlwaysNullView {
+        return .{ .base = View.init(data) };
+    }
+
+    pub fn isValid(self: AlwaysNullView, i: usize) bool {
+        _ = self;
+        _ = i;
+        return false;
+    }
+
+    pub fn isNull(self: AlwaysNullView, i: usize) bool {
+        _ = self;
+        _ = i;
+        return true;
+    }
+
+    pub fn nullCount(self: AlwaysNullView) usize {
+        return self.base.len;
+    }
 };
 
 pub fn slotIsValid(data: anytype, offset: usize, i: usize) bool {

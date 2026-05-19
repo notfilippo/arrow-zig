@@ -194,10 +194,10 @@ test "MonthIntervalBuilder builds interval arrays" {
     try data.validate();
 
     const arr = try array.MonthIntervalArray.fromData(data);
-    try std.testing.expectEqual(@as(usize, 3), arr.len);
-    try std.testing.expectEqual(@as(usize, 1), arr.nullCount());
+    try std.testing.expectEqual(@as(usize, 3), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
     try std.testing.expectEqual(@as(i32, 12), arr.value(0));
-    try std.testing.expect(arr.isNull(1));
+    try std.testing.expect(arr.view.isNull(1));
     try std.testing.expectEqual(@as(i32, -3), arr.value(2));
 }
 
@@ -216,7 +216,7 @@ test "DayTimeIntervalBuilder builds interval arrays" {
     const arr = try array.DayTimeIntervalArray.fromData(data);
     try std.testing.expectEqual(@as(i32, 2), arr.value(0).days);
     try std.testing.expectEqual(@as(i32, 300), arr.value(0).milliseconds);
-    try std.testing.expect(arr.isNull(1));
+    try std.testing.expect(arr.view.isNull(1));
     try std.testing.expectEqual(@as(i32, -4), arr.value(2).days);
     try std.testing.expectEqual(@as(i32, -500), arr.value(2).milliseconds);
 }

@@ -10,77 +10,16 @@ const array_data = @import("array_data.zig");
 const common = @import("array_base.zig");
 const ArrayData = array_data.ArrayData;
 
-pub fn RunEndEncodedArray(comptime RunEnd: type) type {
+pub fn RunEndView(comptime RunEnd: type) type {
     ensureRunEnd(RunEnd);
 
     return struct {
         const Self = @This();
-        pub const RunEndType = RunEnd;
 
-        data: *const ArrayData,
-        offset: usize,
-        len: usize,
+        base: common.View,
 
-        pub fn fromData(data: *const ArrayData) common.ViewError!Self {
-            if (data.type.id() != .run_end_encoded) return error.TypeMismatch;
-            if (data.type.run_end_encoded.run_ends.type.id() != common.typeIdFor(RunEnd)) return error.TypeMismatch;
-            if (data.buffers.len != 0 or data.children.len != 2) return error.InvalidBufferLayout;
-            return .{
-                .data = data,
-                .offset = data.offset,
-                .len = data.len,
-            };
-        }
-
-        pub fn dataType(self: Self) datatype.DataType {
-            return self.data.type;
-        }
-
-        pub fn baseData(self: Self) *const ArrayData {
-            return self.data;
-        }
-
-        pub fn runEndsData(self: Self) *const ArrayData {
-            return self.data.children[0];
-        }
-
-        pub fn valuesData(self: Self) *const ArrayData {
-            return self.data.children[1];
-        }
-
-        pub fn runCount(self: Self) usize {
-            return self.runEndsData().len;
-        }
-
-        pub fn runEnd(self: Self, run_index: usize) RunEnd {
-            const run_ends = self.runEndsData();
-            const values = run_ends.buffers[1].?;
-            return offset_data.read(RunEnd, values, run_ends.offset + run_index);
-        }
-
-        pub fn runIndex(self: Self, i: usize) usize {
-            const logical = self.offset + i;
-            var lo: usize = 0;
-            var hi: usize = self.runCount();
-            while (lo < hi) {
-                const mid = lo + (hi - lo) / 2;
-                if (runEndAsUsize(self.runEnd(mid)) > logical) {
-                    hi = mid;
-                } else {
-                    lo = mid + 1;
-                }
-            }
-            return lo;
-        }
-
-        pub fn runValueOwned(self: Self, run_index: usize) array_data.DataSliceError!*ArrayData {
-            return self.valuesData().slice(run_index, 1);
-        }
-
-        pub fn valueOwned(self: Self, i: usize) array_data.DataSliceError!?*ArrayData {
-            const run_index = self.runIndex(i);
-            if (self.valueIsNull(run_index)) return null;
-            return try self.runValueOwned(run_index);
+        pub fn init(data: *const ArrayData) Self {
+            return .{ .base = common.View.init(data) };
         }
 
         pub fn isValid(self: Self, i: usize) bool {
@@ -93,8 +32,8 @@ pub fn RunEndEncodedArray(comptime RunEnd: type) type {
 
         pub fn nullCount(self: Self) usize {
             var count: usize = 0;
-            const logical_start = self.offset;
-            const logical_end = self.offset + self.len;
+            const logical_start = self.base.offset;
+            const logical_end = self.base.offset + self.base.len;
             for (0..self.runCount()) |run_index| {
                 if (!self.valueIsNull(run_index)) continue;
                 const end = runEndAsUsize(self.runEnd(run_index));
@@ -111,22 +50,40 @@ pub fn RunEndEncodedArray(comptime RunEnd: type) type {
         }
 
         pub fn sliceChecked(self: Self, off: usize, length: usize) common.SliceError!Self {
-            const clamped = try common.clampedLen(self.len, off, length);
-            return .{
-                .data = self.data,
-                .offset = self.offset + off,
-                .len = clamped,
-            };
+            return .{ .base = try self.base.sliceChecked(off, length) };
         }
 
-        pub fn sliceOwned(self: Self, off: usize, length: usize) array_data.DataSliceError!*ArrayData {
-            const clamped = try common.clampedLen(self.len, off, length);
-            const data_off = try common.dataRelativeOffset(self.data.offset, self.offset, off);
-            return self.data.slice(data_off, clamped);
+        fn runEndsData(self: Self) *const ArrayData {
+            return self.base.data.children[0];
         }
 
-        pub fn cloneRetained(self: Self) array_data.DataSliceError!*ArrayData {
-            return self.sliceOwned(0, self.len);
+        fn valuesData(self: Self) *const ArrayData {
+            return self.base.data.children[1];
+        }
+
+        fn runCount(self: Self) usize {
+            return self.runEndsData().len;
+        }
+
+        fn runEnd(self: Self, run_index: usize) RunEnd {
+            const run_ends = self.runEndsData();
+            const values = run_ends.buffers[1].?;
+            return offset_data.read(RunEnd, values, run_ends.offset + run_index);
+        }
+
+        fn runIndex(self: Self, i: usize) usize {
+            const logical = self.base.offset + i;
+            var lo: usize = 0;
+            var hi: usize = self.runCount();
+            while (lo < hi) {
+                const mid = lo + (hi - lo) / 2;
+                if (runEndAsUsize(self.runEnd(mid)) > logical) {
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            return lo;
         }
 
         fn valueIsNull(self: Self, run_index: usize) bool {
@@ -143,6 +100,56 @@ pub fn RunEndEncodedArray(comptime RunEnd: type) type {
                 return runEndAsUsize(offset_data.read(RunEnd, values, run_ends.offset - 1));
             }
             return runEndAsUsize(self.runEnd(run_index - 1));
+        }
+    };
+}
+
+pub fn RunEndEncodedArray(comptime RunEnd: type) type {
+    ensureRunEnd(RunEnd);
+
+    return struct {
+        const Self = @This();
+        pub const RunEndType = RunEnd;
+
+        view: RunEndView(RunEnd),
+
+        pub fn fromData(data: *const ArrayData) common.ViewError!Self {
+            if (data.type.id() != .run_end_encoded) return error.TypeMismatch;
+            if (data.type.run_end_encoded.run_ends.type.id() != common.typeIdFor(RunEnd)) return error.TypeMismatch;
+            if (data.buffers.len != 0 or data.children.len != 2) return error.InvalidBufferLayout;
+            return .{ .view = RunEndView(RunEnd).init(data) };
+        }
+
+        pub fn runEndsData(self: Self) *const ArrayData {
+            return self.view.base.data.children[0];
+        }
+
+        pub fn valuesData(self: Self) *const ArrayData {
+            return self.view.base.data.children[1];
+        }
+
+        pub fn runCount(self: Self) usize {
+            return self.runEndsData().len;
+        }
+
+        pub fn runEnd(self: Self, run_index: usize) RunEnd {
+            const run_ends = self.runEndsData();
+            const values = run_ends.buffers[1].?;
+            return offset_data.read(RunEnd, values, run_ends.offset + run_index);
+        }
+
+        pub fn runIndex(self: Self, i: usize) usize {
+            return self.view.runIndex(i);
+        }
+
+        pub fn runValueOwned(self: Self, run_index: usize) array_data.DataSliceError!*ArrayData {
+            return self.valuesData().slice(run_index, 1);
+        }
+
+        pub fn valueOwned(self: Self, i: usize) array_data.DataSliceError!?*ArrayData {
+            const run_index = self.runIndex(i);
+            if (self.view.valueIsNull(run_index)) return null;
+            return try self.runValueOwned(run_index);
         }
     };
 }
@@ -198,9 +205,9 @@ test "RunEndEncodedArray maps logical slots to runs" {
     try std.testing.expectEqual(@as(usize, 0), arr.runIndex(0));
     try std.testing.expectEqual(@as(usize, 1), arr.runIndex(2));
     try std.testing.expectEqual(@as(usize, 2), arr.runIndex(6));
-    try std.testing.expect(arr.isValid(0));
-    try std.testing.expect(arr.isNull(5));
-    try std.testing.expectEqual(@as(usize, 2), arr.nullCount());
+    try std.testing.expect(arr.view.isValid(0));
+    try std.testing.expect(arr.view.isNull(5));
+    try std.testing.expectEqual(@as(usize, 2), arr.view.nullCount());
 
     const value = (try arr.valueOwned(3)).?;
     defer value.deinit();
@@ -208,8 +215,8 @@ test "RunEndEncodedArray maps logical slots to runs" {
     try std.testing.expectEqual(@as(i32, 20), value_arr.value(0));
     try std.testing.expect((try arr.valueOwned(5)) == null);
 
-    const sliced = arr.slice(1, 5);
-    try std.testing.expectEqual(@as(usize, 1), sliced.offset);
+    const sliced = RunEndEncodedArray(i32){ .view = arr.view.slice(1, 5) };
+    try std.testing.expectEqual(@as(usize, 1), sliced.view.base.offset);
     try std.testing.expectEqual(@as(usize, 1), sliced.runIndex(1));
-    try std.testing.expectEqual(@as(usize, 1), sliced.nullCount());
+    try std.testing.expectEqual(@as(usize, 1), sliced.view.nullCount());
 }

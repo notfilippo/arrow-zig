@@ -147,7 +147,7 @@ fn expectNextInts(allocator: std.mem.Allocator, stream: *ArrowArrayStream, expec
 
 fn expectInts(data: *ArrayData, expected: []const i32) !void {
     const view = try array.NumericArray(i32).fromData(data);
-    try std.testing.expectEqual(expected.len, view.len);
+    try std.testing.expectEqual(expected.len, view.view.base.len);
     for (expected, 0..) |value, i| {
         try std.testing.expectEqual(value, view.value(i));
     }
