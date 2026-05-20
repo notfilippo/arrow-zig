@@ -72,7 +72,7 @@ pub fn benchTime(io: Io) i96 {
 fn printHeader(format: OutputFormat) void {
     switch (format) {
         .pretty => std.debug.print(
-            "{s:<45} {s:>10} {s:>5} {s:>12} {s:>12} {s:>13} {s:>10}\n",
+            "{s:<60} {s:>10} {s:>5} {s:>12} {s:>12} {s:>13} {s:>10}\n",
             .{ "benchmark", "rows", "iters", "best", "avg", "throughput", "checksum" },
         ),
         .tsv => std.debug.print(
@@ -89,7 +89,7 @@ fn printResult(opts: Options, name: []const u8, result: Result) void {
             const avg = scaledDuration(result.avg_ns);
             const throughput = scaledThroughput(itemsPerSecond(opts.len, result.best_ns));
             std.debug.print(
-                "{s:<45} {d:>10} {d:>5} {d:>8.2} {s:<3} {d:>8.2} {s:<3} {d:>8.2} {s:<4} {d:>10}\n",
+                "{s:<60} {d:>10} {d:>5} {d:>8.2} {s:<3} {d:>8.2} {s:<3} {d:>8.2} {s:<4} {d:>10}\n",
                 .{
                     name,
                     opts.len,
