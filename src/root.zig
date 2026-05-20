@@ -116,7 +116,12 @@ test {
     _ = @import("compute/compare.zig");
     _ = @import("compute/compare/binary.zig");
     _ = @import("compute/compare/boolean.zig");
+    _ = @import("compute/compare/decimal.zig");
+    _ = @import("compute/compare/dictionary.zig");
+    _ = @import("compute/compare/interval.zig");
+    _ = @import("compute/compare/null.zig");
     _ = @import("compute/compare/numeric.zig");
+    _ = @import("compute/compare/value.zig");
     _ = @import("datatype.zig");
     _ = @import("datatype_layout.zig");
     _ = @import("offsets.zig");

@@ -10,10 +10,15 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const array = @import("../array.zig");
 const builder = @import("../builder.zig");
+const datatype = @import("../datatype.zig");
 const common = @import("compare/common.zig");
 const numeric_kernels = @import("compare/numeric.zig");
 const boolean_kernels = @import("compare/boolean.zig");
 const binary_kernels = @import("compare/binary.zig");
+const decimal_kernels = @import("compare/decimal.zig");
+const dictionary_kernels = @import("compare/dictionary.zig");
+const interval_kernels = @import("compare/interval.zig");
+const null_kernels = @import("compare/null.zig");
 const ArrayData = array.ArrayData;
 
 pub const Operation = common.Operation;
@@ -25,8 +30,13 @@ pub fn compare(
     left: *const ArrayData,
     right: *const ArrayData,
 ) Error!*ArrayData {
-    if (!left.type.equals(right.type)) return error.TypeMismatch;
+    if (!typesMatchForExactCompare(left.type, right.type)) return error.TypeMismatch;
+    if (left.type.id() == .dictionary or right.type.id() == .dictionary) {
+        return dictionary_kernels.dictionary(allocator, operation, left, right);
+    }
+
     return switch (left.type.id()) {
+        .null_ => null_kernels.nulls(allocator, operation, left, right),
         .bool => boolean_kernels.boolean(allocator, operation, left, right),
         .int8 => numeric_kernels.numeric(i8, allocator, operation, left, right),
         .int16 => numeric_kernels.numeric(i16, allocator, operation, left, right),
@@ -45,6 +55,9 @@ pub fn compare(
         .time64 => numeric_kernels.fixedWidth(array.Time64Array, i64, allocator, operation, left, right),
         .timestamp => numeric_kernels.fixedWidth(array.TimestampArray, i64, allocator, operation, left, right),
         .duration => numeric_kernels.fixedWidth(array.DurationArray, i64, allocator, operation, left, right),
+        .month_interval => interval_kernels.monthInterval(allocator, operation, left, right),
+        .day_time_interval => interval_kernels.dayTimeInterval(allocator, operation, left, right),
+        .month_day_nano_interval => interval_kernels.monthDayNanoInterval(allocator, operation, left, right),
         .binary => binary_kernels.binary(allocator, operation, left, right),
         .utf8 => binary_kernels.utf8(allocator, operation, left, right),
         .large_binary => binary_kernels.largeBinary(allocator, operation, left, right),
@@ -52,7 +65,26 @@ pub fn compare(
         .binary_view => binary_kernels.binaryView(allocator, operation, left, right),
         .utf8_view => binary_kernels.utf8View(allocator, operation, left, right),
         .fixed_size_binary => binary_kernels.fixedSizeBinary(allocator, operation, left, right),
+        .decimal32 => decimal_kernels.decimal32(allocator, operation, left, right),
+        .decimal64 => decimal_kernels.decimal64(allocator, operation, left, right),
+        .decimal128 => decimal_kernels.decimal128(allocator, operation, left, right),
+        .decimal256 => decimal_kernels.decimal256(allocator, operation, left, right),
+        .dictionary => unreachable,
         else => error.UnsupportedOperation,
+    };
+}
+
+fn typesMatchForExactCompare(left: datatype.DataType, right: datatype.DataType) bool {
+    if (left.equals(right)) return true;
+    return switch (left) {
+        .dictionary => |left_meta| switch (right) {
+            .dictionary => |right_meta| left_meta.value_type.equals(right_meta.value_type.*),
+            else => left_meta.value_type.equals(right),
+        },
+        else => switch (right) {
+            .dictionary => |right_meta| left.equals(right_meta.value_type.*),
+            else => false,
+        },
     };
 }
 
@@ -127,6 +159,91 @@ test "comparison rejects mismatched inputs" {
 
     try std.testing.expectError(error.LengthMismatch, equal(allocator, left, right));
     try std.testing.expectError(error.TypeMismatch, equal(allocator, left, other_type));
+}
+
+test "comparison supports null arrays" {
+    const allocator = std.testing.allocator;
+
+    var left_builder = builder.NullBuilder.init(allocator);
+    defer left_builder.deinit();
+    try left_builder.appendNulls(3);
+    const left = try left_builder.finish();
+    defer left.deinit();
+
+    var right_builder = builder.NullBuilder.init(allocator);
+    defer right_builder.deinit();
+    try right_builder.appendNulls(3);
+    const right = try right_builder.finish();
+    defer right.deinit();
+
+    const result = try equal(allocator, left, right);
+    defer result.deinit();
+    const values = try array.BooleanArray.fromData(result);
+
+    try std.testing.expectEqual(@as(usize, 3), result.nullCount());
+    try std.testing.expect(values.view.isNull(0));
+    try std.testing.expect(values.view.isNull(1));
+    try std.testing.expect(values.view.isNull(2));
+}
+
+test "comparison decodes matching dictionary value types" {
+    const allocator = std.testing.allocator;
+
+    var values_builder = builder.NumericBuilder(i32).init(allocator);
+    defer values_builder.deinit();
+    try values_builder.appendSlice(&.{ 10, 20 });
+    const dictionary_values = try values_builder.finish();
+    defer dictionary_values.deinit();
+
+    var left_builder = builder.DictionaryBuilder(i8).init(allocator, dictionary_values);
+    defer left_builder.deinit();
+    try left_builder.appendSlice(&.{ 0, 1 });
+    const left = try left_builder.finish();
+    defer left.deinit();
+
+    var right_builder = builder.DictionaryBuilder(i16).initOptions(allocator, dictionary_values, .{ .ordered = true });
+    defer right_builder.deinit();
+    try right_builder.appendSlice(&.{ 0, 1 });
+    const right = try right_builder.finish();
+    defer right.deinit();
+
+    const result = try equal(allocator, left, right);
+    defer result.deinit();
+    const values = try array.BooleanArray.fromData(result);
+
+    try std.testing.expect(values.value(0));
+    try std.testing.expect(values.value(1));
+}
+
+test "comparison decodes dictionary against plain values" {
+    const allocator = std.testing.allocator;
+
+    var dictionary_builder = builder.Utf8Builder.init(allocator);
+    defer dictionary_builder.deinit();
+    try dictionary_builder.append("b");
+    try dictionary_builder.append("a");
+    const dictionary_values = try dictionary_builder.finish();
+    defer dictionary_values.deinit();
+
+    var left_builder = builder.DictionaryBuilder(i8).init(allocator, dictionary_values);
+    defer left_builder.deinit();
+    try left_builder.appendSlice(&.{ 0, 1 });
+    const left = try left_builder.finish();
+    defer left.deinit();
+
+    var right_builder = builder.Utf8Builder.init(allocator);
+    defer right_builder.deinit();
+    try right_builder.append("b");
+    try right_builder.append("a");
+    const right = try right_builder.finish();
+    defer right.deinit();
+
+    const result = try equal(allocator, left, right);
+    defer result.deinit();
+    const values = try array.BooleanArray.fromData(result);
+
+    try std.testing.expect(values.value(0));
+    try std.testing.expect(values.value(1));
 }
 
 test "comparison supports temporal physical values" {
