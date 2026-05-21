@@ -14,9 +14,12 @@
         },
     },
     .paths = .{
+        "LICENSE",
+        "README.md",
+        "bench",
         "build.zig",
         "build.zig.zon",
         "src",
-        "README.md",
+        "tools",
     },
 }

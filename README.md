@@ -11,6 +11,44 @@ Requires Zig 0.16.0+.
 
 Docs: https://notfilippo.github.io/arrow-zig/
 
+## Getting Started
+
+From a Zig project:
+
+```sh
+zig fetch --save=arrow git+https://github.com/notfilippo/arrow-zig.git
+```
+
+Then add the dependency module to the executable or library in `build.zig`:
+
+```zig
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    const arrow_dep = b.dependency("arrow", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const exe = b.addExecutable(.{
+        .name = "my_app",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    exe.root_module.addImport("arrow", arrow_dep.module("arrow"));
+
+    b.installArtifact(exe);
+}
+```
+
+Pass `.single_threaded = true` to `b.dependency("arrow", .{ ... })` to
+disable atomic buffer refcounts for single-threaded use.
+
 ## Example
 
 ```zig
@@ -18,7 +56,7 @@ const arrow = @import("arrow");
 const std = @import("std");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

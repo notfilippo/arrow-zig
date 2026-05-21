@@ -5,6 +5,7 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
     const bench_optimize = b.option(
         std.builtin.OptimizeMode,
         "bench_optimize",
@@ -21,6 +22,13 @@ pub fn build(b: *std.Build) void {
         "nanoarrow",
         "Also run nanoarrow interop tests in the test step. CI always runs them.",
     ) orelse false;
+
+    const arrow_options: ArrowOptions = .{
+        .target = target,
+        .optimize = optimize,
+        .single_threaded = single_threaded,
+    };
+    const arrow_mod = addArrowModule(b, "arrow", arrow_options);
 
     const license_mod = b.createModule(.{
         .root_source_file = b.path("tools/check_license_headers.zig"),
@@ -49,7 +57,7 @@ pub fn build(b: *std.Build) void {
     test_imports_step.dependOn(&b.addRunArtifact(test_imports_check).step);
 
     const test_step = b.step("test", "Run tests");
-    test_step.dependOn(addRootTest(b, target, single_threaded, "test"));
+    test_step.dependOn(addRootTest(b, arrow_mod, "test"));
 
     const bench_step = b.step("bench", "Run benchmarks");
     bench_step.dependOn(addBench(b, target, single_threaded, bench_optimize));
@@ -57,9 +65,17 @@ pub fn build(b: *std.Build) void {
     const ci_step = b.step("ci", "Run CI checks");
     ci_step.dependOn(license_step);
     ci_step.dependOn(test_imports_step);
-    ci_step.dependOn(addDocsCheck(b, target));
-    ci_step.dependOn(addRootTest(b, target, false, "test_default"));
-    ci_step.dependOn(addRootTest(b, target, true, "test_single_threaded"));
+    ci_step.dependOn(addDocsCheck(b, arrow_mod));
+    ci_step.dependOn(addRootTest(b, createArrowModule(b, .{
+        .target = target,
+        .optimize = optimize,
+        .single_threaded = false,
+    }), "test_default"));
+    ci_step.dependOn(addRootTest(b, createArrowModule(b, .{
+        .target = target,
+        .optimize = optimize,
+        .single_threaded = true,
+    }), "test_single_threaded"));
 
     if (b.lazyDependency("nanoarrow", .{})) |nanoarrow_dep| {
         const nanoarrow_config = b.addConfigHeader(.{
@@ -74,46 +90,79 @@ pub fn build(b: *std.Build) void {
         });
 
         if (test_nanoarrow) {
-            test_step.dependOn(addNanoarrowTest(b, target, nanoarrow_dep, nanoarrow_config, single_threaded, "test_nanoarrow"));
+            test_step.dependOn(addNanoarrowTest(b, arrow_options, nanoarrow_dep, nanoarrow_config, arrow_mod, "test_nanoarrow"));
         }
-        ci_step.dependOn(addNanoarrowTest(b, target, nanoarrow_dep, nanoarrow_config, false, "test_nanoarrow_default"));
-        ci_step.dependOn(addNanoarrowTest(b, target, nanoarrow_dep, nanoarrow_config, true, "test_nanoarrow_single_threaded"));
+        ci_step.dependOn(addNanoarrowTest(
+            b,
+            .{
+                .target = target,
+                .optimize = optimize,
+                .single_threaded = false,
+            },
+            nanoarrow_dep,
+            nanoarrow_config,
+            createArrowModule(b, .{
+                .target = target,
+                .optimize = optimize,
+                .single_threaded = false,
+            }),
+            "test_nanoarrow_default",
+        ));
+        ci_step.dependOn(addNanoarrowTest(
+            b,
+            .{
+                .target = target,
+                .optimize = optimize,
+                .single_threaded = true,
+            },
+            nanoarrow_dep,
+            nanoarrow_config,
+            createArrowModule(b, .{
+                .target = target,
+                .optimize = optimize,
+                .single_threaded = true,
+            }),
+            "test_nanoarrow_single_threaded",
+        ));
     }
 }
 
-fn addArrowModule(b: *std.Build, target: std.Build.ResolvedTarget, single_threaded: bool) *std.Build.Module {
-    const mod = b.createModule(.{
+const ArrowOptions = struct {
+    target: std.Build.ResolvedTarget,
+    optimize: ?std.builtin.OptimizeMode,
+    single_threaded: bool,
+};
+
+fn addArrowModule(b: *std.Build, name: []const u8, options: ArrowOptions) *std.Build.Module {
+    const mod = b.addModule(name, .{
         .root_source_file = b.path("src/root.zig"),
-        .target = target,
+        .target = options.target,
+        .optimize = options.optimize,
+        .single_threaded = options.single_threaded,
     });
-    addBuildOptions(b, mod, single_threaded);
+    addBuildOptions(b, mod, options);
     return mod;
 }
 
-fn addArrowModuleOptimized(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    single_threaded: bool,
-    optimize: std.builtin.OptimizeMode,
-) *std.Build.Module {
+fn createArrowModule(b: *std.Build, options: ArrowOptions) *std.Build.Module {
     const mod = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
+        .target = options.target,
+        .optimize = options.optimize,
+        .single_threaded = options.single_threaded,
     });
-    addBuildOptions(b, mod, single_threaded);
+    addBuildOptions(b, mod, options);
     return mod;
 }
 
 fn addRootTest(
     b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    single_threaded: bool,
+    arrow_mod: *std.Build.Module,
     name: []const u8,
 ) *std.Build.Step {
     return &b.addRunArtifact(b.addTest(.{
         .name = name,
-        .root_module = addArrowModule(b, target, single_threaded),
+        .root_module = arrow_mod,
     })).step;
 }
 
@@ -128,7 +177,11 @@ fn addBench(
         .target = target,
         .optimize = optimize,
     });
-    bench_mod.addImport("arrow", addArrowModuleOptimized(b, target, single_threaded, optimize));
+    bench_mod.addImport("arrow", createArrowModule(b, .{
+        .target = target,
+        .optimize = optimize,
+        .single_threaded = single_threaded,
+    }));
 
     const bench_exe = b.addExecutable(.{
         .name = "arrow_bench",
@@ -141,36 +194,37 @@ fn addBench(
     return &run.step;
 }
 
-fn addDocsCheck(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step {
+fn addDocsCheck(b: *std.Build, arrow_mod: *std.Build.Module) *std.Build.Step {
     const docs_lib = b.addLibrary(.{
         .name = "arrow_docs",
-        .root_module = addArrowModule(b, target, false),
+        .root_module = arrow_mod,
     });
     _ = docs_lib.getEmittedDocs();
     return &docs_lib.step;
 }
 
-fn addBuildOptions(b: *std.Build, mod: *std.Build.Module, single_threaded: bool) void {
+fn addBuildOptions(b: *std.Build, mod: *std.Build.Module, options: ArrowOptions) void {
     const build_options = b.addOptions();
-    build_options.addOption(bool, "single_threaded", single_threaded);
+    build_options.addOption(bool, "single_threaded", options.single_threaded);
     mod.addOptions("build_options", build_options);
 }
 
 fn addNanoarrowTest(
     b: *std.Build,
-    target: std.Build.ResolvedTarget,
+    options: ArrowOptions,
     nanoarrow_dep: *std.Build.Dependency,
     nanoarrow_config: *std.Build.Step.ConfigHeader,
-    single_threaded: bool,
+    arrow_mod: *std.Build.Module,
     name: []const u8,
 ) *std.Build.Step {
     const nanoarrow_mod = b.createModule(.{
         .root_source_file = b.path("src/cdi/nanoarrow_test.zig"),
-        .target = target,
+        .target = options.target,
+        .optimize = options.optimize,
         .link_libc = true,
     });
-    addBuildOptions(b, nanoarrow_mod, single_threaded);
-    nanoarrow_mod.addImport("arrow", addArrowModule(b, target, single_threaded));
+    addBuildOptions(b, nanoarrow_mod, options);
+    nanoarrow_mod.addImport("arrow", arrow_mod);
     nanoarrow_mod.addConfigHeader(nanoarrow_config);
     nanoarrow_mod.addIncludePath(nanoarrow_dep.path("src"));
     nanoarrow_mod.addCSourceFiles(.{
