@@ -26,7 +26,7 @@ pub const SparseUnionArray = struct {
     }
 
     pub fn childIndex(self: SparseUnionArray, i: usize) ?usize {
-        return childIndexFor(self.view.base.data.type.sparse_union, self.typeId(i));
+        return array_data.childIndexFor(self.view.base.data.type.sparse_union, self.typeId(i));
     }
 
     pub fn childBaseData(self: SparseUnionArray, index: usize) ?*const ArrayData {
@@ -60,7 +60,7 @@ pub const DenseUnionArray = struct {
     }
 
     pub fn childIndex(self: DenseUnionArray, i: usize) ?usize {
-        return childIndexFor(self.view.base.data.type.dense_union, self.typeId(i));
+        return array_data.childIndexFor(self.view.base.data.type.dense_union, self.typeId(i));
     }
 
     pub fn childBaseData(self: DenseUnionArray, index: usize) ?*const ArrayData {
@@ -124,13 +124,7 @@ fn readTypeId(buffer: *const Buffer, index: usize) i8 {
     return offset_data.read(i8, buffer, index);
 }
 
-fn childIndexFor(meta: datatype.UnionMeta, code: i8) ?usize {
-    if (code < 0) return null;
-    for (meta.type_ids, 0..) |id, i| {
-        if (id == code) return i;
-    }
-    return null;
-}
+
 
 test "DenseUnionArray exposes offsets and values" {
     const allocator = std.testing.allocator;

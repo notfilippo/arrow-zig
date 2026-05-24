@@ -391,10 +391,7 @@ fn validateTypeIds(ids: []const i8) datatype.ValidationError!void {
 }
 
 fn intAsUsize(value: anytype) usize {
-    const T = @TypeOf(value);
-    const info = @typeInfo(T).int;
-    if (info.signedness == .signed and value < 0) unreachable;
-    return @intCast(value);
+    return checked.toUsize(value) catch unreachable;
 }
 
 fn childErrorSet(comptime ChildBuilders: type) type {

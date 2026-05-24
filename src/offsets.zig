@@ -128,8 +128,7 @@ fn maxValue(comptime Offset: type) usize {
 }
 
 pub fn toUsize(value: anytype) ValidationError!usize {
-    if (value < 0) return error.NegativeOffset;
-    return @intCast(value);
+    return checked.toUsize(value) catch return error.NegativeOffset;
 }
 
 test "offset builder writes repeated offsets" {

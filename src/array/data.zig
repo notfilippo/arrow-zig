@@ -167,19 +167,26 @@ pub const ArrayData = struct {
         return init(self.allocator, self.type, self.len, self.offset, self.null_count, self.buffers, self.children, self.dictionary, .retained, self.external_owner);
     }
 
+    /// Quick validation: O(1) structural checks (buffer counts, byte sizes,
+    /// null count consistency, child count). Suitable for construction paths
+    /// where data is known to be internally consistent.
     pub fn validate(self: *const ArrayData) (ValidateError || checked.Error || datatype.ValidationError)!void {
         try array_validate.validate(self);
     }
 
+    /// Full validation: O(N) value-content checks including UTF-8, monotonic
+    /// offsets, run-end ordering, dictionary index bounds, date64 alignment,
+    /// time value ranges, union offset monotonicity, and view prefix verification.
+    /// Call before reading data from untrusted sources.
     pub fn validateFull(self: *const ArrayData) (ValidateError || checked.Error || datatype.ValidationError)!void {
         try array_validate.validateFull(self);
     }
 
+    /// Slice logical range [off, off+length). Children are not sliced — they
+    /// always keep offset 0 and are addressed via logical index in
+    /// [0, parent.len). This convention avoids O(N) child slicing and matches
+    /// Arrow C++ `ArrayData::Slice` behaviour.
     pub fn slice(self: *const ArrayData, off: usize, length: usize) DataSliceError!*ArrayData {
-        return self.sliceChecked(off, length);
-    }
-
-    pub fn sliceChecked(self: *const ArrayData, off: usize, length: usize) DataSliceError!*ArrayData {
         if (off > self.len) return error.OffsetOutOfBounds;
         const clamped = @min(length, self.len - off);
         const abs_offset = try checked.add(self.offset, off);
@@ -312,13 +319,17 @@ fn physicalSlotIsNull(data: *const ArrayData, ty: datatype.DataType, i: usize) b
     return !bitmap.getBit(validity.dataSlice(), data.offset + i);
 }
 
+/// Arrow C++ convention: union children are stored offset-0. The logical
+/// index `i` addresses the same row in every sparse-union child.
 fn sparseUnionSlotIsNull(data: *const ArrayData, meta: datatype.UnionMeta, i: usize) bool {
     const type_ids = data.buffers[0].?;
     const code = offset_data.read(i8, type_ids, data.offset + i);
     const child_index = childIndexFor(meta, code) orelse unreachable;
-    return data.children[child_index].isNull(data.offset + i);
+    return data.children[child_index].isNull(i);
 }
 
+/// Dense-union children are stored offset-0. `child_offset` from the offsets
+/// buffer is the logical index in the child array.
 fn denseUnionSlotIsNull(data: *const ArrayData, meta: datatype.UnionMeta, i: usize) bool {
     const type_ids = data.buffers[0].?;
     const offsets = data.buffers[1].?;
@@ -356,8 +367,7 @@ fn runEndSlotIndex(data: *const ArrayData, i: usize) usize {
 }
 
 fn runEndAsUsize(value: anytype) usize {
-    if (value < 0) unreachable;
-    return @intCast(value);
+    return checked.toUsize(value) catch unreachable;
 }
 
 fn dictionarySlotIsLogicalNull(data: *const ArrayData, meta: datatype.DictionaryMeta, i: usize) bool {
@@ -382,13 +392,11 @@ fn dictionaryIndexAt(data: *const ArrayData, index_ty: datatype.DataType, slot: 
 }
 
 fn indexAsUsize(value: anytype) usize {
-    const T = @TypeOf(value);
-    const info = @typeInfo(T).int;
-    if (info.signedness == .signed and value < 0) unreachable;
-    return @intCast(value);
+    return checked.toUsize(value) catch unreachable;
 }
 
-fn childIndexFor(meta: datatype.UnionMeta, code: i8) ?usize {
+/// Map a union type code to the child storage index for that variant.
+pub fn childIndexFor(meta: datatype.UnionMeta, code: i8) ?usize {
     if (code < 0) return null;
     for (meta.type_ids, 0..) |id, i| {
         if (id == code) return i;
@@ -597,7 +605,7 @@ test "ArrayData slice retains buffers and adjusts metadata" {
     try std.testing.expectEqual(@as(usize, 2), validity.refCount());
     try std.testing.expectEqual(@as(usize, 2), values.refCount());
 
-    const checked_slice = try data.sliceChecked(0, 1);
+    const checked_slice = try data.slice(0, 1);
     defer checked_slice.deinit();
     try std.testing.expectEqual(@as(usize, 1), checked_slice.len);
 }

@@ -44,6 +44,16 @@ pub fn roundUpToPowerOfTwo(n: usize, alignment: usize) Error!usize {
     return adjusted & ~@as(usize, alignment - 1);
 }
 
+/// Convert a signed or unsigned integer to usize. Returns error on negative
+/// or overflow when the value exceeds `std.math.maxInt(usize)`.
+pub fn toUsize(value: anytype) Error!usize {
+    const T = @TypeOf(value);
+    const info = @typeInfo(T).int;
+    if (info.signedness == .signed and value < 0) return error.Overflow;
+    if (@as(u128, @intCast(value)) > @as(u128, std.math.maxInt(usize))) return error.Overflow;
+    return @intCast(value);
+}
+
 test "checked helpers" {
     try std.testing.expectEqual(@as(usize, 11), try add(5, 6));
     try std.testing.expectEqual(@as(usize, 5), try sub(11, 6));

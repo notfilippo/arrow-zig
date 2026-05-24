@@ -12,6 +12,7 @@ const checked = @import("../checked.zig");
 const datatype = @import("../datatype.zig");
 const bitmap = @import("../bitmap.zig");
 const offset_data = @import("../offsets.zig");
+const array_data = @import("data.zig");
 const Buffer = @import("../buffer.zig").Buffer;
 
 pub const Error = error{
@@ -352,6 +353,7 @@ fn validateUnion(data: anytype, total: usize, meta: datatype.UnionMeta, comptime
     for (data.children, meta.fields) |child, field| {
         try validateWithLevel(child, level);
         if (!datatype.DataType.equals(child.type, field.type.*)) return error.ChildTypeMismatch;
+        if (child.offset != 0) return error.ChildOffsetMismatch;
         if (!dense and child.len < total) return error.ChildLengthTooSmall;
     }
 
@@ -370,7 +372,7 @@ fn validateUnion(data: anytype, total: usize, meta: datatype.UnionMeta, comptime
     var last_offsets = [_]usize{0} ** 128;
     for (0..data.len) |i| {
         const code = offset_data.read(i8, type_ids, data.offset + i);
-        const child_index = childIndexFor(meta, code) orelse return error.UnionTypeIdOutOfBounds;
+        const child_index = array_data.childIndexFor(meta, code) orelse return error.UnionTypeIdOutOfBounds;
         if (offsets) |offset_buf| {
             const off = try offset_data.toUsize(offset_data.read(i32, offset_buf, data.offset + i));
             if (off >= data.children[child_index].len) return error.UnionOffsetOutOfBounds;
@@ -443,9 +445,7 @@ fn validateRunEnds(comptime T: type, run_ends: anytype, logical_offset: usize, l
 }
 
 fn runEndToUsize(value: anytype) Error!usize {
-    if (value < 0) return error.InvalidRunEndValue;
-    if (@as(u128, @intCast(value)) > @as(u128, std.math.maxInt(usize))) return error.InvalidRunEndValue;
-    return @intCast(value);
+    return checked.toUsize(value) catch return error.InvalidRunEndValue;
 }
 
 fn validateDictionaryIndices(data: anytype, index_ty: datatype.DataType, dict_len: usize) Error!void {
@@ -521,13 +521,7 @@ fn validateNullable(field: *const datatype.Field, child: anytype, comptime level
     if (null_count != 0) return error.NonNullableNulls;
 }
 
-fn childIndexFor(meta: datatype.UnionMeta, code: i8) ?usize {
-    if (code < 0) return null;
-    for (meta.type_ids, 0..) |id, i| {
-        if (id == code) return i;
-    }
-    return null;
-}
+
 
 fn writeTestInt(comptime T: type, buffer: *Buffer, index: usize, value: T) void {
     offset_data.write(T, buffer, index, @intCast(value)) catch unreachable;
