@@ -325,7 +325,7 @@ fn importFieldNode(allocator: Allocator, schema: *const ArrowSchema) Error!*cons
     ty_owned = false;
     type_ptr_valid = true;
 
-    const field = try datatype.Field.initOwned(
+    const field = try datatype.Field.initTakeOwnership(
         allocator,
         name,
         type_ptr,

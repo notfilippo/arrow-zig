@@ -113,7 +113,11 @@ pub const Field = struct {
 
     /// Take ownership of pre-allocated name ([]u8), type (*DataType), metadata ([]MetadataEntry).
     /// On error, caller still owns all inputs.
-    pub fn initOwned(
+    ///
+    /// Prefer `create()` for general use — it clones inputs automatically.
+    /// Use `initTakeOwnership()` only when allocating each piece individually for
+    /// transfer (e.g. CDI import).
+    pub fn initTakeOwnership(
         allocator: Allocator,
         name: []u8,
         ty: *DataType,
