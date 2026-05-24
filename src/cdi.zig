@@ -167,7 +167,7 @@ pub fn importRecordBatch(allocator: Allocator, schema: *const ArrowSchema, arr: 
     const data = try importArray(allocator, ty, arr);
     defer data.deinit();
 
-    return try RecordBatch.fromStructDataRetainedSchema(allocator, batch_schema, data);
+    return try RecordBatch.fromStructDataAssumeValidated(allocator, batch_schema, data);
 }
 
 /// Import a C Data Interface array by first importing its schema.
