@@ -150,9 +150,9 @@ test "numeric comparison handles all valid vector chunks and tail" {
         try std.testing.expectEqual(expected, values.value(i));
     }
 
-    const left_slice = try left.sliceChecked(1, 8);
+    const left_slice = try left.slice(1, 8);
     defer left_slice.deinit();
-    const right_slice = try right.sliceChecked(1, 8);
+    const right_slice = try right.slice(1, 8);
     defer right_slice.deinit();
     const slice_result = try numeric(i32, allocator, .less_equal, left_slice, right_slice);
     defer slice_result.deinit();

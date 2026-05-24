@@ -263,9 +263,9 @@ test "utf8 comparison handles slices in variable width fast path" {
     const right = try right_builder.finish();
     defer right.deinit();
 
-    const left_slice = try left.sliceChecked(1, 3);
+    const left_slice = try left.slice(1, 3);
     defer left_slice.deinit();
-    const right_slice = try right.sliceChecked(1, 3);
+    const right_slice = try right.slice(1, 3);
     defer right_slice.deinit();
 
     const result = try utf8(allocator, .less_equal, left_slice, right_slice);
