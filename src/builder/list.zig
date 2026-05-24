@@ -101,10 +101,6 @@ pub fn VarListBuilder(comptime kind: array_list.ListKind, comptime ChildBuilder:
             try self.appendOffset(self.child.length(), true);
         }
 
-        pub fn appendEmpty(self: *Self) Error!void {
-            try self.append();
-        }
-
         pub fn appendNull(self: *Self) Error!void {
             if (self.child.length() != self.last_child_len) return error.UnclosedListValues;
             try self.reserve(1);
@@ -287,10 +283,6 @@ fn VarListViewBuilder(comptime kind: ListViewKind, comptime ChildBuilder: type) 
             const len = child_len - self.last_child_len;
             try self.appendSlot(self.last_child_len, len, true);
             self.last_child_len = child_len;
-        }
-
-        pub fn appendEmpty(self: *Self) Error!void {
-            try self.append();
         }
 
         pub fn appendView(self: *Self, offset: usize, len: usize) Error!void {
@@ -613,7 +605,6 @@ test "ListBuilder builds numeric child lists" {
 
     try b.values().appendSlice(&.{ 1, 2 });
     try b.append();
-    try b.appendEmpty();
     try b.values().append(3);
     try b.append();
     try b.appendNull();
@@ -623,12 +614,13 @@ test "ListBuilder builds numeric child lists" {
     try data.validate();
 
     const arr = try array.ListArray.fromData(data);
-    try std.testing.expectEqual(@as(usize, 4), arr.view.base.len);
+    try std.testing.expectEqual(@as(usize, 3), arr.view.base.len);
     try std.testing.expectEqual(@as(usize, 1), arr.view.nullCount());
     try std.testing.expectEqual(@as(usize, 0), arr.valueRange(0).offset);
     try std.testing.expectEqual(@as(usize, 2), arr.valueRange(0).len);
-    try std.testing.expectEqual(@as(usize, 0), arr.valueRange(1).len);
-    try std.testing.expect(arr.view.isNull(3));
+    try std.testing.expectEqual(@as(usize, 2), arr.valueRange(1).offset);
+    try std.testing.expectEqual(@as(usize, 1), arr.valueRange(1).len);
+    try std.testing.expect(arr.view.isNull(2));
 
     const child = try array.NumericArray(i32).fromData(arr.childBaseData());
     try std.testing.expectEqual(@as(usize, 3), child.view.base.len);

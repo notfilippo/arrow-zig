@@ -121,10 +121,6 @@ pub fn MapBuilder(comptime KeyBuilder: type, comptime ValueBuilder: type) type {
             try self.appendOffset(entry_len, true);
         }
 
-        pub fn appendEmpty(self: *Self) Error!void {
-            try self.appendEmptyValue();
-        }
-
         pub fn appendNull(self: *Self) Error!void {
             try self.appendNulls(1);
         }
@@ -259,7 +255,7 @@ test "MapBuilder builds maps" {
     try b.keys().append(2);
     try b.values().append("two");
     try b.append();
-    try b.appendEmpty();
+    try b.appendEmptyValue();
     try b.appendNull();
     try b.keys().append(3);
     try b.values().append("three");

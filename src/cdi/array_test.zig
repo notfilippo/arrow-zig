@@ -263,7 +263,7 @@ test "importArray imports exported list array" {
     defer b.deinit();
     try b.values().appendSlice(&.{ 1, 2 });
     try b.append();
-    try b.appendEmpty();
+    try b.append();
     try b.values().append(3);
     try b.append();
 
