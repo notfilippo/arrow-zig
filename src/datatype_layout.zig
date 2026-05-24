@@ -16,6 +16,7 @@ pub const BufferKind = enum {
     offsets,
     type_ids,
     union_offsets,
+    sizes,
 };
 
 pub const BufferSpec = struct {
@@ -88,13 +89,13 @@ const large_list_buffers = [_]BufferSpec{
 };
 const list_view_buffers = [_]BufferSpec{
     .{ .kind = .validity },
-    .{ .kind = .values, .byte_width = 4 },
-    .{ .kind = .values, .byte_width = 4 },
+    .{ .kind = .offsets, .byte_width = 4 },
+    .{ .kind = .sizes, .byte_width = 4 },
 };
 const large_list_view_buffers = [_]BufferSpec{
     .{ .kind = .validity },
-    .{ .kind = .values, .byte_width = 8 },
-    .{ .kind = .values, .byte_width = 8 },
+    .{ .kind = .offsets, .byte_width = 8 },
+    .{ .kind = .sizes, .byte_width = 8 },
 };
 const nested_validity_buffers = [_]BufferSpec{.{ .kind = .validity }};
 const sparse_union_buffers = [_]BufferSpec{

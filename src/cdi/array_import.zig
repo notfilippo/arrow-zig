@@ -320,7 +320,7 @@ fn visibleBufferSize(
         .validity => if (len == 0) 0 else try bitmap.byteLenChecked(total),
         .values => try valuesBufferSize(ty, arr, spec, len, total),
         .offsets => try offsetsBufferSize(arr, index, spec.byte_width, len, total),
-        .type_ids, .union_offsets => try checked.mul(total, spec.byte_width),
+        .type_ids, .union_offsets, .sizes => try checked.mul(total, spec.byte_width),
     };
 }
 
@@ -382,6 +382,7 @@ fn missingBufferError(kind: datatype.BufferKind) Error {
         .offsets => error.MissingOffsetsBuffer,
         .type_ids => error.MissingTypeIdsBuffer,
         .union_offsets => error.MissingUnionOffsetsBuffer,
+        .sizes => error.MissingOffsetsBuffer,
     };
 }
 
