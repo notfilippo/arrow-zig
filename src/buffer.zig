@@ -73,6 +73,10 @@ pub const ExternalOwnerHandle = struct {
     }
 };
 
+/// Sentinel address for zero-length buffers so `dataSlice()` never
+/// returns a slice over undefined memory.
+const empty_sentinel: [*]u8 = &([_]u8{});
+
 /// Heap-allocated, reference-counted byte buffer.
 ///
 /// `size` is the number of bytes of valid data. `capacity` is the number of
@@ -106,7 +110,7 @@ pub const Buffer = struct {
 
         if (size == 0) {
             self.* = .{
-                .data = undefined,
+                .data = empty_sentinel,
                 .size = 0,
                 .capacity = 0,
                 .allocator = allocator,
@@ -225,6 +229,7 @@ pub const Buffer = struct {
             const slice: []align(arrow_alignment) u8 = @alignCast(self.data[0..self.capacity]);
             allocator.free(slice);
         }
+        self.* = undefined;
         allocator.destroy(self);
     }
 
@@ -340,6 +345,8 @@ test "empty buffer deinit" {
     const buf = try Buffer.allocate(a, 0);
     try std.testing.expectEqual(@as(usize, 0), buf.size);
     try std.testing.expectEqual(@as(usize, 0), buf.capacity);
+    try std.testing.expect(@intFromPtr(buf.dataSlice().ptr) != 0);
+    try std.testing.expect(buf.dataSlice().ptr == buf.mutableSlice().ptr);
     buf.deinit();
 }
 
