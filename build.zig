@@ -62,6 +62,13 @@ pub fn build(b: *std.Build) void {
     const bench_step = b.step("bench", "Run benchmarks");
     bench_step.dependOn(addBench(b, target, single_threaded, bench_optimize));
 
+    const fuzz_step = b.step("fuzz", "Run fuzz target seed corpus checks");
+    fuzz_step.dependOn(addRootTest(b, createArrowModule(b, .{
+        .target = target,
+        .optimize = optimize,
+        .single_threaded = single_threaded,
+    }), "test_fuzz"));
+
     const ci_step = b.step("ci", "Run CI checks");
     ci_step.dependOn(license_step);
     ci_step.dependOn(test_imports_step);

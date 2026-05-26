@@ -125,6 +125,7 @@ test {
     _ = @import("compute/compare/value.zig");
     _ = @import("datatype.zig");
     _ = @import("datatype_layout.zig");
+    _ = @import("fuzz/validate_import.zig");
     _ = @import("offsets.zig");
     _ = @import("record_batch.zig");
     _ = @import("refcount.zig");
