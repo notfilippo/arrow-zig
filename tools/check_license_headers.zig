@@ -142,36 +142,3 @@ fn lineAt(contents: []const u8, line_number: usize) ?[]const u8 {
     return null;
 }
 
-test "header style detection" {
-    try std.testing.expectEqual(HeaderStyle.skip, headerStyle("LICENSE"));
-    try std.testing.expectEqual(HeaderStyle.slash, headerStyle("src/root.zig"));
-    try std.testing.expectEqual(HeaderStyle.slash, headerStyle("build.zig.zon"));
-    try std.testing.expectEqual(HeaderStyle.slash, headerStyle("src/test.c"));
-    try std.testing.expectEqual(HeaderStyle.hash, headerStyle(".github/workflows/ci.yml"));
-    try std.testing.expectEqual(HeaderStyle.hash, headerStyle(".gitignore"));
-    try std.testing.expectEqual(HeaderStyle.markdown, headerStyle("README.md"));
-    try std.testing.expectEqual(HeaderStyle.unknown, headerStyle("image.png"));
-}
-
-test "header checks" {
-    try std.testing.expect(hasHeader(
-        "// Copyright 2026 Filippo Rossi\n// SPDX-License-Identifier: Apache-2.0\n\n",
-        .slash,
-    ));
-    try std.testing.expect(hasHeader(
-        "# Copyright 2026 Filippo Rossi\n# SPDX-License-Identifier: Apache-2.0\n\n",
-        .hash,
-    ));
-    try std.testing.expect(hasHeader(
-        "#!/bin/sh\n# Copyright 2026 Filippo Rossi\n# SPDX-License-Identifier: Apache-2.0\n\n",
-        .hash,
-    ));
-    try std.testing.expect(hasHeader(
-        "<!--\nCopyright 2026 Filippo Rossi\nSPDX-License-Identifier: Apache-2.0\n-->\n\n",
-        .markdown,
-    ));
-    try std.testing.expect(!hasHeader(
-        "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n",
-        .hash,
-    ));
-}

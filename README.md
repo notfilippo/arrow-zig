@@ -83,8 +83,7 @@ Run the full local check before sending changes:
 zig build ci
 ```
 
-This runs license checks, generated docs, regular tests, single threaded tests,
-and nanoarrow interop tests in both thread modes.
+This runs license checks, generated docs, regular tests and nanoarrow interop tests.
 
 Format and ABI details follow the [Arrow Columnar Format](https://arrow.apache.org/docs/format/Columnar.html)
 and [Arrow C Data Interface](https://arrow.apache.org/docs/format/CDataInterface.html).

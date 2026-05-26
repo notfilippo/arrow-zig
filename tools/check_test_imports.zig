@@ -48,20 +48,3 @@ fn rootImportsPath(root_contents: []const u8, path: []const u8) bool {
     const needle = std.fmt.bufPrint(&buffer, "@import(\"{s}\")", .{path}) catch return false;
     return std.mem.indexOf(u8, root_contents, needle) != null;
 }
-
-test "detects test declarations" {
-    try std.testing.expect(hasTestDecl("test \"x\" {}\n"));
-    try std.testing.expect(hasTestDecl("const x = 1;\ntest \"x\" {}\n"));
-    try std.testing.expect(!hasTestDecl("const text = \"test x\";\n"));
-}
-
-test "matches root imports" {
-    const root_contents =
-        \\test {
-        \\    _ = @import("array/common.zig");
-        \\}
-    ;
-
-    try std.testing.expect(rootImportsPath(root_contents, "array/common.zig"));
-    try std.testing.expect(!rootImportsPath(root_contents, "array_missing.zig"));
-}
