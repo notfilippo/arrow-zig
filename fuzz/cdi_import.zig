@@ -4,18 +4,21 @@
 //! Fuzz targets for validation and C Data Interface import.
 
 const std = @import("std");
-const cdi = @import("../cdi.zig");
+const arrow = @import("arrow");
 
+const cdi = arrow.cdi;
 const ArrowArray = cdi.ArrowArray;
+const seed_corpus = [_][]const u8{
+    &.{},
+    &.{ 0, 0, 0, 0, 0, 0, 0, 0 },
+    &.{ 1, 0, 0, 0, 0, 0, 0, 0 },
+};
 
 test "fuzz CDI int32 import validation" {
-    try std.testing.fuzz({}, fuzzCdiInt32Import, .{
-        .corpus = &.{
-            &.{},
-            &.{ 0, 0, 0, 0, 0, 0, 0, 0 },
-            &.{ 1, 0, 0, 0, 0, 0, 0, 0 },
-        },
-    });
+    for (seed_corpus) |seed| {
+        var smith: std.testing.Smith = .{ .in = seed };
+        try fuzzCdiInt32Import({}, &smith);
+    }
 }
 
 fn fuzzCdiInt32Import(_: void, smith: *std.testing.Smith) anyerror!void {
