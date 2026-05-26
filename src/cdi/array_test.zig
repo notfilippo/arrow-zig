@@ -524,6 +524,32 @@ test "importArray releases moved array once" {
     try std.testing.expectEqual(@as(usize, 1), release_count);
 }
 
+test "importArray validation failure does not consume producer array" {
+    const allocator = std.testing.allocator;
+    var release_count: usize = 0;
+    var values = [_]u8{0} ** @sizeOf(i32);
+
+    var arr = minimalArray();
+    arr.length = 1;
+    arr.null_count = 1;
+    arr.n_buffers = 2;
+    arr.private_data = &release_count;
+    arr.release = countArrayRelease;
+    var buffers = [_]?*const anyopaque{
+        null,
+        @ptrCast(&values),
+    };
+    arr.buffers = &buffers;
+
+    try std.testing.expectError(error.NullCountWithoutValidity, importArray(allocator, .int32, &arr));
+    try std.testing.expect(!arrayIsReleased(&arr));
+    try std.testing.expectEqual(@as(usize, 0), release_count);
+
+    arr.release.?(&arr);
+    try std.testing.expect(arrayIsReleased(&arr));
+    try std.testing.expectEqual(@as(usize, 1), release_count);
+}
+
 test "importArray accepts empty fixed width array with offset and null values buffer" {
     const allocator = std.testing.allocator;
     var arr = minimalArray();
